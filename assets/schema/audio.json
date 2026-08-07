@@ -1,0 +1,200 @@
+{
+  "$schema_comment": "Zelda 1 audio. Bank 0 unless noted; CPU addresses assume the bank is mapped at $8000, so PRG offset = cpu - $8000. DPCM samples live in the fixed bank 7 at $C000. ROM citations are label @ line in reference/zelda1-disassembly/src.",
+  "revision_target": "USA PRG1 (NES-ZL-1)",
+  "bank": 0,
+  "offsets": {
+    "songPointerTable": { "cpu": "0x8D60", "length": 36, "rom": "SongTable @ Z_00.asm:9" },
+    "noteTable": { "cpu": "0x9F00", "length": 114, "rom": "NotePeriodTable @ Z_00.asm:1114" },
+    "noteDelaySets": { "cpu": "0x9FD1", "length": 40, "rom": "NoteLengthTable0-4 @ Z_00.asm:1183" },
+    "tuneScripts0": { "cpu": "0x985B", "length": 110, "rom": "TuneScripts0 @ Z_00.asm:144" },
+    "tuneScripts1": { "cpu": "0x9A55", "length": 128, "rom": "TuneScripts1 @ Z_00.asm:405" },
+    "songEnvelope": {
+      "cpu": "0x9F92",
+      "length": 33,
+      "rom": "CustomEnvelopeSong @ Z_00.asm:1166 — 32 bytes, but ShapeSongVolume's first read is at index $20, one byte past the table (SwordSfxNotes[0] = $47)"
+    },
+    "tune1Envelope": { "cpu": "0x9B63", "length": 32, "rom": "CustomEnvelopeTune1 @ Z_00.asm:509" },
+    "sampleAddrs": { "cpu": "0x9BEA", "length": 7, "rom": "SampleAddrs @ Z_00.asm:574" },
+    "sampleLengths": { "cpu": "0x9BF1", "length": 7, "rom": "SampleLengths @ Z_00.asm:577" },
+    "sampleRates": { "cpu": "0x9BF8", "length": 7, "rom": "SampleRates @ Z_00.asm:580" },
+    "noiseVolumes": { "cpu": "0x9ED0", "length": 4, "rom": "NoiseVolumes @ Z_00.asm:1055" },
+    "noisePeriods": { "cpu": "0x9ED4", "length": 4, "rom": "NoisePeriods @ Z_00.asm:1058" },
+    "noiseLengths": { "cpu": "0x9ED8", "length": 4, "rom": "NoiseLengths @ Z_00.asm:1061" }
+  },
+  "pcmSamples": {
+    "bank": 7,
+    "cpu": "0xC000",
+    "length": 9217,
+    "rom": "PcmSamples @ Z_07.asm:335 — spans $C000..$E400, exactly up to PlayAreaColumnAddrs"
+  },
+  "playlists": {
+    "overworld": {
+      "loop": true,
+      "loopStart": 1,
+      "parts": ["0x75", "0x7D", "0x85", "0x95", "0x7D", "0x8D", "0x95"],
+      "rom": "SongRequest $01; @PlayNextOverworldPhrase @ Z_00.asm:761 restarts at phrase index 9, i.e. parts[1]"
+    },
+    "underworld": {
+      "loop": true,
+      "loopStart": 0,
+      "parts": ["0x9D", "0xA5"],
+      "rom": "SongRequest $40; @PlayNextUnderworldPhrase @ Z_00.asm:753"
+    },
+    "level9": {
+      "loop": true,
+      "loopStart": 0,
+      "parts": ["0xAD"],
+      "rom": "SongRequest $20; SongHeaderLastLevel0 @ Z_00.asm:61"
+    },
+    "title": {
+      "loop": true,
+      "loopStart": 0,
+      "parts": [
+        "0x24",
+        "0x2C",
+        "0x34",
+        "0x3C",
+        "0x44",
+        "0x34",
+        "0x4C",
+        "0x54",
+        "0x5C",
+        "0x44"
+      ],
+      "rom": "SongRequest $80 (InitDemoSubphasePlayTitleSong @ Z_02.asm:486); @PlayNextDemoPhrase @ Z_00.asm:769 walks SongTable[25..34]"
+    },
+    "ending": {
+      "loop": true,
+      "loopStart": 3,
+      "parts": ["0xBD", "0xC5", "0xCD", "0xD5", "0xDD", "0xD5", "0xE5", "0xED"],
+      "rom": "SongRequest $10 (Z_02.asm:3457); SongHeaderEnding0 @ Z_00.asm:67; Z_00.asm:745 restarts at phrase index 20, i.e. parts[3]"
+    },
+    "item": { "loop": false, "parts": ["0x67"], "rom": "SongRequest $08; SongHeaderItemTaken0 @ Z_00.asm:44" },
+    "triforce": {
+      "loop": false,
+      "parts": ["0x6E"],
+      "rom": "SongRequest $04 (InitMode12 @ Z_05.asm:5530); SongHeaderEndLevel0 @ Z_00.asm:47"
+    },
+    "ganon": { "loop": false, "parts": ["0xB5"], "rom": "SongRequest $02; SongHeaderGanon0 @ Z_00.asm:64" },
+    "zelda": { "loop": false, "parts": ["0xF5"], "rom": "SongRequest $06; SongHeaderZelda @ Z_00.asm:76" }
+  },
+  "tune0": {
+    "comment": "Square 1 ($4000) cues. DriveTune0 @ Z_00.asm:163. Request bit -> TuneScripts0 pointer index. $80 is not a tune: it silences the song.",
+    "names": {
+      "0x01": "shield",
+      "0x02": "enemy_die",
+      "0x04": "magic_shot",
+      "0x08": "key",
+      "0x10": "text",
+      "0x20": "bomb_set",
+      "0x40": "low_health"
+    },
+    "aliases": { "wizzrobe": "magic_shot", "name_cursor": "bomb_set", "unused4": "key" },
+    "rom": {
+      "0x01": "parry — PlayParryTune @ Z_01.asm:6334",
+      "0x02": "monster harmed — DealDamage @ Z_01.asm:5969",
+      "0x04": "magic shot — @MakeMagicShot @ Z_07.asm:4562",
+      "0x08": "key taken — PlayKeyTakenTune @ Z_01.asm:4730",
+      "0x10": "heart taken / text character — Z_02.asm:3604",
+      "0x20": "bomb set — Z_01.asm:3894 (also the name-entry click, Z_02.asm:2014)",
+      "0x40": "low-health warning — Z_07.asm:2004"
+    }
+  },
+  "tune1": {
+    "comment": "Square 2 ($4004) cues. DriveTune1 @ Z_00.asm:423. Request bit -> TuneScripts1 pointer index. $80 silences the song first, then plays.",
+    "names": {
+      "0x01": "rupee",
+      "0x02": "item_appears",
+      "0x04": "secret",
+      "0x08": "item_taken",
+      "0x10": "flute",
+      "0x20": "monster_die",
+      "0x40": "game_over",
+      "0x80": "link_dying"
+    },
+    "repeats": ["0x40"],
+    "rom": {
+      "0x01": "rupee taken / selection changed — TakeOneRupee @ Z_01.asm:4722",
+      "0x02": "item appears — Z_05.asm:2362",
+      "0x04": "secret found — PlaySecretFoundTune @ Z_04.asm:4095",
+      "0x08": "item taken — TakeItem @ Z_01.asm:4458",
+      "0x10": "flute — WieldFlute @ Z_07.asm:2500",
+      "0x20": "monster died — UpdateDeadDummy @ Z_07.asm:5793",
+      "0x40": "game over — Z_05.asm:2710 (loops: Z_00.asm:459)",
+      "0x80": "Link dying — UpdateMode11Death_Sub1 @ Z_05.asm:2545"
+    }
+  },
+  "effects": {
+    "comment": "Noise channel ($400C/$400E) one-shots. DriveEffect @ Z_00.asm:304. $80 is not an effect: it silences the DPCM sample and Tune1.",
+    "slots": {
+      "0x01": {
+        "name": "sword",
+        "mode": "countdown",
+        "cpu": "0x9FB2",
+        "length": 10,
+        "frames": 10,
+        "rom": "SwordSfxNotes @ Z_00.asm:1172; PlaySwordSfx @ Z_00.asm:294; requested by Z_05.asm:2877"
+      },
+      "0x02": {
+        "name": "arrow",
+        "mode": "countdown",
+        "cpu": "0x9FBC",
+        "length": 5,
+        "frames": 5,
+        "rom": "ArrowSfxNotes @ Z_00.asm:1176; PlayArrowSfx @ Z_00.asm:233; requested by Z_05.asm:2971"
+      },
+      "0x04": {
+        "name": "flame",
+        "mode": "flame",
+        "cpu": "0x9FC1",
+        "length": 16,
+        "frames": 32,
+        "rom": "FlameSfxNotes @ Z_00.asm:1179; @ContinueFlameSfx @ Z_00.asm:351; requested by Z_01.asm:4027"
+      },
+      "0x08": {
+        "name": "stairs",
+        "mode": "stairs",
+        "cpu": "0x9EF5",
+        "length": 6,
+        "frames": 56,
+        "rom": "StairsSfxNotes @ Z_00.asm:1106; PlayStairsSfx @ Z_00.asm:249; requested by Z_05.asm:1401"
+      },
+      "0x10": {
+        "name": "bomb",
+        "mode": "countdown",
+        "cpu": "0x9A3D",
+        "length": 24,
+        "frames": 24,
+        "rom": "BombSfxNotes @ Z_00.asm:400; @PlayBombSfx @ Z_00.asm:336; requested by Z_07.asm:4825"
+      },
+      "0x20": {
+        "name": "sea",
+        "mode": "sea",
+        "frames": 208,
+        "rom": "@PlaySeaSfx @ Z_00.asm:360 — generated, no note table; requested by Z_07.asm:2035"
+      }
+    }
+  },
+  "samples": {
+    "comment": "DPCM one-shots. DriveSample @ Z_00.asm:515. Request bit -> SampleAddrs/SampleLengths/SampleRates slot; bit 7 additionally marks a looping background sample and starts the DAC at $7F.",
+    "names": {
+      "0x01": "sword_shot",
+      "0x02": "boss_hit",
+      "0x04": "door",
+      "0x08": "hurt",
+      "0x10": "boss_roar_1",
+      "0x20": "boss_roar_2",
+      "0x40": "boss_roar_3"
+    },
+    "aliases": { "boss_defeat": "boss_hit" },
+    "rom": {
+      "0x01": "sword beam shot — Z_07.asm:4651",
+      "0x02": "boss hit / death cry — PlayBossDeathCry @ Z_04.asm:11023",
+      "0x04": "door opening — Z_05.asm:5233",
+      "0x08": "Link harmed — Link_BeHarmed @ Z_01.asm:5742",
+      "0x10": "Aquamentus / Gleeok / Ganon roar — Z_04.asm:4846",
+      "0x20": "Dodongo / Gohma roar — Z_04.asm:4900",
+      "0x40": "Digdogger / Manhandla / Patra roar — Z_04.asm:4857"
+    }
+  }
+}

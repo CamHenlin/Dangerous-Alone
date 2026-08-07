@@ -1,0 +1,123 @@
+:root {
+  color-scheme: dark;
+  --bg: #12141a;
+  --panel: #1c2030;
+  --text: #e8ecf4;
+  --muted: #9aa3b5;
+  --accent: #6bcf7f;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 20% 0%, #1a2438, var(--bg));
+  color: var(--text);
+  min-height: 100vh;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 1fr 180px;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+
+.toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+  padding: 0.85rem 1.25rem;
+  background: color-mix(in srgb, var(--panel) 90%, black);
+  border-bottom: 1px solid #2b3348;
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.toolbar label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.toolbar select {
+  background: #0f1320;
+  color: var(--text);
+  border: 1px solid #33405c;
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+}
+
+.toolbar .check {
+  color: var(--text);
+}
+
+.status {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+.toolbar .nav {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+#stage {
+  padding: 1.25rem;
+  overflow: auto;
+  display: grid;
+  place-items: start center;
+}
+
+#stage canvas {
+  image-rendering: pixelated;
+  background: #000;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.swatches {
+  padding: 1rem;
+  border-left: 1px solid #2b3348;
+  background: color-mix(in srgb, var(--panel) 80%, black);
+}
+
+.swatches h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.swatch-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: 0.55rem;
+}
+
+.swatch {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  border: 1px solid #3a4560;
+}
+
+.swatch.active-row {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

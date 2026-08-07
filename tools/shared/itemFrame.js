@@ -1,0 +1,87 @@
+/**
+ * NES Anim_WriteSpecificItemSprites layout for item CHR tiles.
+ *
+ * Narrow: tile $F3 or in [$20, $62) — single centered 8×16.
+ * Wide: mirrored left tile; separation 7px when tile < $6C (“slim”), else 8px.
+ * (@_Slim falls through into Anim_WriteMirroredSpritePair.)
+ */
+
+/** ItemIdToSlot @ Z_01.asm — item ID → inventory / anim slot. */
+const ITEM_ID_TO_SLOT = Object.freeze([
+  0x01, 0x00, 0x00, 0x00, 0x06, 0x05, 0x04, 0x04, // $00–$07
+  0x02, 0x02, 0x03, 0x0d, 0x09, 0x0c, 0x1b, 0x1c, // $08–$0F
+  0x08, 0x0a, 0x0b, 0x0b, 0x0e, 0x0f, 0x10, 0x11, // $10–$17
+  0x16, 0x17, 0x18, 0x1a, 0x1f, 0x1d, 0x1e, 0x07, // $18–$1F
+  0x07, 0x15, 0x19, 0x14, // $20–$23
+]);
+
+/** Anim_ItemFrameOffsets @ Z_01.asm — slot → index into Anim_ItemFrameTiles. */
+const ANIM_ITEM_FRAME_OFFSETS = Object.freeze([
+  0x00, 0x03, 0x07, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+  0x0f, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+  0x18, 0x17, 0x18, 0x17, 0x19, 0x1b, 0x1c, 0x1d,
+  0x1e, 0x1f, 0x20, 0x21, 0x1c, 0x22, 0x22, 0x26,
+  0x27, 0x28, 0x29, 0x2b, 0x2e,
+]);
+
+/** Anim_ItemFrameTiles @ Z_01.asm — frame-0 CHR top tile per offset. */
+const ANIM_ITEM_FRAME_TILES = Object.freeze([
+  0x20, 0x82, 0x3c, 0x34, 0x70, 0x72, 0x74, 0x28,
+  0x86, 0x3c, 0x2a, 0x26, 0x24, 0x22, 0x40, 0x4a,
+  0x8a, 0x6c, 0x42, 0x46, 0x76, 0x2c, 0x4e, 0x4c,
+  0x6a, 0x50, 0x52, 0x66, 0x32, 0x2e, 0x68, 0xf3,
+  0x6e, 0xf2, 0x36, 0x38, 0x3a, 0x3c, 0x56, 0x48,
+  0x78, 0x20, 0x82, 0x7a, 0x7c, 0x30, 0x64, 0x62,
+]);
+
+/**
+ * Horiz / off-sheet weapon frames outside common_sprites ($00–$6F).
+ * Ladder $76 is NOT remapped — it lives in the demo sprite bank at PPU $70+
+ * (see `itemSprites` `highTexture` / DemoPatternVramAddrs $0700).
+ */
+const OFF_SHEET_STAND_IN = Object.freeze({
+  0x70: 0x34,
+  0x72: 0x34,
+  0x74: 0x26,
+  0x78: 0x6e,
+  0x7a: 0x24,
+  0x7c: 0x24,
+  0x82: 0x20,
+  0x86: 0x28,
+  0x8a: 0x2a,
+});
+
+/**
+ * @param {number} tile CHR top tile (even) — heart OAM is $F3 → top $F2
+ * @returns {{ narrow: boolean, gap: number }}
+ */
+export function itemSpriteLayout(tile) {
+  const top = tile & 0xfe;
+  // Heart lives on common_misc ($F2/$F3); other narrow items are <$62.
+  if (top === 0xf2 || top === 0xf3 || (top >= 0x20 && top < 0x62)) {
+    return { narrow: true, gap: 0 };
+  }
+  return { narrow: false, gap: top < 0x6c ? 7 : 8 };
+}
+
+/**
+ * CHR top tile for an item ID via ItemIdToSlot → Anim_ItemFrameOffsets →
+ * Anim_ItemFrameTiles (room drops, caves, attract crawl).
+ *
+ * @param {number} itemId
+ */
+export function chrTileForItemId(itemId) {
+  const id = itemId & 0xff;
+  if (id >= ITEM_ID_TO_SLOT.length) return 0x24;
+
+  const slot = ITEM_ID_TO_SLOT[id];
+  const offset = ANIM_ITEM_FRAME_OFFSETS[slot];
+  if (offset == null) return 0x24;
+  let tile = ANIM_ITEM_FRAME_TILES[offset] ?? 0x24;
+
+  // Heart drop OAM uses $F3; our misc sheet blits from the even top tile.
+  if (tile === 0xf3) tile = 0xf2;
+
+  if (OFF_SHEET_STAND_IN[tile] != null) return OFF_SHEET_STAND_IN[tile];
+  return tile & 0xfe;
+}

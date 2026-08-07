@@ -1,0 +1,74 @@
+.map-app {
+  grid-template-columns: 1fr 280px;
+}
+
+.map-body {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  min-height: 0;
+  height: calc(100vh - 64px);
+}
+
+#stage {
+  overflow: auto;
+  padding: 1rem;
+  place-items: start;
+}
+
+#stage canvas {
+  cursor: crosshair;
+}
+
+.info-panel {
+  border-left: 1px solid #2b3348;
+  background: color-mix(in srgb, var(--panel) 80%, black);
+  padding: 1rem;
+  overflow: auto;
+}
+
+.info-panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.info-panel pre {
+  margin: 0;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.toolbar .nav {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.toolbar input[type='text'] {
+  width: 3rem;
+  background: #0f1320;
+  color: var(--text);
+  border: 1px solid #33405c;
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+  font-family: ui-monospace, monospace;
+}
+
+.toolbar button {
+  background: #243049;
+  color: var(--text);
+  border: 1px solid #3a4560;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  border-color: var(--accent);
+}

@@ -1,0 +1,21 @@
+{
+  "$schema_comment": "Cave / shop tables (PRG-relative). USA PRG1. Shop & potion prices use priceIndex = caveIndex - 4 (Data Crystal).",
+  "revision_target": "USA PRG1 (NES-ZL-1)",
+  "offsets": {
+    "textFlags": { "prg": "0x045A2", "length": 20 },
+    "items": { "prg": "0x18600", "length": 60 },
+    "prices": { "prg": "0x18648", "length": 60 },
+    "dwellers": { "prg": "0x06E6F", "length": 20 },
+    "textPointers": { "prg": "0x04000", "length": 76 },
+    "takeAnyRoad": { "prg": "0x19334", "length": 4 }
+  },
+  "textBankPrgBase": "0x4000",
+  "firstCaveId": 16,
+  "caveCount": 20,
+  "shopPriceIndexDelta": 4,
+  "shopCaveIds": [26, 29, 30, 31, 32],
+  "heartRequirements": {
+    "18": 5,
+    "19": 12
+  }
+}

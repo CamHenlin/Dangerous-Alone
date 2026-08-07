@@ -1,0 +1,58 @@
+{
+  "comment": "Game mode $13 (win game) text data. Bank 2 is mapped at CPU $8000, and in this ROM the bank-2 PRG offset equals the CPU address, so the offsets below are both.",
+  "offsets": {
+    "thanksText": {
+      "prg": "0xA959",
+      "rom": "ThanksText @ Z_02.asm:3257 — Zelda's line, typed by UpdateZeldaTextbox"
+    },
+    "peaceText": {
+      "prg": "0xAB07",
+      "rom": "PeaceText @ Z_02.asm:3564 — the closing line, typed by UpdatePeaceTextbox"
+    },
+    "creditsTextLines": {
+      "prg": "0xAC5C",
+      "length": 414,
+      "rom": "CreditsTextLines @ Z_02.asm:3759 — 23 records of [length][column][chars]"
+    },
+    "thanksLineAddrsLo": {
+      "prg": "0xA992",
+      "length": 3,
+      "rom": "ThanksTextboxLineAddrsLo @ Z_02.asm:3290 — nametable $21xx"
+    },
+    "peaceCharAddrsLo": {
+      "prg": "0xAAD3",
+      "length": 52,
+      "rom": "PeaceTextboxCharAddrsLo @ Z_02.asm:3556 — nametable $22xx, dropping to $23xx below $A0"
+    },
+    "creditsPagesTextMasks": {
+      "prg": "0xAC22",
+      "length": 12,
+      "rom": "CreditsPagesTextMasks @ Z_02.asm:3747 — which scroll rows carry text"
+    },
+    "creditsLastScreens": {
+      "prg": "0xABC0",
+      "length": 2,
+      "rom": "CreditsLastScreenList @ Z_02.asm:3672 — nametable flips before the roll stops, per quest"
+    },
+    "creditsLastVscrolls": {
+      "prg": "0xABC2",
+      "length": 2,
+      "rom": "CreditsLastVscrollList @ Z_02.asm:3675"
+    }
+  },
+  "thanksVramHigh": "0x21",
+  "peaceVramHigh": "0x22",
+  "creditsLineOffsets": [
+    0, 9, 20, 44, 68, 92, 108, 132, 156, 170, 184, 191, 215, 241, 253, 278, 294,
+    310, 325, 346, 365, 373, 398
+  ],
+  "creditsLineOffsetsRom": "CreditsTextAddrsLo / CreditsTextAddrsHi @ Z_02.asm:3751",
+  "creditsQuestGating": {
+    "comment": "DrawCredits @ Z_02.asm:3838. Line index >= $17 has no text at all; quest 1 drops indices >= $10, quest 2 drops $C..$F.",
+    "maxLineIndex": 23,
+    "quest1SkipFrom": 16,
+    "quest2SkipRange": [12, 16]
+  },
+  "playerNameLineIndex": 17,
+  "playerNameLineIndexRom": "DrawCredits @ Z_02.asm:3893 — line $11 is overwritten with the profile name"
+}

@@ -1,0 +1,23 @@
+{
+  "name": "nes-zelda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Legend of Zelda (NES) data extraction and browser reimplementation",
+  "scripts": {
+    "extract": "node tools/extract/cli.js",
+    "test": "node --test tools/**/*.test.js",
+    "dev": "vite --config game/vite.config.js",
+    "build": "vite build --config game/vite.config.js",
+    "preview": "vite preview --config game/vite.config.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pixi.js": "^8.9.2"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
+  }
+}

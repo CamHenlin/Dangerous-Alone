@@ -1,0 +1,58 @@
+{
+  "comment": "Game mode $00 (attract / demo) tables. Bank 2 is mapped at CPU $8000, and in this ROM the bank-2 PRG offset equals the CPU address.",
+  "offsets": {
+    "lineAttrs": {
+      "prg": "0x915E",
+      "length": 175,
+      "rom": "DemoLineAttrs @ Z_02.asm:377 — per-line TEXT/ATTRS/ITEM flags; CRAWL_LINE_SLOTS"
+    },
+    "leftItemIds": {
+      "prg": "0x9240",
+      "length": 22,
+      "rom": "DemoLeftItemIds @ Z_02.asm:410"
+    },
+    "rightItemIds": {
+      "prg": "0x9256",
+      "length": 18,
+      "rom": "DemoRightItemIds @ Z_02.asm:415"
+    },
+    "textFields": {
+      "prg": "0x929A",
+      "length": 531,
+      "rom": "DemoTextFields @ Z_02.asm:436 / dat/DemoTextFields.dat"
+    },
+    "lineTextAddrs": {
+      "prg": "0x94AD",
+      "length": 58,
+      "rom": "DemoLineTextAddrs @ Z_02.asm:439 — 29 little-endian pointers"
+    },
+    "fadePalettes": {
+      "prg": "0x9969",
+      "length": 448,
+      "rom": "DemoPhase0Subphase1Palettes @ Z_02.asm:1177 — 14 × $20 palette records"
+    },
+    "fadeDelays": {
+      "prg": "0x9B69",
+      "length": 14,
+      "rom": "DemoPhase0Subphase1Delays @ Z_02.asm:1245"
+    },
+    "storyTileAttrTransferBuf": {
+      "prg": "0x1A489",
+      "length": 1131,
+      "rom": "StoryTileAttrTransferBuf — TransferBufAddrs[1] @ bank 6 (USA PRG1); bins.xml 107518 is stale"
+    },
+    "gameTitleTransferBuf": {
+      "prg": "0x1A8F4",
+      "length": 1121,
+      "rom": "GameTitleTransferBuf — TransferBufAddrs[8] @ bank 6 (USA PRG1); bins.xml 108649 is mid-buffer"
+    }
+  },
+  "lineTextOffsets": [
+    0, 34, 55, 62, 82, 485, 511, 103, 123, 130, 152, 173, 196, 207, 226, 247,
+    254, 273, 295, 314, 334, 356, 366, 389, 411, 430, 450, 455, 475
+  ],
+  "lineTextOffsetsRom": "DemoLineTextAddrs.inc — relative to DemoTextFields",
+  "demoSpriteVramBase": "0x0700",
+  "demoSpriteVramBaseRom": "DemoPatternVramAddrs @ Z_01.asm:1616 — sprites at PPU $0700 → tile $70",
+  "demoSpriteTileBase": 112
+}

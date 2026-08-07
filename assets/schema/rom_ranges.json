@@ -1,0 +1,79 @@
+{
+  "$schema_comment": "PRG-relative byte ranges for Zelda USA. Sources are community docs; trust=unverified until checked on our PRG1 dump.",
+  "revision_target": "USA PRG1 (NES-ZL-1)",
+  "offset_unit": "prg_relative",
+  "ranges": [
+    {
+      "id": "overworld_screens",
+      "description": "Overworld screens: each byte indexes a column definition",
+      "prg_start": "0x15418",
+      "prg_end_inclusive": "0x15BD7",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "overworld_columns",
+      "description": "Overworld column definitions (compressed blocks)",
+      "prg_start": "0x15BD8",
+      "prg_end_inclusive": "0x15F9B",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "dungeon_room_templates",
+      "description": "Dungeon room / vertical macro templates",
+      "prg_start": "0x160DE",
+      "prg_end_inclusive": "0x162D5",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "overworld_screen_table_1",
+      "description": "Exit X / Zora / wave / outer palette",
+      "prg_start": "0x18400",
+      "prg_end_inclusive": "0x1847F",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "overworld_screen_table_2",
+      "description": "Underground location assignment / inner palette",
+      "prg_start": "0x18480",
+      "prg_end_inclusive": "0x184FF",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "overworld_monster_table",
+      "description": "Overworld monster placement",
+      "prg_start": "0x18500",
+      "prg_end_inclusive": "0x1857F",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "overworld_screen_layout",
+      "description": "8x16 arrangement of overworld screens",
+      "prg_start": "0x18580",
+      "prg_end_inclusive": "0x185FF",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "overworld_screen_table_3",
+      "description": "Secrets / stair index / monster entry / exit Y",
+      "prg_start": "0x18680",
+      "prg_end_inclusive": "0x186FF",
+      "source": "Data Crystal ROM map",
+      "trust": "unverified"
+    },
+    {
+      "id": "dungeon_data_block",
+      "description": "Dungeon data (levels / palettes / maps) — coarse block",
+      "prg_start": "0x193FF",
+      "prg_end_inclusive": "0x19CD7",
+      "source": "Data Crystal ROM map / Dungeon Data",
+      "trust": "unverified"
+    }
+  ]
+}

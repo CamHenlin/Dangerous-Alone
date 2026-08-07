@@ -1,0 +1,367 @@
+import { Texture } from 'pixi.js';
+import { DIR } from '@shared/collision.js';
+import {
+  BAKED_SPRITE_PALETTE_RGB,
+  remapPaletteRgba,
+  spritePaletteRowsFromSet,
+} from '@shared/enemyPalette.js';
+import { itemSpriteLayout } from '@shared/itemFrame.js';
+import { SWORD } from '@shared/inventory.js';
+import { swordSpritePalette } from '@shared/inventoryIcons.js';
+
+export { swordSpritePalette };
+
+const TILE = 8;
+const SHEET_COLS = 16;
+/** common_misc is a single row of 14 tiles mapped to PPU $F2–$FF. */
+const MISC_BASE = 0xf2;
+/**
+ * DemoSpritePatterns load at PPU $0700 during attract (`DemoPatternVramAddrs`).
+ * Ladder Anim_ItemFrameTiles $76 is in that bank (local index $06).
+ */
+const HIGH_SPRITE_BASE = 0x70;
+
+/** Anim_ItemFrameTiles (common_sprites $00–$6F). Horiz frames $82/$86 are
+ *  outside the extract — rotate the vertical tile instead (same tip orientation). */
+const CHR = Object.freeze({
+  SWORD_VERT: 0x20,
+  /** Master-sword HUD slot $20 → Anim_ItemFrameTiles @$27. */
+  MAGIC_SWORD_VERT: 0x48,
+  ARROW_VERT: 0x28,
+  /** Magical rod (Anim_ItemFrameTiles $4A); magic shot $7A is off-sheet. */
+  MAGIC_ROD: 0x4a,
+  BOMB: 0x34,
+  CLOUD: 0x44,
+});
+
+/**
+ * Item / weapon textures sliced from common_sprites (8×16 NES sprites).
+ * Optional misc sheet covers Anim_ItemFrameTiles ≥ $F2 (heart drop).
+ * Optional highSprite sheet covers PPU $70–$F1 (demo bank — stepladder $76).
+ * @param {Texture} sheetTexture
+ * @param {{
+ *   miscTexture?: Texture,
+ *   highSpriteTexture?: Texture | null,
+ *   highSpriteBase?: number,
+ *   paletteSet?: { rowsRgb?: number[][][] } | null,
+ * }} [opts]
+ */
+export function createItemSprites(sheetTexture, opts = {}) {
+  /** @type {CanvasImageSource} */
+  const sheetImage = /** @type {CanvasImageSource} */ (sheetTexture.source.resource);
+  /** @type {CanvasImageSource | null} */
+  const miscImage = opts.miscTexture
+    ? /** @type {CanvasImageSource} */ (opts.miscTexture.source.resource)
+    : null;
+  /** @type {CanvasImageSource | null} */
+  const highImage = opts.highSpriteTexture
+    ? /** @type {CanvasImageSource} */ (opts.highSpriteTexture.source.resource)
+    : null;
+  const highBase = opts.highSpriteBase ?? HIGH_SPRITE_BASE;
+  /** @type {Map<string, Texture>} */
+  const cache = new Map();
+
+  /** @type {(readonly number[])[][]} */
+  let spriteRows = spritePaletteRowsFromSet(opts.paletteSet ?? null);
+  /** @type {{ rowsRgb?: number[][][] } | null | undefined} */
+  let activePaletteSet = opts.paletteSet ?? null;
+
+  function clearCache() {
+    for (const tex of cache.values()) {
+      tex.destroy(true);
+    }
+    cache.clear();
+  }
+
+  /**
+   * @param {{ rowsRgb?: number[][][] } | null} paletteSet
+   */
+  function setPaletteSet(paletteSet) {
+    // Same set → keep live textures (HUD / cave sprites still reference them).
+    if (paletteSet === activePaletteSet) return;
+    activePaletteSet = paletteSet;
+    spriteRows = spritePaletteRowsFromSet(paletteSet);
+    clearCache();
+  }
+
+  function tileXY(tileIndex) {
+    return {
+      sx: (tileIndex % SHEET_COLS) * TILE,
+      sy: Math.floor(tileIndex / SHEET_COLS) * TILE,
+    };
+  }
+
+  function drawSheetTile(ctx, tileIndex, dx, dy) {
+    const { sx, sy } = tileXY(tileIndex);
+    ctx.drawImage(sheetImage, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+  }
+
+  function drawMiscTile(ctx, ppuTile, dx, dy) {
+    if (!miscImage) return;
+    const idx = (ppuTile & 0xff) - MISC_BASE;
+    if (idx < 0 || idx >= 14) return;
+    // Older extracts marked common_misc as background (opaque black color 0).
+    // Punch near-black to transparent so hearts etc. composite over terrain.
+    const tmp = document.createElement('canvas');
+    tmp.width = TILE;
+    tmp.height = TILE;
+    const tctx = tmp.getContext('2d');
+    if (!tctx) return;
+    tctx.drawImage(miscImage, idx * TILE, 0, TILE, TILE, 0, 0, TILE, TILE);
+    const img = tctx.getImageData(0, 0, TILE, TILE);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] < 8 && d[i + 1] < 8 && d[i + 2] < 8) d[i + 3] = 0;
+    }
+    tctx.putImageData(img, 0, 0);
+    ctx.drawImage(tmp, dx, dy);
+  }
+
+  /** Demo / high PPU bank tile (stepladder $76, etc.). */
+  function drawHighTile(ctx, ppuTile, dx, dy) {
+    if (!highImage) return;
+    const idx = (ppuTile & 0xff) - highBase;
+    if (idx < 0) return;
+    const { sx, sy } = tileXY(idx);
+    ctx.drawImage(highImage, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+  }
+
+  function isHighTile(top) {
+    return Boolean(highImage) && top >= highBase && top < MISC_BASE;
+  }
+
+  /**
+   * Remap baked SP0 colors to the LevelInfo sprite palette row.
+   * @param {HTMLCanvasElement} canvas
+   * @param {number} spritePal 0–3
+   */
+  function applySpritePalette(canvas, spritePal) {
+    if (spritePal === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const src = BAKED_SPRITE_PALETTE_RGB;
+    const dst = spriteRows[spritePal & 3] ?? src;
+    remapPaletteRgba(img.data, src, dst);
+    ctx.putImageData(img, 0, 0);
+  }
+
+  /**
+   * 8×16 sprite from CHR tile N (top) + N+1 (bottom), as NES 8×16 mode.
+   * Vertical sword has the tip on top; rotate so tip points along `dir`.
+   * Tiles ≥ $F2 come from common_misc (heart uses OAM $F3 → top $F2).
+   * @param {number} tileIndex
+   * @param {{ flipH?: boolean, flipV?: boolean, rotate90Cw?: boolean, rotate90Ccw?: boolean, spritePal?: number }} [drawOpts]
+   */
+  function sprite8x16(tileIndex, drawOpts = {}) {
+    const top = tileIndex & 0xfe;
+    const fromMisc = top >= MISC_BASE;
+    const fromHigh = !fromMisc && isHighTile(top);
+    const spritePal = drawOpts.spritePal ?? 0;
+    const key = [
+      fromMisc ? 'misc' : fromHigh ? 'high' : '8x16',
+      top,
+      drawOpts.flipH ? 1 : 0,
+      drawOpts.flipV ? 1 : 0,
+      drawOpts.rotate90Cw ? 1 : 0,
+      drawOpts.rotate90Ccw ? 1 : 0,
+      `p${spritePal}`,
+    ].join(':');
+    let tex = cache.get(key);
+    if (tex) return tex;
+
+    const src = document.createElement('canvas');
+    src.width = 8;
+    src.height = 16;
+    const sctx = src.getContext('2d');
+    if (!sctx) throw new Error('2d context unavailable');
+    sctx.imageSmoothingEnabled = false;
+    if (fromMisc) {
+      drawMiscTile(sctx, top, 0, 0);
+      drawMiscTile(sctx, top + 1, 0, 8);
+    } else if (fromHigh) {
+      drawHighTile(sctx, top, 0, 0);
+      drawHighTile(sctx, top + 1, 0, 8);
+    } else {
+      drawSheetTile(sctx, top, 0, 0);
+      drawSheetTile(sctx, top + 1, 0, 8);
+    }
+    applySpritePalette(src, spritePal);
+
+    const horizontal = Boolean(drawOpts.rotate90Cw || drawOpts.rotate90Ccw);
+    const canvas = document.createElement('canvas');
+    canvas.width = horizontal ? 16 : 8;
+    canvas.height = horizontal ? 8 : 16;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2d context unavailable');
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    if (drawOpts.rotate90Cw) ctx.rotate(Math.PI / 2);
+    if (drawOpts.rotate90Ccw) ctx.rotate(-Math.PI / 2);
+    if (drawOpts.flipH) ctx.scale(-1, 1);
+    if (drawOpts.flipV) ctx.scale(1, -1);
+    ctx.drawImage(src, -4, -8);
+
+    tex = Texture.from(canvas);
+    tex.source.scaleMode = 'nearest';
+    cache.set(key, tex);
+    return tex;
+  }
+
+  /**
+   * Point a vertical tip-up 8×16 weapon along `dir` (NES RDirectionToWeaponFrame).
+   * @param {number} vertTile
+   * @param {number} dir
+   * @param {number} [spritePal]
+   */
+  function orientedWeaponTexture(vertTile, dir, spritePal = 0) {
+    const pal = { spritePal };
+    if (dir & DIR.DOWN) {
+      return sprite8x16(vertTile, { flipV: true, ...pal });
+    }
+    if (dir & DIR.RIGHT) {
+      // Tip was on top; CW 90° points tip to the right.
+      return sprite8x16(vertTile, { rotate90Cw: true, ...pal });
+    }
+    if (dir & DIR.LEFT) {
+      return sprite8x16(vertTile, { rotate90Ccw: true, ...pal });
+    }
+    return sprite8x16(vertTile, pal);
+  }
+
+  /**
+   * @param {number} dir
+   * @param {number} [swordTier] SWORD.WOOD / WHITE / MAGIC
+   */
+  function swordTexture(dir, swordTier = SWORD.WOOD) {
+    const pal = swordSpritePalette(swordTier);
+    // Swing uses $20 for all tiers; HUD master sword uses $48 — use $48 for magic
+    // so the blade reads differently once upgraded.
+    const tile =
+      swordTier >= SWORD.MAGIC ? CHR.MAGIC_SWORD_VERT : CHR.SWORD_VERT;
+    return orientedWeaponTexture(tile, dir, pal);
+  }
+
+  /** Arrow slot frames $28 / $86 — tip along `dir`. */
+  function arrowTexture(dir) {
+    return orientedWeaponTexture(CHR.ARROW_VERT, dir);
+  }
+
+  /** Magical rod / magic shot — tip along `dir`. */
+  function magicShotTexture(dir) {
+    return orientedWeaponTexture(CHR.MAGIC_ROD, dir);
+  }
+
+  /**
+   * True when the oriented weapon texture is 16×8 (left/right).
+   * @param {number} dir
+   */
+  function weaponTextureHorizontal(dir) {
+    return Boolean(dir & (DIR.LEFT | DIR.RIGHT));
+  }
+
+  /** Placed bomb / fuse — NES DrawCloud uses blue sprite palette (slot 1). */
+  function bombTexture(spritePal = 1) {
+    return sprite8x16(CHR.BOMB, { spritePal });
+  }
+
+  function cloudTexture() {
+    return sprite8x16(CHR.CLOUD);
+  }
+
+  /** Arbitrary 8×16 item/person tile from the sheet (or misc for ≥ $F2). */
+  function spriteTexture(tileIndex, spritePal = 0) {
+    return sprite8x16(tileIndex & 0xff, { spritePal });
+  }
+
+  /**
+   * Ground / room item: narrow 8×16 or wide mirrored pair (Anim_WriteItemSprites).
+   * @param {number} tileIndex
+   * @param {number} [spritePal]
+   * @returns {{ texture: Texture, narrow: boolean, gap: number }}
+   */
+  function itemTexture(tileIndex, spritePal = 0) {
+    const top = tileIndex & 0xfe;
+    const layout = itemSpriteLayout(top);
+    if (layout.narrow) {
+      return { texture: sprite8x16(top, { spritePal }), ...layout };
+    }
+    const key = `wide:${top}:${layout.gap}:p${spritePal}`;
+    let tex = cache.get(key);
+    if (!tex) {
+      const canvas = document.createElement('canvas');
+      canvas.width = layout.gap + 8;
+      canvas.height = 16;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2d context unavailable');
+      ctx.imageSmoothingEnabled = false;
+      const fromMisc = top >= MISC_BASE;
+      const fromHigh = !fromMisc && isHighTile(top);
+      const blit = (dx, flip) => {
+        ctx.save();
+        if (flip) {
+          ctx.translate(dx + 8, 0);
+          ctx.scale(-1, 1);
+          dx = 0;
+        }
+        if (fromMisc) {
+          drawMiscTile(ctx, top, dx, 0);
+          drawMiscTile(ctx, top + 1, dx, 8);
+        } else if (fromHigh) {
+          drawHighTile(ctx, top, dx, 0);
+          drawHighTile(ctx, top + 1, dx, 8);
+        } else {
+          drawSheetTile(ctx, top, dx, 0);
+          drawSheetTile(ctx, top + 1, dx, 8);
+        }
+        ctx.restore();
+      };
+      blit(0, false);
+      blit(layout.gap, true);
+      applySpritePalette(canvas, spritePal);
+      tex = Texture.from(canvas);
+      tex.source.scaleMode = 'nearest';
+      cache.set(key, tex);
+    }
+    return { texture: tex, ...layout };
+  }
+
+  /**
+   * Single 8×8 CHR tile (status-bar rupee/key/bomb icons are BG 8×8, not 8×16).
+   * @param {number} tileIndex
+   * @param {number} [spritePal]
+   */
+  function tile8x8(tileIndex, spritePal = 0) {
+    const top = tileIndex & 0xff;
+    const fromMisc = top >= MISC_BASE;
+    const key = `8x8:${top}:p${spritePal}`;
+    let tex = cache.get(key);
+    if (tex) return tex;
+    const canvas = document.createElement('canvas');
+    canvas.width = TILE;
+    canvas.height = TILE;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2d context unavailable');
+    ctx.imageSmoothingEnabled = false;
+    if (fromMisc) drawMiscTile(ctx, top, 0, 0);
+    else drawSheetTile(ctx, top, 0, 0);
+    applySpritePalette(canvas, spritePal);
+    tex = Texture.from(canvas);
+    tex.source.scaleMode = 'nearest';
+    cache.set(key, tex);
+    return tex;
+  }
+
+  return {
+    setPaletteSet,
+    swordTexture,
+    arrowTexture,
+    magicShotTexture,
+    weaponTextureHorizontal,
+    bombTexture,
+    cloudTexture,
+    spriteTexture,
+    itemTexture,
+    tile8x8,
+  };
+}

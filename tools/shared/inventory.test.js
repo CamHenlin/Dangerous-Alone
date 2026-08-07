@@ -1,0 +1,128 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import {
+  B_ITEM,
+  CANDLE_TIER,
+  SWORD,
+  addBombs,
+  createInventory,
+  cycleBItem,
+  grantCaveExtras,
+  grantRoomItem,
+  grantWoodenSword,
+  harmLink,
+  hasTriforce,
+  healLink,
+  heartDisplay,
+  triforceCount,
+  trySpendArrowShot,
+} from './inventory.js';
+
+test('new game has no sword and 3 hearts', () => {
+  const inv = createInventory();
+  assert.equal(inv.sword, SWORD.NONE);
+  assert.equal(inv.halfHearts, 6);
+  assert.equal(inv.maxHalfHearts, 6);
+  assert.deepEqual(heartDisplay(inv), { full: 3, half: 0, empty: 0 });
+});
+
+test('grantWoodenSword is idempotent', () => {
+  const inv = createInventory();
+  assert.equal(grantWoodenSword(inv), true);
+  assert.equal(inv.sword, SWORD.WOOD);
+  assert.equal(grantWoodenSword(inv), false);
+});
+
+test('harmLink applies invuln and can kill', () => {
+  const inv = createInventory();
+  const hit = harmLink(inv, 2);
+  assert.equal(hit.applied, true);
+  assert.equal(inv.halfHearts, 4);
+  assert.equal(inv.invuln, 48);
+  assert.equal(harmLink(inv, 2).applied, false); // invuln
+  inv.invuln = 0;
+  harmLink(inv, 2); // 4 → 2
+  inv.invuln = 0;
+  const last = harmLink(inv, 2); // 2 → 0
+  assert.equal(last.died, true);
+  assert.equal(inv.dead, true);
+  assert.equal(harmLink(inv, 2).applied, false);
+});
+
+test('healLink clamps to max', () => {
+  const inv = createInventory();
+  inv.halfHearts = 1;
+  healLink(inv, 99);
+  assert.equal(inv.halfHearts, 6);
+});
+
+test('addBombs selects B slot and clamps', () => {
+  const inv = createInventory();
+  assert.equal(addBombs(inv, 4), 4);
+  assert.equal(inv.selectedB, B_ITEM.BOMB);
+  addBombs(inv, 99);
+  assert.equal(inv.bombs, 8);
+});
+
+test('cycleBItem walks owned items', () => {
+  const inv = createInventory();
+  addBombs(inv, 1);
+  inv.candle = 1;
+  inv.selectedB = B_ITEM.BOMB;
+  assert.equal(cycleBItem(inv), B_ITEM.CANDLE);
+  assert.equal(cycleBItem(inv), B_ITEM.BOMB);
+});
+
+test('cycleBItem offers potion slot for held letter (CheckMissingItem)', () => {
+  const inv = createInventory();
+  inv.letter = 1;
+  inv.potion = 0;
+  inv.selectedB = B_ITEM.NONE;
+  assert.equal(cycleBItem(inv), B_ITEM.POTION);
+});
+
+test('triforce piece sets level bit', () => {
+  const inv = createInventory();
+  assert.equal(grantRoomItem(inv, 0x1b, { level: 1 }), 'Triforce (L1)');
+  assert.equal(hasTriforce(inv, 1), true);
+  assert.equal(triforceCount(inv), 1);
+  grantRoomItem(inv, 0x1b, { level: 3 });
+  assert.equal(triforceCount(inv), 2);
+  assert.equal(hasTriforce(inv, 3), true);
+});
+
+test('grantCaveExtras includes blue candle', () => {
+  const inv = createInventory();
+  grantCaveExtras(inv);
+  assert.equal(inv.candle, CANDLE_TIER.BLUE);
+  assert.equal(inv.boomerang, 1);
+});
+
+test('grantRoomItem covers ROM dungeon floor ids', () => {
+  const inv = createInventory();
+  assert.equal(grantRoomItem(inv, 0x00), 'Bombs');
+  assert.ok(inv.bombs >= 4);
+  assert.equal(grantRoomItem(inv, 0x07), 'Red candle');
+  assert.equal(inv.candle, CANDLE_TIER.RED);
+  assert.equal(grantRoomItem(inv, 0x0b), 'Magic key');
+  assert.equal(inv.magicKey, 1);
+  assert.equal(grantRoomItem(inv, 0x0f), '5 rupees');
+  assert.equal(inv.rupees, 5);
+  assert.equal(grantRoomItem(inv, 0x13), 'Red ring');
+  assert.equal(inv.ring, 2);
+  assert.equal(grantRoomItem(inv, 0x0e), 'Triforce of Power');
+  assert.equal(inv.triforceOfPower, 1);
+});
+
+test('trySpendArrowShot costs 1 rupee (NES WieldArrow)', () => {
+  const inv = createInventory();
+  assert.deepEqual(trySpendArrowShot(inv), { ok: false, reason: 'gear' });
+  inv.bow = 1;
+  inv.arrow = 1;
+  assert.deepEqual(trySpendArrowShot(inv), { ok: false, reason: 'rupees' });
+  inv.rupees = 3;
+  assert.deepEqual(trySpendArrowShot(inv), { ok: true });
+  assert.equal(inv.rupees, 2);
+  assert.deepEqual(trySpendArrowShot(inv), { ok: true });
+  assert.equal(inv.rupees, 1);
+});

@@ -1,0 +1,66 @@
+{
+  "$schema_comment": "Underworld/dungeon extraction offsets (PRG-relative).",
+  "revision_target": "USA PRG1 (NES-ZL-1)",
+  "room": { "widthSquares": 12, "heightSquares": 7 },
+  "map": { "widthRooms": 16, "heightRooms": 8 },
+  "offsets": {
+    "roomLayouts": { "prg": "0x160DE", "length": 504 },
+    "columnHeaps": [
+      { "id": 0, "prg": "0x162D6", "length": 16 },
+      { "id": 1, "prg": "0x162E6", "length": 30 },
+      { "id": 2, "prg": "0x16304", "length": 17 },
+      { "id": 3, "prg": "0x16315", "length": 17 },
+      { "id": 4, "prg": "0x16326", "length": 23 },
+      { "id": 5, "prg": "0x1633D", "length": 23 },
+      { "id": 6, "prg": "0x16354", "length": 17 },
+      { "id": 7, "prg": "0x16365", "length": 18 },
+      { "id": 8, "prg": "0x16377", "length": 26 },
+      { "id": 9, "prg": "0x16391", "length": 35 }
+    ],
+    "primarySquares": { "values": ["0xB0", "0x74", "0x94", "0xB4", "0x70", "0x68", "0xF4", "0x24"] },
+    "levelBlocks": [
+      { "id": "q1_levels_1_6", "prg": "0x18700", "length": 768, "quest": 1, "levels": [1, 2, 3, 4, 5, 6] },
+      { "id": "q1_levels_7_9", "prg": "0x18A00", "length": 768, "quest": 1, "levels": [7, 8, 9] },
+      { "id": "q2_levels_1_6", "prg": "0x18D00", "length": 768, "quest": 2, "levels": [1, 2, 3, 4, 5, 6] },
+      { "id": "q2_levels_7_9", "prg": "0x19000", "length": 768, "quest": 2, "levels": [7, 8, 9] }
+    ],
+    "levelInfo": [
+      { "level": 1, "prg": "0x193FC", "length": 252 },
+      { "level": 2, "prg": "0x194F8", "length": 252 },
+      { "level": 3, "prg": "0x195F4", "length": 252 },
+      { "level": 4, "prg": "0x196F0", "length": 252 },
+      { "level": 5, "prg": "0x197EC", "length": 252 },
+      { "level": 6, "prg": "0x198E8", "length": 252 },
+      { "level": 7, "prg": "0x199E4", "length": 252 },
+      { "level": 8, "prg": "0x19AE0", "length": 252 },
+      { "level": 9, "prg": "0x19BDC", "length": 252 }
+    ]
+  },
+  "levelInfoFields": {
+    "paletteTransfer": { "offset": 0, "length": 36 },
+    "startY": 40,
+    "shortcutOrItemPosArray": { "offset": 41, "length": 4 },
+    "submenuMapRotation": 45,
+    "startRoom": 47,
+    "triforceRoom": 48,
+    "levelNumber": 51,
+    "cellarRooms": { "offset": 52, "length": 10 },
+    "bossRoom": 62,
+    "drawnMap": { "offset": 63, "length": 16 }
+  },
+  "doorCodes": {
+    "0": "open",
+    "1": "wall",
+    "2": "wall_or_pass",
+    "3": "wall_or_pass",
+    "4": "bombable",
+    "5": "key",
+    "6": "key",
+    "7": "shutter"
+  },
+  "tileSources": {
+    "commonBackground": { "tileStart": 0, "tileEndInclusive": 111, "patternBlockId": "common_background" },
+    "underworldBackground": { "tileStart": 112, "tileEndInclusive": 241, "patternBlockId": "underworld_bg" },
+    "commonMisc": { "tileStart": 242, "tileEndInclusive": 255, "patternBlockId": "common_misc" }
+  }
+}

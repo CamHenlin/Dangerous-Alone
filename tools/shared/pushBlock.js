@@ -1,0 +1,187 @@
+import { DIR } from './collision.js';
+import { SECRET } from './roomSecrets.js';
+
+/** ObjType $68 — must clear room before push (RoomAllDead). */
+export const PUSH_STATE = Object.freeze({
+  IDLE: 0,
+  MOVING: 1,
+  DONE: 2,
+});
+
+/** Frames Link must hold push before the block moves (~$10). */
+export const PUSH_HOLD_FRAMES = 0x10;
+
+/** Distance the block travels once released. */
+export const PUSH_TRAVEL = 0x10;
+
+/**
+ * @typedef {object} PushBlock
+ * @property {number} x
+ * @property {number} y
+ * @property {number} homeX  Spawn tile (baked room art cleared here while sprite is live)
+ * @property {number} homeY
+ * @property {number} dir
+ * @property {number} state
+ * @property {number} pushTimer
+ * @property {number} traveled
+ * @property {boolean} complete  BlockPushComplete ≥ 1
+ */
+
+/**
+ * Find the NES push-block tile ($B0) in a floor grid.
+ * NES FindAndCreatePushBlockObject scans play-area row $A (screen Y $90),
+ * which is floor row 6 (FLOOR_ORIGIN.row = 4).
+ * @param {number[][]} floorTiles 14×24 from roomToTileGrid
+ * @returns {{ col: number, row: number } | null}
+ */
+export function findPushBlockTile(floorTiles) {
+  if (!floorTiles?.length) return null;
+  const preferRow = 6; // play row $A
+  if (floorTiles[preferRow]) {
+    for (let col = 4; col < floorTiles[preferRow].length - 2; col += 1) {
+      if (floorTiles[preferRow][col] === 0xb0) return { col, row: preferRow };
+    }
+  }
+  // Fallback: first $B0 (unusual layouts).
+  for (let row = 0; row < floorTiles.length; row += 1) {
+    for (let col = 0; col < floorTiles[row].length; col += 1) {
+      if (floorTiles[row][col] === 0xb0) return { col, row };
+    }
+  }
+  return null;
+}
+
+/**
+ * Expand a UW primary CHR into the 2×2 WriteSquareUW tile list (UL, LL, UR, LR).
+ * @param {number} primary e.g. $B0 block or $74 floor
+ * @returns {[number, number, number, number]}
+ */
+export function pushBlockSquareTiles(primary) {
+  const p = primary & 0xff;
+  if (p >= 0x70 && p < 0xf3) {
+    return [p, p + 1, p + 2, p + 3];
+  }
+  return [p, p, p, p];
+}
+
+/**
+ * @param {object} room
+ * @param {{ x: number, y: number }} origin
+ * @param {number[][]} floorTiles
+ * @returns {PushBlock | null}
+ */
+export function createPushBlock(room, origin, floorTiles) {
+  if (!room?.pushable) return null;
+  const tile = findPushBlockTile(floorTiles);
+  if (!tile) return null;
+  const x = origin.x + tile.col * 8;
+  const y = origin.y + tile.row * 8;
+  return {
+    x,
+    y,
+    homeX: x,
+    homeY: y,
+    dir: 0,
+    state: PUSH_STATE.IDLE,
+    pushTimer: 0,
+    traveled: 0,
+    complete: false,
+  };
+}
+
+/**
+ * True if Link is aligned and holding the correct direction into the block.
+ * @param {PushBlock} block
+ * @param {{ x: number, y: number, dir: number }} link
+ * @param {number} inputDir single-bit facing from pad (or 0)
+ */
+export function linkPushingBlock(block, link, inputDir) {
+  if (!inputDir) return false;
+  const linkY = link.y + 3;
+  // NES: exact X or (Y+3) match — no ±4 soft align.
+  // Aligned on X → vertical push.
+  if (link.x === block.x) {
+    const dy = linkY - block.y;
+    if (dy >= 0 && dy < 0x11 && (inputDir & DIR.UP)) return true;
+    if (dy <= 0 && dy > -0x11 && (inputDir & DIR.DOWN)) return true;
+    return false;
+  }
+  // Aligned on Y → horizontal push.
+  if (linkY === block.y) {
+    const dx = link.x - block.x;
+    if (dx >= 0 && dx < 0x11 && (inputDir & DIR.LEFT)) return true;
+    if (dx <= 0 && dx > -0x11 && (inputDir & DIR.RIGHT)) return true;
+  }
+  return false;
+}
+
+/**
+ * @param {PushBlock} block
+ * @param {{ x: number, y: number, dir: number }} link
+ * @param {number} inputDir
+ * @param {boolean} roomCleared
+ * @returns {{ justCompleted: boolean }}
+ */
+export function stepPushBlock(block, link, inputDir, roomCleared) {
+  if (!block || block.state === PUSH_STATE.DONE) {
+    return { justCompleted: false };
+  }
+
+  if (block.state === PUSH_STATE.MOVING) {
+    const step = 1;
+    if (block.dir & DIR.UP) block.y -= step;
+    if (block.dir & DIR.DOWN) block.y += step;
+    if (block.dir & DIR.LEFT) block.x -= step;
+    if (block.dir & DIR.RIGHT) block.x += step;
+    block.traveled += step;
+    if (block.traveled >= PUSH_TRAVEL) {
+      block.state = PUSH_STATE.DONE;
+      block.complete = true;
+      return { justCompleted: true };
+    }
+    return { justCompleted: false };
+  }
+
+  // Idle: require room clear (NES RoomAllDead).
+  if (!roomCleared) {
+    block.pushTimer = 0;
+    return { justCompleted: false };
+  }
+
+  if (!linkPushingBlock(block, link, inputDir)) {
+    block.pushTimer = 0;
+    return { justCompleted: false };
+  }
+
+  block.pushTimer += 1;
+  if (block.pushTimer < PUSH_HOLD_FRAMES) {
+    return { justCompleted: false };
+  }
+
+  block.dir = inputDir;
+  block.state = PUSH_STATE.MOVING;
+  block.traveled = 0;
+  return { justCompleted: false };
+}
+
+/**
+ * Whether a completed push should open shutters (secret effect 4).
+ * @param {object} room
+ */
+export function pushOpensShutters(room) {
+  return (room?.specialItem?.effectType ?? 0) === SECRET.BLOCK_DOOR;
+}
+
+/**
+ * Whether a completed push should spawn stairs (secret effect 5).
+ * @param {object} room
+ */
+export function pushSpawnsStairs(room) {
+  return (room?.specialItem?.effectType ?? 0) === SECRET.BLOCK_STAIRS;
+}
+
+/** NES BLOCK_STAIRS stairs square (screen X/Y of top-left of 2×2). */
+export const BLOCK_STAIRS_POS = Object.freeze({ x: 0xd0, y: 0x60 });
+
+/** UW stairs primary metatile (WriteSquareUW expands to $70–$73). */
+export const BLOCK_STAIRS_TILE = 0x70;

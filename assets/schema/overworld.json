@@ -1,0 +1,27 @@
+{
+  "$schema_comment": "Overworld extraction offsets (PRG-relative). Sourced from Data Crystal + aldonunez disassembly; verified structurally on USA PRG1.",
+  "revision_target": "USA PRG1 (NES-ZL-1)",
+  "map": { "widthScreens": 16, "heightScreens": 8 },
+  "screen": { "widthSquares": 16, "heightSquares": 11 },
+  "offsets": {
+    "roomLayouts": { "prg": "0x15418", "length": 1936 },
+    "columnHeap": { "prg": "0x15BD8", "endExclusive": "0x15F9C" },
+    "columnDirectory": { "prg": "0x19D0F", "length": 32 },
+    "secretsTable": { "prg": "0x16976", "length": 6 },
+    "primarySquares": { "prg": "0x1697C", "length": 56 },
+    "secondarySquares": { "prg": "0x169B4", "length": 64 },
+    "screenTable1": { "prg": "0x18400", "length": 128 },
+    "screenTable2": { "prg": "0x18480", "length": 128 },
+    "monsterTable": { "prg": "0x18500", "length": 128 },
+    "arrangement": { "prg": "0x18580", "length": 128 },
+    "screenTable3": { "prg": "0x18680", "length": 128 },
+    "startScreen": { "prg": "0x1932F", "length": 1 },
+    "startY": { "prg": "0x19328", "length": 1 }
+  },
+  "columnDirectoryBank": 5,
+  "tileSources": {
+    "commonBackground": { "tileStart": 0, "tileEndInclusive": 111, "patternBlockId": "common_background" },
+    "overworldBackground": { "tileStart": 112, "tileEndInclusive": 241, "patternBlockId": "overworld_bg" },
+    "commonMisc": { "tileStart": 242, "tileEndInclusive": 255, "patternBlockId": "common_misc" }
+  }
+}

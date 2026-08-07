@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NES Zelda — Level editor</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/editor.css" />
+  </head>
+  <body>
+    <div id="app" class="editor-app">
+      <header class="toolbar">
+        <h1>Level editor</h1>
+        <a class="nav" href="/play.html">Play</a>
+        <a class="nav" href="/dungeon.html">Dungeons</a>
+        <a class="nav" href="/map.html">Overworld</a>
+        <span id="status" class="status">Load a screen or room…</span>
+      </header>
+      <aside class="editor-side">
+        <label>
+          Target
+          <select id="targetKind">
+            <option value="ow">Overworld screen</option>
+            <option value="uw">Dungeon room</option>
+          </select>
+        </label>
+        <label class="ow-only">
+          Screen ($00–$7F)
+          <input id="owScreen" type="text" value="77" maxlength="2" />
+        </label>
+        <div class="uw-only" hidden>
+          <label>
+            Quest
+            <select id="uwQuest">
+              <option value="1">1</option>
+              <option value="2">2</option>
+            </select>
+          </label>
+          <label>
+            Level
+            <select id="uwLevel">
+              <option>1</option><option>2</option><option>3</option><option>4</option>
+              <option>5</option><option>6</option><option>7</option><option>8</option>
+              <option>9</option>
+            </select>
+          </label>
+          <label>
+            Room ($00–$7F)
+            <input id="uwRoom" type="text" value="73" maxlength="2" />
+          </label>
+        </div>
+        <button type="button" id="btnLoad" class="opt-btn">Load</button>
+        <label>
+          Paint square (0–7 UW / hex tile OW)
+          <input id="paintValue" type="text" value="0" maxlength="4" />
+        </label>
+        <label class="uw-only" hidden>
+          Monster id (hex)
+          <input id="monsterId" type="text" value="0" maxlength="4" />
+        </label>
+        <button type="button" id="btnApplyMonster" class="opt-btn uw-only" hidden>
+          Apply monster
+        </button>
+        <button type="button" id="btnDownload" class="opt-btn primary">Download JSON</button>
+        <p class="hint">
+          Edits our extracted JSON format only — never the NES ROM. Download and place under
+          <code>assets/overrides/</code> (same path as extracted) to playtest without re-extract.
+        </p>
+      </aside>
+      <main class="editor-main">
+        <canvas id="grid" width="512" height="352"></canvas>
+        <pre id="meta"></pre>
+      </main>
+    </div>
+    <script type="module" src="/src/editor.js"></script>
+  </body>
+</html>

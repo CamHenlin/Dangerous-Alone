@@ -1,0 +1,84 @@
+.editor-app {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+
+.editor-app .toolbar {
+  grid-column: 1 / -1;
+}
+
+.editor-side {
+  padding: 1rem;
+  background: #121820;
+  border-right: 1px solid #2b3348;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.editor-side label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.editor-side input,
+.editor-side select {
+  background: #0a0c10;
+  color: var(--text);
+  border: 1px solid #2b3348;
+  border-radius: 4px;
+  padding: 0.3rem 0.4rem;
+  font: inherit;
+}
+
+.editor-side .hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.35;
+  margin: 0.5rem 0 0;
+}
+
+.editor-side .hint code {
+  color: var(--accent);
+  font-size: 0.7rem;
+}
+
+.editor-side .opt-btn {
+  appearance: none;
+  border: 1px solid #2b3348;
+  background: #1a2430;
+  color: var(--text);
+  font: inherit;
+  padding: 0.45rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.editor-side .opt-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editor-main {
+  padding: 1rem;
+  overflow: auto;
+}
+
+#grid {
+  image-rendering: pixelated;
+  background: #000;
+  border: 1px solid #2b3348;
+  cursor: crosshair;
+}
+
+#meta {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NES Zelda — Play</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/play.css" />
+  </head>
+  <body>
+    <div id="app" class="play-app">
+      <header class="toolbar">
+        <h1>Play — file select</h1>
+        <a class="nav" href="/">Tiles</a>
+        <a class="nav" href="/map.html">Overworld</a>
+        <a class="nav" href="/dungeon.html">Dungeons</a>
+        <a class="nav" href="/editor.html">Editor</a>
+        <button type="button" id="btn-options" class="nav-btn">Options</button>
+        <span id="status" class="status">Loading…</span>
+      </header>
+      <main id="stage" class="play-stage"></main>
+      <aside class="play-help">
+        <p id="helpKeys">
+          Arrows/WASD move · Z/Space sword · X/C B-item · Enter inventory · F5/F9 practice · M mute · ,/. volume
+        </p>
+        <p id="posReadout">—</p>
+      </aside>
+    </div>
+
+    <div id="options-panel" class="options-panel" hidden>
+      <div class="options-card">
+        <h2>Options</h2>
+        <label class="opt-row">
+          Scale
+          <select id="opt-scale">
+            <option value="auto">Auto</option>
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+            <option value="5">5×</option>
+            <option value="6">6×</option>
+          </select>
+        </label>
+        <label class="opt-row">
+          Filter
+          <select id="opt-filter">
+            <option value="integer">Integer (crisp)</option>
+            <option value="smooth">Smooth</option>
+          </select>
+        </label>
+        <button type="button" id="opt-fullscreen" class="opt-btn">Toggle fullscreen</button>
+        <p class="opt-hint">Fullscreen needs a click each session (browser policy).</p>
+        <h3>Key bindings</h3>
+        <p class="opt-hint">Click a row, then press a key (Esc cancels).</p>
+        <div id="opt-binds" class="opt-binds"></div>
+        <button type="button" id="opt-close" class="opt-btn primary">Close</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/play/main.js"></script>
+  </body>
+</html>

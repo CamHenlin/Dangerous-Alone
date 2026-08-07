@@ -1,0 +1,149 @@
+/**
+ * NES overworld cave subroom (Mode B) layout helpers.
+ *
+ * Positions from aldonunez DrawCaveItems / cave init:
+ *   dweller ($78, $80), wares X $58/$78/$98 Y $98, mouth at south.
+ */
+
+import { DIR, HUD_HEIGHT, OW_BOUNDS } from './collision.js';
+import { ITEM, activeSlots } from './caves.js';
+
+/** Cave ware X positions (NES ObjX). */
+export const CAVE_WARE_XS = Object.freeze([0x58, 0x78, 0x98]);
+export const CAVE_WARE_Y = 0x98;
+export const CAVE_DWELLER_X = 0x78;
+export const CAVE_DWELLER_Y = 0x80;
+/** Standing fires flanking the dweller. */
+export const CAVE_FIRE_XS = Object.freeze([0x48, 0xa8]);
+export const CAVE_FIRE_Y = 0x80;
+
+/** Link enters just inside the mouth, facing up (not on the exit trigger). */
+export const CAVE_ENTER_SPAWN = Object.freeze({
+  x: 0x78,
+  y: 0xb8,
+  dir: 0x08, // UP
+});
+
+/** Playfield size matches OW (256×176 under HUD). */
+export const CAVE_BOUNDS = Object.freeze({
+  left: 0x10,
+  right: 0xe0,
+  top: HUD_HEIGHT + 0x10,
+  bottom: 0xd8,
+});
+
+/**
+ * Dweller visual kind from ROM dweller byte ($58–$5B).
+ * These match ObjAnimations heap indices for cave person types ($6A+).
+ * @param {number} dweller
+ * @returns {'old_man'|'old_woman'|'merchant'|'moblin'}
+ */
+export function dwellerKind(dweller) {
+  switch (dweller) {
+    case 0x59:
+      return 'old_woman';
+    case 0x5a:
+      return 'merchant';
+    case 0x5b:
+      return 'moblin';
+    default:
+      return 'old_man';
+  }
+}
+
+/**
+ * DrawCavePerson / ObjAnimFrameHeap+$58..$5B + ObjAnimAttrHeap.
+ * Old man/woman/merchant are mirrored; moblin (≥$7B cave type) is not.
+ * @param {number} dweller ROM dweller / anim index $58–$5B
+ * @returns {{ tile: number, pal: number, mirror: boolean }}
+ */
+export function caveDwellerDraw(dweller) {
+  switch (dweller & 0xff) {
+    case 0x59: // old woman — tile $9A, attr $02
+      return { tile: 0x9a, pal: 2, mirror: true };
+    case 0x5a: // merchant — tile $9C, attr $00
+      return { tile: 0x9c, pal: 0, mirror: true };
+    case 0x5b: // moblin — tile $F8, attr $02, not mirrored
+      return { tile: 0xf8, pal: 2, mirror: false };
+    default: // old man — tile $98, attr $02
+      return { tile: 0x98, pal: 2, mirror: true };
+  }
+}
+
+/** Cave bonfire object type $40 → ObjAnimFrameHeap[$08] = $5C. */
+export const CAVE_FIRE_TILE = 0x5c;
+/** ObjAnimAttrHeap[$08] low bits → sprite palette 2. */
+export const CAVE_FIRE_PAL = 2;
+
+/**
+ * Build a walkable cave tile grid (22×32). Black floor; mouth row walkable warp.
+ * @returns {number[][]}
+ */
+export function createCaveTileGrid() {
+  const rows = 22;
+  const cols = 32;
+  /** @type {number[][]} */
+  const grid = Array.from({ length: rows }, () => Array(cols).fill(0x26)); // sand-ish walkable
+  // Darker “interior” — still walkable (NES cave floor is open).
+  for (let r = 2; r < 18; r += 1) {
+    for (let c = 2; c < 30; c += 1) {
+      grid[r][c] = 0x26;
+    }
+  }
+  // South mouth: warp tiles so standing still can also be used; exit is edge-based.
+  for (let c = 14; c <= 17; c += 1) {
+    grid[20][c] = 0x70;
+    grid[21][c] = 0x71;
+  }
+  return grid;
+}
+
+/**
+ * Visible ware slots for the cave scene.
+ * @param {object} cave
+ * @param {Set<string>} taken
+ */
+export function caveWareSlots(cave, taken) {
+  return activeSlots(cave)
+    .filter((s) => s.item !== ITEM.NOTHING)
+    .map((s) => ({
+      ...s,
+      x: CAVE_WARE_XS[s.index] ?? 0x78,
+      y: CAVE_WARE_Y,
+      key: `${cave.caveId}:${s.index}`,
+      gone: taken.has(`${cave.caveId}:${s.index}`),
+    }));
+}
+
+/**
+ * Pickup when Link overlaps a ware (NES touch).
+ * @param {{ x: number, y: number }} link
+ * @param {ReturnType<typeof caveWareSlots>} slots
+ */
+export function wareUnderLink(link, slots) {
+  for (const slot of slots) {
+    if (slot.gone) continue;
+    // Link is 16×16; ware is ~8×16. Generous box matches NES touch pickup.
+    if (
+      Math.abs(link.x - slot.x) < 16
+      && Math.abs(link.y - slot.y) < 18
+    ) {
+      return slot;
+    }
+  }
+  return null;
+}
+
+/**
+ * Leave cave by walking into the south mouth.
+ * Link uses OW room bounds in caves (`stepLink` without roomId), so the
+ * farthest south Y is `OW_BOUNDS.bottom` ($CD). Mid-cell snaps can leave him
+ * on $CC for a frame, so accept that too.
+ * @param {{ x: number, y: number, dir: number }} link
+ */
+export function checkCaveExit(link) {
+  // At / past the south walk limit, facing down, centered on the mouth.
+  if (link.y < OW_BOUNDS.bottom - 1) return false;
+  if ((link.dir & DIR.DOWN) === 0) return false;
+  return link.x >= 0x60 && link.x <= 0x90;
+}

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NES Zelda — Dungeon Map</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/map.css" />
+  </head>
+  <body>
+    <div id="app" class="map-app">
+      <header class="toolbar">
+        <h1>Dungeon map</h1>
+        <a class="nav" href="/">Tiles</a>
+        <a class="nav" href="/play.html">Play</a>
+        <a class="nav" href="/map.html">Overworld</a>
+        <label>
+          Quest
+          <select id="questSelect">
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+        </label>
+        <label>
+          Level
+          <select id="levelSelect"></select>
+        </label>
+        <label>
+          Room
+          <input id="roomInput" type="text" value="73" maxlength="2" />
+        </label>
+        <button id="gotoStart" type="button">Start</button>
+        <button id="gotoBoss" type="button">Boss</button>
+        <button id="gotoTriforce" type="button">Triforce</button>
+        <span id="status" class="status">Loading…</span>
+      </header>
+      <div class="map-body">
+        <main id="stage"></main>
+        <aside id="info" class="info-panel">
+          <h2>Room</h2>
+          <pre id="infoPre">—</pre>
+        </aside>
+      </div>
+    </div>
+    <script type="module" src="/src/dungeon.js"></script>
+  </body>
+</html>
