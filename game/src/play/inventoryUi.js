@@ -357,6 +357,7 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
         y: uwMap.sheet.y,
         cellW: uwMap.sheet.cellW,
         cellH: uwMap.sheet.cellH,
+        marks: view?.dungeonMarks ?? [],
       });
       if (inv.map) placeIcon(0x4c, 1, uwMap.mapIcon.x, uwMap.mapIcon.y);
       if (inv.compass) placeIcon(0x6a, 1, uwMap.compassIcon.x, uwMap.compassIcon.y);

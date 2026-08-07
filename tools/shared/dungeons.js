@@ -192,6 +192,65 @@ export function doorConnects(code) {
 }
 
 /**
+ * Neighbor room id on the 16×8 dungeon map, or null at the edge.
+ * @param {number} roomId
+ * @param {'north'|'south'|'west'|'east'} side
+ */
+function neighborRoomId(roomId, side) {
+  const row = roomId >> 4;
+  const col = roomId & 0x0f;
+  if (side === 'north') return row > 0 ? roomId - 0x10 : null;
+  if (side === 'south') return row < 7 ? roomId + 0x10 : null;
+  if (side === 'west') return col > 0 ? roomId - 1 : null;
+  if (side === 'east') return col < 15 ? roomId + 1 : null;
+  return null;
+}
+
+const OPPOSITE_SIDE = Object.freeze({
+  north: 'south',
+  south: 'north',
+  west: 'east',
+  east: 'west',
+});
+
+/**
+ * DrawnMap omits some bomb-only secret rooms (e.g. Q1 L7 `$08`/`$1a`). Grow the
+ * room set through bidirectional `doorConnects` so those slots stay playable.
+ * @param {Set<number>} roomIds
+ * @param {object} tables
+ * @param {object} levelBlock
+ */
+export function discoverConnectedRooms(roomIds, tables, levelBlock) {
+  /** @type {Map<number, ReturnType<typeof decodeUwRoom>>} */
+  const decoded = new Map();
+  const doorType = (id, side) => {
+    let room = decoded.get(id);
+    if (!room) {
+      room = decodeUwRoom(tables, levelBlock, id);
+      decoded.set(id, room);
+    }
+    return room.doors[side];
+  };
+
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const id of [...roomIds]) {
+      for (const side of ['north', 'south', 'west', 'east']) {
+        if (!doorConnects(doorType(id, side).code)) continue;
+        const next = neighborRoomId(id, side);
+        if (next == null || roomIds.has(next)) continue;
+        const opp = OPPOSITE_SIDE[side];
+        if (!doorConnects(doorType(next, opp).code)) continue;
+        roomIds.add(next);
+        grew = true;
+      }
+    }
+  }
+  return roomIds;
+}
+
+/**
  * Decode one room slot (0–127) from a level block.
  */
 export function decodeUwRoom(tables, levelBlock, roomId) {
@@ -362,6 +421,9 @@ export function buildLevel(tables, levelNumber, quest = 1) {
       discoveredCellars.push(id);
     }
   }
+
+  // Secret rooms omitted from DrawnMap but linked by bombable/open doors.
+  discoverConnectedRooms(mapRooms, tables, block);
 
   const rooms = [...mapRooms]
     .filter((id) => id >= 0 && id < 128)

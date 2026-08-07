@@ -189,6 +189,42 @@ export function createHud(deps = {}) {
   }
 
   /**
+   * Radar only. Split out from `update` so the Phase 19 mark pulse can animate
+   * without rebuilding every heart / counter sprite each frame.
+   * @param {object} s
+   */
+  function drawMap(s) {
+    mapGfx.clear();
+    const inv = s?.inv;
+    if (!inv) return;
+    const mode = s.mode ?? 'overworld';
+    if (mode === 'dungeon' && s.dungeon?.levelData) {
+      drawDungeonMinimap(mapGfx, s.dungeon.levelData, {
+        visited: s.dungeon.visitedRooms,
+        currentRoomId: s.dungeon.room?.roomId ?? s.roomId,
+        hasMap: Boolean(inv.map),
+        hasCompass: Boolean(inv.compass),
+        x: LAYOUT.mapX,
+        y: LAYOUT.mapY,
+        cellW: 4,
+        cellH: 3,
+        compact: true,
+        marks: s.dungeonMarks ?? [],
+        frame: s.frame ?? 0,
+      });
+    } else if (mode === 'overworld' || mode === 'cave') {
+      drawOverworldMinimap(mapGfx, s.roomId ?? null, {
+        x: LAYOUT.mapX,
+        y: LAYOUT.mapY,
+        cellW: 4,
+        cellH: 3,
+        marks: s.mapMarks ?? [],
+        frame: s.frame ?? 0,
+      });
+    }
+  }
+
+  /**
    * @param {object} s
    * @param {object} [s.inv]
    * @param {string} [s.location]
@@ -196,6 +232,8 @@ export function createHud(deps = {}) {
    * @param {number} [s.roomId]
    * @param {object | null} [s.dungeon]
    * @param {number} [s.rupeesShown] rolling counter value; defaults to the total
+   * @param {{ roomId: number, kind: string }[]} [s.mapMarks] Phase 19 radar marks
+   * @param {number} [s.frame] free-running counter driving the mark pulse
    */
   function update(s) {
     lastState = s;
@@ -257,28 +295,7 @@ export function createHud(deps = {}) {
       placeHeart(/** @type {'full'|'half'|'empty'} */ (slots[i]), LAYOUT.heartX + col * 8, y);
     }
 
-    mapGfx.clear();
-    const mode = s.mode ?? 'overworld';
-    if (mode === 'dungeon' && s.dungeon?.levelData) {
-      drawDungeonMinimap(mapGfx, s.dungeon.levelData, {
-        visited: s.dungeon.visitedRooms,
-        currentRoomId: s.dungeon.room?.roomId ?? s.roomId,
-        hasMap: Boolean(inv.map),
-        hasCompass: Boolean(inv.compass),
-        x: LAYOUT.mapX,
-        y: LAYOUT.mapY,
-        cellW: 4,
-        cellH: 3,
-        compact: true,
-      });
-    } else if (mode === 'overworld' || mode === 'cave') {
-      drawOverworldMinimap(mapGfx, s.roomId ?? null, {
-        x: LAYOUT.mapX,
-        y: LAYOUT.mapY,
-        cellW: 4,
-        cellH: 3,
-      });
-    }
+    drawMap(s);
 
     // In-game second-quest cue (file select uses the sword marker; here a
     // compact "2" sits under the minimap so it never fights the A/B boxes).
@@ -318,6 +335,20 @@ export function createHud(deps = {}) {
     /** Re-apply last state after dock changes. */
     refresh() {
       if (lastState) update(lastState);
+    },
+    /**
+     * Cheap per-frame radar repaint — animates the Phase 19 mark pulse without
+     * touching the sprite-heavy half of the bar.
+     * @param {number} frame
+     * @param {{ roomId: number, kind: string }[]} [marks]
+     * @param {{ roomId: number, kind: string }[]} [dungeonMarks]
+     */
+    pulseMap(frame, marks, dungeonMarks) {
+      if (!lastState) return;
+      lastState.frame = frame;
+      if (marks) lastState.mapMarks = marks;
+      if (dungeonMarks) lastState.dungeonMarks = dungeonMarks;
+      drawMap(lastState);
     },
   };
 }

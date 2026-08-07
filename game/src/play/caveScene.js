@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { HUD_HEIGHT } from '@shared/collision.js';
 import {
   CAVE_DWELLER_X,
@@ -7,12 +7,18 @@ import {
   CAVE_FIRE_TILE,
   CAVE_FIRE_XS,
   CAVE_FIRE_Y,
+  CAVE_ROAD_XS,
+  CAVE_ROAD_Y,
   CAVE_WARE_Y,
   caveDwellerDraw,
+  caveHintLine,
   caveWareSlots,
 } from '@shared/caveRoom.js';
-import { caveItemChrTile, caveItemSpritePalette } from '@shared/caveItems.js';
-import { nesMultilineText, nesText } from './nesFont.js';
+import { caveItemChrTile } from '@shared/caveItems.js';
+import { itemDrawPalette } from '@shared/itemDrawPalette.js';
+import { SECRET_STAIRS_TILES } from '@shared/owSecrets.js';
+import { owBgTileSourceRect } from '@shared/owBgTiles.js';
+import { nesText } from './nesFont.js';
 
 const INTERNAL_W = 256;
 const PLAY_H = 176;
@@ -20,12 +26,47 @@ const WHITE = 0xfcfcfc;
 const HINT_GREY = 0x888888;
 
 /**
+ * Compose the OW stairs metatile ($70–$73) into a 16×16 texture.
+ * @param {Record<string, Texture>} sheetTextures
+ */
+function buildStairsTexture(sheetTextures) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 16;
+  canvas.height = 16;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return Texture.EMPTY;
+  ctx.imageSmoothingEnabled = false;
+  const positions = [
+    [0, 0],
+    [0, 8],
+    [8, 0],
+    [8, 8],
+  ];
+  for (let i = 0; i < 4; i += 1) {
+    const src = owBgTileSourceRect(SECRET_STAIRS_TILES[i]);
+    if (!src) continue;
+    const sheet = sheetTextures[src.sheetKey];
+    const img = /** @type {CanvasImageSource | null} */ (sheet?.source?.resource);
+    if (!img) continue;
+    const [dx, dy] = positions[i];
+    ctx.drawImage(img, src.sx, src.sy, 8, 8, dx, dy, 8, 8);
+  }
+  const tex = Texture.from(canvas);
+  tex.source.scaleMode = 'nearest';
+  return tex;
+}
+
+/**
  * Full-screen NES-style cave interior (Mode B).
+ *
+ * The dweller's speech is not drawn here — Phase 19 routes every speaking part
+ * through the shared dialogue box (`./textBox.js`), which `openCave` opens.
  * @param {{
  *   spriteTex: Texture,
  *   items: ReturnType<import('./itemSprites.js').createItemSprites>,
  *   enemySprites: ReturnType<import('./enemySprites.js').createEnemySprites>,
  *   commonBg?: Texture | null,
+ *   sheetTextures?: Record<string, Texture>,
  * }} deps
  */
 export function createCaveScene(deps) {
@@ -51,29 +92,25 @@ export function createCaveScene(deps) {
   const wareLayer = new Container();
   root.addChild(wareLayer);
 
-  const dialogueLayer = new Container();
-  dialogueLayer.y = HUD_HEIGHT + 16;
-  root.addChild(dialogueLayer);
+  /** @type {Container} */
+  const roadLayer = new Container();
+  root.addChild(roadLayer);
 
   const hintLayer = new Container();
   hintLayer.y = HUD_HEIGHT + PLAY_H - 12;
   root.addChild(hintLayer);
-  if (fontImg) {
-    const hint = nesText(fontImg, 'WALK TO ITEM  SOUTH TO LEAVE', 24, 0, HINT_GREY);
-    hintLayer.addChild(hint);
-  }
+
+  /** Cached OW stairs metatile for take-any-road caves. */
+  let stairsTex = /** @type {Texture | null} */ (null);
 
   /** @type {object | null} */
   let cave = null;
-  /** @type {string[]} */
-  let lines = [];
-  let revealChars = 0;
-  let revealTimer = 0;
+  /** OW screen Link entered from — scopes take-any / door / moblin taken flags. */
+  let entranceRoomId = /** @type {number | null} */ (null);
   let firePhase = 0;
   /**
-   * Potion shop before the letter: `UpdateCavePerson` @ `Z_01.asm:322` returns
-   * before `DrawCaveItems` *and* before the state jump table, so the prices and
-   * the textbox are dormant too — not just the wares.
+   * Potion shop before the letter: wares and prices stay hidden until shown.
+   * Dialogue still opens (via `lockedPages` on the medicine-shop story).
    */
   let waresHidden = false;
 
@@ -140,57 +177,76 @@ export function createCaveScene(deps) {
   }
 
   /**
+   * @param {string} kind
+   */
+  function paintHint(kind) {
+    hintLayer.removeChildren().forEach((c) =>
+      c.destroy({ children: true, texture: false, textureSource: false }),
+    );
+    if (!fontImg) return;
+    const line = caveHintLine(kind);
+    // Center-ish: item hint is long; south-only is short.
+    const x = line.length > 20 ? 24 : 72;
+    hintLayer.addChild(nesText(fontImg, line, x, 0, HINT_GREY));
+  }
+
+  function paintRoadStairs() {
+    roadLayer.removeChildren().forEach((c) =>
+      c.destroy({ children: true, texture: false, textureSource: false }),
+    );
+    if (!cave || cave.kind !== 'road') return;
+    if (!stairsTex) {
+      stairsTex = buildStairsTexture(deps.sheetTextures ?? {});
+    }
+    if (!stairsTex || stairsTex === Texture.EMPTY) return;
+    for (const x of CAVE_ROAD_XS) {
+      const spr = new Sprite(stairsTex);
+      spr.x = x;
+      spr.y = CAVE_ROAD_Y;
+      roadLayer.addChild(spr);
+    }
+  }
+
+  /**
    * @param {object} nextCave
    * @param {Set<string>} taken
    * @param {boolean} [hidden]
+   * @param {object | null} [inv]
+   * @param {number | null} [roomId]
    */
-  function open(nextCave, taken, hidden = false) {
+  function open(nextCave, taken, hidden = false, inv = null, roomId = null) {
     cave = nextCave;
-    lines = Array.isArray(nextCave.textLines) && nextCave.textLines.length
-      ? [...nextCave.textLines]
-      : [nextCave.text || ''];
-    revealChars = 0;
-    revealTimer = 0;
+    entranceRoomId = roomId;
     paintBg();
     paintNpc(nextCave.dweller);
     paintFires();
-    refreshWares(taken, hidden);
-    clearDialogue();
+    paintHint(nextCave.kind);
+    paintRoadStairs();
+    refreshWares(taken, hidden, inv);
     root.visible = true;
-  }
-
-  function clearDialogue() {
-    dialogueLayer.removeChildren().forEach((c) =>
-      c.destroy({ children: true, texture: false, textureSource: false }),
-    );
-  }
-
-  function paintDialogue() {
-    clearDialogue();
-    const full = lines.join('\n');
-    const shown = full.slice(0, revealChars);
-    const { root: block, width } = nesMultilineText(fontImg, shown, WHITE, 10);
-    block.x = Math.max(8, (INTERNAL_W - width) / 2);
-    dialogueLayer.addChild(block);
   }
 
   /**
    * @param {Set<string>} taken
    * @param {boolean} [hidden]
+   * @param {object | null} [inv]
    */
-  function refreshWares(taken, hidden = false) {
+  function refreshWares(taken, hidden = false, inv = null) {
     waresHidden = hidden;
     wareLayer.removeChildren().forEach((c) =>
       c.destroy({ children: true, texture: false, textureSource: false }),
     );
     if (!cave || waresHidden) return;
     const showPrices = cave.kind === 'shop' || cave.kind === 'potion';
-    for (const slot of caveWareSlots(cave, taken)) {
+    for (const slot of caveWareSlots(cave, taken, inv, entranceRoomId)) {
       if (slot.gone) continue;
+      // Wide items (heart container, triforce, …) need the mirrored pair —
+      // spriteTexture alone draws only the left 8×16 half.
       const tile = caveItemChrTile(slot.item);
-      const pal = caveItemSpritePalette(slot.item);
-      const spr = new Sprite(items.spriteTexture(tile, pal));
-      spr.x = slot.x;
+      const pal = itemDrawPalette(slot.item);
+      const drawn = items.itemTexture(tile, pal);
+      const spr = new Sprite(drawn.texture);
+      spr.x = slot.x + (drawn.narrow ? 4 : 0);
       spr.y = slot.y;
       wareLayer.addChild(spr);
       if (showPrices && slot.price > 0 && fontImg) {
@@ -200,30 +256,23 @@ export function createCaveScene(deps) {
     }
   }
 
-  /** Typewriter one frame (~1 char every 2 frames like letter SFX). */
-  function tickDialogue() {
-    if (!root.visible || waresHidden) return;
-    const full = lines.join('\n');
-    if (revealChars >= full.length) return;
-    revealTimer += 1;
-    if (revealTimer < 2) return;
-    revealTimer = 0;
-    revealChars += 1;
-    paintDialogue();
-  }
-
   function tick() {
     if (!root.visible) return;
-    tickDialogue();
     if (Math.random() < 0.15) paintFires();
   }
 
   function close() {
     root.visible = false;
     cave = null;
+    entranceRoomId = null;
     waresHidden = false;
-    clearDialogue();
     wareLayer.removeChildren().forEach((c) =>
+      c.destroy({ children: true, texture: false, textureSource: false }),
+    );
+    roadLayer.removeChildren().forEach((c) =>
+      c.destroy({ children: true, texture: false, textureSource: false }),
+    );
+    hintLayer.removeChildren().forEach((c) =>
       c.destroy({ children: true, texture: false, textureSource: false }),
     );
     if (npcSprite) {
@@ -245,6 +294,9 @@ export function createCaveScene(deps) {
     },
     get cave() {
       return cave;
+    },
+    get roomId() {
+      return entranceRoomId;
     },
     openWith: open,
     refreshWares,

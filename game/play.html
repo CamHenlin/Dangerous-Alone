@@ -16,6 +16,7 @@
         <a class="nav" href="/dungeon.html">Dungeons</a>
         <a class="nav" href="/editor.html">Editor</a>
         <button type="button" id="btn-options" class="nav-btn">Options</button>
+        <button type="button" id="btn-debug" class="nav-btn">Debug</button>
         <span id="status" class="status">Loading…</span>
       </header>
       <main id="stage" class="play-stage"></main>
@@ -55,6 +56,30 @@
         <p class="opt-hint">Click a row, then press a key (Esc cancels).</p>
         <div id="opt-binds" class="opt-binds"></div>
         <button type="button" id="opt-close" class="opt-btn primary">Close</button>
+      </div>
+    </div>
+
+    <div id="debug-panel" class="options-panel" hidden>
+      <div class="options-card">
+        <h2>Debug</h2>
+        <p class="opt-hint">Gameplay cheats for testing. Not saved with the file slot.</p>
+        <button type="button" id="dbg-refill" class="opt-btn">Refill hearts</button>
+        <button type="button" id="dbg-refill-bombs" class="opt-btn">Refill bombs</button>
+        <button type="button" id="dbg-refill-rupees" class="opt-btn">Refill rupees</button>
+        <button type="button" id="dbg-kill" class="opt-btn">Kill all enemies on screen</button>
+        <label class="opt-row opt-check">
+          Invincible
+          <input type="checkbox" id="dbg-invincible" />
+        </label>
+        <label class="opt-row opt-check">
+          One-hit kills
+          <input type="checkbox" id="dbg-one-hit" />
+        </label>
+        <label class="opt-row opt-check">
+          Insane item drops
+          <input type="checkbox" id="dbg-insane-drops" />
+        </label>
+        <button type="button" id="dbg-close" class="opt-btn primary">Close</button>
       </div>
     </div>
 

@@ -137,6 +137,8 @@ export function countsTowardRoomClear(e) {
   if (t >= 0x2b && t <= 0x2d) return false; // bubbles
   if (t >= 0x49) return false; // traps / people / shots
   if (t === 0x46 || e.immortal) return false; // detached Gleeok head
+  // Rupee stash ($35): taking any one zeros RoomObjCount (UpdateRupeeStash).
+  if (t === 0x35 && e.rupeeStashRoomOpened) return false;
   return t > 0;
 }
 

@@ -18,44 +18,28 @@ const PHASE_DURATION = Object.freeze({
   [SWORD_PHASE.RECOVER_C]: 1,
 });
 
-/** PlayerToWeaponOffsets for hit window (U,D,L,R). */
-const SWORD_OFFSET = Object.freeze({
-  [DIR.UP]: { x: -1, y: -10 },
-  [DIR.DOWN]: { x: 1, y: 13 },
-  [DIR.LEFT]: { x: -11, y: 3 },
-  [DIR.RIGHT]: { x: 11, y: 3 },
-});
+/** Blade length from Link's center to the sword midpoint (px). */
+const ARC_RADIUS = 14;
+/** Hitbox size around the blade midpoint. */
+const ARC_HIT_W = 14;
+const ARC_HIT_H = 14;
 
 /**
- * PlayerToWeaponOffsets by phase (after windup) × direction.
- * NES skips drawing in state 1 (windup). Dir order: U,D,L,R.
- * @type {Record<number, Record<number, { x: number, y: number }>>}
+ * Arc swing angles in radians. Screen space: 0 = right, positive = clockwise
+ * (Y grows downward). Each facing sweeps ~180° like LA / ALttP.
+ *
+ * Values are [startAngle, endAngle] over the HIT window; recover eases inward.
+ * @type {Record<number, [number, number]>}
  */
-const WEAPON_DRAW_OFFSET = Object.freeze({
-  [SWORD_PHASE.HIT]: {
-    [DIR.UP]: { x: -1, y: -10 },
-    [DIR.DOWN]: { x: 1, y: 13 },
-    [DIR.LEFT]: { x: -11, y: 3 },
-    [DIR.RIGHT]: { x: 11, y: 3 },
-  },
-  [SWORD_PHASE.RECOVER_A]: {
-    [DIR.UP]: { x: -1, y: -9 },
-    [DIR.DOWN]: { x: 1, y: 9 },
-    [DIR.LEFT]: { x: -7, y: 3 },
-    [DIR.RIGHT]: { x: 7, y: 3 },
-  },
-  [SWORD_PHASE.RECOVER_B]: {
-    [DIR.UP]: { x: -1, y: -1 },
-    [DIR.DOWN]: { x: 1, y: 5 },
-    [DIR.LEFT]: { x: -3, y: 3 },
-    [DIR.RIGHT]: { x: 3, y: 3 },
-  },
-  [SWORD_PHASE.RECOVER_C]: {
-    [DIR.UP]: { x: -1, y: -1 },
-    [DIR.DOWN]: { x: 1, y: 5 },
-    [DIR.LEFT]: { x: -3, y: 3 },
-    [DIR.RIGHT]: { x: 3, y: 3 },
-  },
+const ARC_ANGLES = Object.freeze({
+  // Right: from above, down through forward, finishing low.
+  [DIR.RIGHT]: [-Math.PI * 0.85, Math.PI * 0.35],
+  // Left: mirrored (above → through left → low).
+  [DIR.LEFT]: [-Math.PI * 0.15, -Math.PI * 1.35],
+  // Down: from left shoulder across to right hip.
+  [DIR.DOWN]: [Math.PI * 0.15, Math.PI * 0.85],
+  // Up: from right shoulder across to left.
+  [DIR.UP]: [-Math.PI * 0.15, -Math.PI * 0.85],
 });
 
 /**
@@ -126,7 +110,70 @@ export function swordSpawnsShot(sword, prevPhase) {
 }
 
 /**
- * Axis-aligned sword hitbox (world pixels) during the hit window.
+ * Progress 0..1 through the visible swing (HIT + recover).
+ * @param {SwordState} sword
+ */
+export function swordArcProgress(sword) {
+  if (sword.phase < SWORD_PHASE.HIT || sword.phase > SWORD_PHASE.RECOVER_C) {
+    return 0;
+  }
+  const hitDur = PHASE_DURATION[SWORD_PHASE.HIT];
+  if (sword.phase === SWORD_PHASE.HIT) {
+    // timer counts down from hitDur → 1 during HIT.
+    return (hitDur - sword.timer) / (hitDur + 2);
+  }
+  if (sword.phase === SWORD_PHASE.RECOVER_A) return hitDur / (hitDur + 2);
+  if (sword.phase === SWORD_PHASE.RECOVER_B) return (hitDur + 1) / (hitDur + 2);
+  return 1;
+}
+
+/**
+ * Arc angle (radians) for the current swing frame.
+ * @param {SwordState} sword
+ */
+export function swordArcAngle(sword) {
+  const pair = ARC_ANGLES[sword.dir] ?? ARC_ANGLES[DIR.UP];
+  const [a0, a1] = pair;
+  let t = swordArcProgress(sword);
+  if (sword.phase === SWORD_PHASE.WINDUP) t = 0;
+  // Smoothstep for a more natural slash feel.
+  t = t * t * (3 - 2 * t);
+  return a0 + (a1 - a0) * t;
+}
+
+/**
+ * Link body center used as the arc pivot.
+ * @param {number} linkX
+ * @param {number} linkY
+ */
+function pivot(linkX, linkY) {
+  return { x: linkX + 8, y: linkY + 8 };
+}
+
+/**
+ * Blade midpoint in screen pixels for the current arc pose.
+ * @param {SwordState} sword
+ * @param {number} linkX
+ * @param {number} linkY
+ * @param {number} [radius]
+ */
+export function swordArcPoint(sword, linkX, linkY, radius = ARC_RADIUS) {
+  const ang = swordArcAngle(sword);
+  const p = pivot(linkX, linkY);
+  // During recover, ease the radius inward toward Link.
+  let r = radius;
+  if (sword.phase === SWORD_PHASE.RECOVER_A) r = radius * 0.75;
+  else if (sword.phase === SWORD_PHASE.RECOVER_B) r = radius * 0.45;
+  else if (sword.phase === SWORD_PHASE.RECOVER_C) r = radius * 0.25;
+  return {
+    x: p.x + Math.cos(ang) * r,
+    y: p.y + Math.sin(ang) * r,
+    angle: ang,
+  };
+}
+
+/**
+ * Sweeping sword hitbox during the hit window (moves with the arc).
  * @param {SwordState} sword
  * @param {number} linkX
  * @param {number} linkY
@@ -135,15 +182,13 @@ export function swordHitbox(sword, linkX, linkY) {
   if (!swordDoesDamage(sword)) {
     return null;
   }
-  const off = SWORD_OFFSET[sword.dir] ?? SWORD_OFFSET[DIR.UP];
-  const wx = linkX + off.x;
-  const wy = linkY + off.y;
-  const vertical = Boolean(sword.dir & (DIR.UP | DIR.DOWN));
-  // Approximate NES mid + thresh as a rect around the blade.
-  if (vertical) {
-    return { x: wx, y: wy, w: 12, h: 16 };
-  }
-  return { x: wx, y: wy, w: 16, h: 12 };
+  const tip = swordArcPoint(sword, linkX, linkY);
+  return {
+    x: tip.x - ARC_HIT_W / 2,
+    y: tip.y - ARC_HIT_H / 2,
+    w: ARC_HIT_W,
+    h: ARC_HIT_H,
+  };
 }
 
 /**
@@ -166,19 +211,35 @@ export function swordAttackBaseTile(dir) {
 
 /**
  * Screen position for the sword blade sprite (null during windup / idle).
+ * `angle` is radians for Pixi rotation (0 = upright CHR pointing up… callers
+ * convert — see drawSwordBlade). `dir` remains the facing for texture choice.
+ *
  * @param {SwordState} sword
  * @param {number} linkX
  * @param {number} linkY
- * @returns {{ x: number, y: number, dir: number } | null}
+ * @returns {{ x: number, y: number, dir: number, angle: number } | null}
  */
 export function swordDrawPos(sword, linkX, linkY) {
   if (sword.phase < SWORD_PHASE.HIT || sword.phase > SWORD_PHASE.RECOVER_C) {
     return null;
   }
-  const byDir = WEAPON_DRAW_OFFSET[sword.phase];
-  const off = byDir?.[sword.dir] ?? byDir?.[DIR.UP];
-  if (!off) return null;
-  return { x: linkX + off.x, y: linkY + off.y, dir: sword.dir };
+  const tip = swordArcPoint(sword, linkX, linkY);
+  // Texture is drawn from its top-left; center the 8×16 / 16×8 blade on the tip.
+  return {
+    x: tip.x - 8,
+    y: tip.y - 8,
+    dir: sword.dir,
+    angle: tip.angle,
+  };
+}
+
+/**
+ * Pixi rotation for an up-pointing sword texture so the tip follows `angle`.
+ * Up-texture tip points toward angle -π/2 in screen space when rotation=0.
+ * @param {number} angle sword tip direction (screen radians)
+ */
+export function swordSpriteRotation(angle) {
+  return angle + Math.PI / 2;
 }
 
 /**

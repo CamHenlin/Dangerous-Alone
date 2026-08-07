@@ -3,10 +3,12 @@ import { test } from 'node:test';
 import {
   DIR,
   UW_BOUNDS,
+  combineVerticalCollidingTiles,
   getLinkCollidingTile,
   getMonsterCollidingTile,
   hitsUwBound,
   isOwTileWalkable,
+  isOwWarpTile,
   normalizeOwTile,
   objectHotspotOffset,
   tileAtPlayPixel,
@@ -17,6 +19,28 @@ test('OW ground $26 is walkable; rock $D8 is not', () => {
   assert.equal(isOwTileWalkable(0xd8), false);
   assert.equal(isOwTileWalkable(0x88), true);
   assert.equal(isOwTileWalkable(0x89), false);
+});
+
+test('vertical look-ahead prefers a warp tile beside ornament solids', () => {
+  assert.equal(isOwWarpTile(0x24), true);
+  assert.equal(combineVerticalCollidingTiles(0xa5, 0x24), 0x24);
+  assert.equal(combineVerticalCollidingTiles(0x24, 0xa1), 0x24);
+  // No warp: still NES max-id.
+  assert.equal(combineVerticalCollidingTiles(0x26, 0xa5), 0xa5);
+  assert.equal(combineVerticalCollidingTiles(0xa5, 0x26), 0xa5);
+});
+
+test('cave-mouth columns stay walkable from either side of the mouth', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  // Row 9: ornament | mouth | mouth | ornament  (cols 15–18), like OW $0F.
+  grid[9][15] = 0xa5;
+  grid[9][16] = 0x24;
+  grid[9][17] = 0x24;
+  grid[9][18] = 0xa1;
+  // ObjY=$85 → up look-ahead play Y hits row 9.
+  assert.equal(getLinkCollidingTile(grid, 0x78, 0x85, DIR.UP).walkable, true);
+  assert.equal(getLinkCollidingTile(grid, 0x80, 0x85, DIR.UP).walkable, true);
+  assert.equal(getLinkCollidingTile(grid, 0x88, 0x85, DIR.UP).walkable, true);
 });
 
 test('WalkableTiles remap to $26', () => {

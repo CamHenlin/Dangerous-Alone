@@ -11,8 +11,31 @@ export const OW_WALKABLE_REMAP = Object.freeze([
   0x8d, 0x91, 0x9c, 0xac, 0xad, 0xcc, 0xd2, 0xd5, 0xdf,
 ]);
 
+/** Tiles that trigger OW underground entry while standing (HandleWarpOW). */
+export const OW_WARP_TILES = Object.freeze([0x24, 0x88, 0x70, 0x71, 0x72, 0x73]);
+
 /** OW: first unwalkable tile after remap (`ObjectRoomBoundsOW`). */
 export const OW_FIRST_UNWALKABLE = 0x89;
+
+/**
+ * @param {number} tile
+ */
+export function isOwWarpTile(tile) {
+  return OW_WARP_TILES.includes(tile & 0xff);
+}
+
+/**
+ * NES vertical look-ahead keeps the higher of two column samples. Beside a
+ * cave mouth that turns a 16px graphic into an 8px approach window (ornament
+ * + $24 → solid). Prefer a warp tile when either column is one.
+ * @param {number} tile
+ * @param {number} tile2
+ */
+export function combineVerticalCollidingTiles(tile, tile2) {
+  if (isOwWarpTile(tile)) return tile;
+  if (isOwWarpTile(tile2)) return tile2;
+  return tile2 >= tile ? tile2 : tile;
+}
 
 /** UW: first unwalkable tile (`ObjectRoomBoundsUW`) — no OW remap. */
 export const UW_FIRST_UNWALKABLE = 0x78;
@@ -132,12 +155,10 @@ export function getObjectCollidingTile(tileGrid, objX, objY, dir, opts = {}) {
   const yPlay = sampleY - HUD_HEIGHT;
   let tile = tileAtPlayPixel(tileGrid, sampleX, yPlay);
 
-  // Vertical moves also sample the next column and keep the higher tile id.
+  // Vertical moves also sample the next column (NES keeps the higher id).
   if (vertical) {
     const tile2 = tileAtPlayPixel(tileGrid, sampleX + 8, yPlay);
-    if (tile2 >= tile) {
-      tile = tile2;
-    }
+    tile = combineVerticalCollidingTiles(tile, tile2);
   }
 
   return normalizeOwTile(tile, firstUnwalkable, walkableRemap);

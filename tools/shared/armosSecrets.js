@@ -85,9 +85,13 @@ export function restoreArmosReveals(tileGrid, roomId, revealed) {
     const row = Number(parts[2]);
     const col = Number(parts[3]);
     if (!Number.isFinite(row) || !Number.isFinite(col)) continue;
+    // Rebuild the statue's own square, not the secret's. Forcing
+    // `SECRET_ARMOS_Y` here made every Armos in the secret's *column* restore
+    // as a staircase: on `$0B` the plain statue at square row 6 came back as a
+    // second stairway under the real one at row 4.
     const secret = armosSecretAt(roomId, {
       x: col * 16,
-      y: SECRET_ARMOS_Y,
+      y: HUD_HEIGHT + row * 16,
     });
     if (secret?.kind === 'stairs') {
       revealSecretTiles(tileGrid, row, col);

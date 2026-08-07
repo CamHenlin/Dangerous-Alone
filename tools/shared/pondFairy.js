@@ -304,9 +304,10 @@ export function visiblePondHearts(fairy) {
  * @param {import('./enemies.js').Enemy} e
  * @param {{ halfHearts?: number, maxHalfHearts?: number, swordBlocked?: number }} inv
  * @param {{ x: number, y: number }} link
+ * @param {{ roomId?: number | null }} [opts]
  * @returns {PondFairyStepResult}
  */
-export function stepPondFairy(e, inv, link) {
+export function stepPondFairy(e, inv, link, opts = {}) {
   ensurePondFairyRuntime(e);
   /** @type {PondFairyStepResult} */
   const out = {
@@ -315,6 +316,16 @@ export function stepPondFairy(e, inv, link) {
     showOrbitHearts: false,
     hearts: [],
   };
+
+  // Continuous OW: Link Y=$AD is a normal south walk line on every screen.
+  // Only the fairy's home fountain room may start / continue the heal.
+  if (
+    opts.roomId != null
+    && e.homeRoomId != null
+    && (e.homeRoomId & 0xff) !== (opts.roomId & 0xff)
+  ) {
+    return out;
+  }
 
   if (e.pondState === 0) {
     if (!linkAtPondEdge(link)) return out;
@@ -369,8 +380,17 @@ export function stepPondFairy(e, inv, link) {
 
 /**
  * @param {import('./enemies.js').Enemy[]} enemies
+ * @param {number | null} [roomId] when set, only the fairy whose home is this
+ *   room (continuous OW can stream a neighbor fountain while Link is elsewhere)
  * @returns {import('./enemies.js').Enemy | null}
  */
-export function findPondFairy(enemies) {
-  return enemies.find((e) => e?.alive && e.objType === POND_FAIRY) ?? null;
+export function findPondFairy(enemies, roomId = null) {
+  const want = roomId == null ? null : roomId & 0xff;
+  return (
+    enemies.find((e) => {
+      if (!e?.alive || e.objType !== POND_FAIRY) return false;
+      if (want == null) return true;
+      return (e.homeRoomId ?? want) === want;
+    }) ?? null
+  );
 }

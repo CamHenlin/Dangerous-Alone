@@ -140,15 +140,23 @@ export function advanceKillCycle(c, objType) {
  * @param {DropCounters} opts.counters
  * @param {() => number} opts.randomByte 0–255 (NES Random,X)
  * @param {number} [opts.slotIndex] NES object slot (1 = stalfos/gibdo suppress)
+ * @param {boolean} [opts.forceDrop] debug: always return an item when possible
  */
 export function resolveDroppedItem(opts) {
   const { objType, counters, randomByte } = opts;
+  const forceDrop = Boolean(opts.forceDrop);
   const row = dropTableRow(objType);
-  if (row < 0) return null;
+  if (row < 0) return forceDrop ? DROP_ITEM.HEART : null;
 
   // Slot 1 room-item carriers (Like-Like / Stalfos / Gibdo) — no random drop.
   const slot = opts.slotIndex ?? 0;
-  if (slot === 1 && (objType === 0x17 || objType === 0x2a || objType === 0x30)) return null;
+  if (
+    !forceDrop
+    && slot === 1
+    && (objType === 0x17 || objType === 0x2a || objType === 0x30)
+  ) {
+    return null;
+  }
 
   let itemId = DROP_TABLE[row * 10 + (counters.worldKillCycle % 10)];
 
@@ -167,7 +175,7 @@ export function resolveDroppedItem(opts) {
   }
 
   const roll = randomByte() & 0xff;
-  if (roll >= DROP_RATES[row]) return null;
+  if (!forceDrop && roll >= DROP_RATES[row]) return null;
   return itemId;
 }
 

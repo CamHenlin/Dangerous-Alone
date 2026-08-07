@@ -165,6 +165,37 @@ export function isCellarRoom(room, level) {
 }
 
 /**
+ * True when `roomId` is a cellar on this level (list membership or layout).
+ * @param {number} roomId
+ * @param {{ cellarRooms?: number[], rooms?: { roomId: number, layoutId?: number }[] }} level
+ */
+export function isCellarRoomId(roomId, level) {
+  const id = roomId & 0xff;
+  if (level?.cellarRooms?.includes(id)) return true;
+  const room = level?.rooms?.find((r) => (r.roomId & 0xff) === id);
+  return isCellarRoom(room, level);
+}
+
+/**
+ * Rooms the continuous UW camera may stream. Cellars live on the map grid but
+ * are entered only via stairs — never show them as map-adjacent neighbors, and
+ * when inside a cellar never stream its top-down neighbors.
+ *
+ * @param {number[]} candidateRoomIds
+ * @param {number} currentRoomId
+ * @param {{ cellarRooms?: number[], rooms?: { roomId: number, layoutId?: number }[] }} level
+ * @returns {number[]}
+ */
+export function streamableUwRooms(candidateRoomIds, currentRoomId, level) {
+  const current = currentRoomId & 0xff;
+  if (isCellarRoomId(current, level)) return [current];
+  return candidateRoomIds.filter((id) => {
+    const rid = id & 0xff;
+    return rid === current || !isCellarRoomId(rid, level);
+  });
+}
+
+/**
  * @param {object} room decoded with attrsA/attrsB or cellarExits
  * @returns {{ left: number, right: number } | null}
  */
@@ -200,11 +231,14 @@ export function linkAlignedForUwStairs(link) {
 }
 
 /**
- * CheckWarps UW branch: ObjGridOffset == 0, Y ≡ $D, standing tile $70–$73.
+ * CheckWarps UW branch: ObjGridOffset == 0 and a stairs tile ($70–$73) under Link.
  *
- * Uses GetCollidableTileStill (ObjX & $F8, ObjY + $0B) via `standingTile`.
- * X need not be a multiple of $10 — knockback often leaves Link mid-cell while
- * feet still sample the stairs column (same relaxation as OW checkCaveEntry).
+ * NES also requires Y ≡ $D and a single GetCollidableTileStill sample. We keep
+ * the gridOffset gate (no mid-step warps) but probe a small footprint — right
+ * foot + one metatile up — because:
+ * - Y=$9D (south slot on a $90 stairs square) samples the row *below* the stairs
+ * - X=$78 overlaps stairs while the left-foot sample is still floor
+ * - 8px grid cells also park Link at Y ≡ $5 between metatile rows
  *
  * @param {{ x: number, y: number, gridOffset?: number }} link
  * @param {number[][] | null | undefined} playGrid 22×32 dungeon play grid
@@ -212,9 +246,13 @@ export function linkAlignedForUwStairs(link) {
 export function checkUwStairsEntry(link, playGrid) {
   if (!playGrid?.length || !link) return false;
   if ((link.gridOffset ?? 0) !== 0) return false;
-  if ((link.y & 0x0f) !== 0x0d) return false;
-  const tile = standingTile(playGrid, link.x, link.y);
-  return STAIRS_TILES.has(tile & 0xff);
+  for (const ox of [0, 8]) {
+    for (const oy of [0, -8, -16]) {
+      const tile = standingTile(playGrid, link.x + ox, link.y + oy);
+      if (STAIRS_TILES.has(tile & 0xff)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -257,6 +295,29 @@ export function cellarForStairsRoom(level, fromRoomId) {
     if (Number(exits.left) === want || Number(exits.right) === want) return Number(cid);
   }
   return null;
+}
+
+/**
+ * On-map stairs room(s) that drop into `cellarRoomId` (attrs A/B destinations).
+ * Used when a tip wants to mark a cellar treasure on the dungeon minimap —
+ * cellars themselves are never drawn.
+ * @param {object} level
+ * @param {number} cellarRoomId
+ * @returns {number[]}
+ */
+export function stairsRoomsForCellar(level, cellarRoomId) {
+  const room = (level?.rooms ?? []).find((r) => Number(r.roomId) === Number(cellarRoomId));
+  const exits = cellarExitsFor(room);
+  if (!exits) return [];
+  /** @type {number[]} */
+  const out = [];
+  for (const id of [exits.left, exits.right]) {
+    const n = Number(id);
+    if (!Number.isFinite(n) || n === 0xff) continue;
+    if (out.includes(n)) continue;
+    out.push(n & 0xff);
+  }
+  return out;
 }
 
 /**

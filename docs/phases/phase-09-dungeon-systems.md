@@ -84,6 +84,7 @@ Bosses without CHR frame tables draw as colored rectangles.
 | 2026-08-05 | Generic boss stubs for L2–9 | Completable path without full AI ports |
 | 2026-08-05 | Gohma/Ganon arrow-gated | Preserves item dependency without full patterns |
 | 2026-08-05 | Discover orphan cellars at buildLevel | LevelInfo cellar list incomplete (L3 raft) |
+| 2026-08-07 | Discover bomb-secret rooms omitted from DrawnMap | L7 `$08`/`$1a` (and peers) were openable but had no destination room |
 | 2026-08-05 | `inv.quest` selects `q1`/`q2` JSON | Minimal Quest 2 flag |
 
 ## Open questions

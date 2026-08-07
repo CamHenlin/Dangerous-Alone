@@ -19,7 +19,10 @@ import {
   composeCellarRoomTiles,
   decodeCellarSquares,
   isCellarRoom,
+  isCellarRoomId,
   linkOnStairs,
+  stairsRoomsForCellar,
+  streamableUwRooms,
 } from './dungeonCellar.js';
 import { PLAY_COLS, PLAY_ROWS, composeDungeonRoomTiles } from './dungeonRoomLayout.js';
 import { UW_PRIMARY_SQUARES, buildDungeonPlayGrid, dungeonPlayOrigin } from './dungeonPlay.js';
@@ -42,6 +45,33 @@ test('cellar $7F exits decode to room $22', () => {
   assert.deepEqual(cellarExitsFor(room), { left: 0x22, right: 0x22 });
 });
 
+test('streamableUwRooms hides map-adjacent cellars from top-down rooms', () => {
+  const level = {
+    cellarRooms: [0x4a],
+    rooms: [
+      { roomId: 0x49, layoutId: 0x01 },
+      { roomId: 0x4a, layoutId: 0x3e },
+      { roomId: 0x59, layoutId: 0x02 },
+    ],
+  };
+  assert.deepEqual(
+    streamableUwRooms([0x49, 0x4a, 0x59], 0x49, level),
+    [0x49, 0x59],
+  );
+  assert.equal(isCellarRoomId(0x4a, level), true);
+});
+
+test('streamableUwRooms isolates the current cellar', () => {
+  const level = {
+    cellarRooms: [0x4a],
+    rooms: [
+      { roomId: 0x49, layoutId: 0x01 },
+      { roomId: 0x4a, layoutId: 0x3e },
+    ],
+  };
+  assert.deepEqual(streamableUwRooms([0x49, 0x4a, 0x5a], 0x4a, level), [0x4a]);
+});
+
 test('stairs detection uses floor tiles $70–$73 with NES alignment', () => {
   const floor = Array.from({ length: 14 }, () => Array(24).fill(0x24));
   // Screen Y $9D → floor row ((0x9D - 96) / 8) = 7 with floor origin Y=$60.
@@ -50,6 +80,14 @@ test('stairs detection uses floor tiles $70–$73 with NES alignment', () => {
   assert.equal(linkOnStairs(floor, origin, { x: 0x80, y: 0x9d }), true);
   assert.equal(linkOnStairs(floor, origin, { x: 0x80, y: 0x9c }), false); // unaligned Y
   assert.equal(linkOnStairs(floor, origin, { x: 40, y: 0x9d }), false);
+});
+
+test('stairsRoomsForCellar returns the on-map parent', () => {
+  const level = JSON.parse(
+    readFileSync(join(ROOT, 'assets/extracted/dungeons/q1/level_5/level.json'), 'utf8'),
+  );
+  // Recorder cellar $04 ↔ stairs room $05.
+  assert.deepEqual(stairsRoomsForCellar(level, 0x04), [0x05]);
 });
 
 test('cellarForStairsRoom finds matching exit', () => {
@@ -80,9 +118,11 @@ test('checkUwStairsEntry uses GetCollidableTileStill on play grid', () => {
   // Mid-cell X still samples column $D0 via X & $F8.
   assert.equal(checkUwStairsEntry({ x: 0xd4, y: 0x8d, gridOffset: 0 }, grid), true);
   assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0x8d, gridOffset: 1 }, grid), false);
-  assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0x8c, gridOffset: 0 }, grid), false);
-  // Y=$9D samples $A8 (row below) — not stairs even if sprite overlaps.
-  assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0x9d, gridOffset: 0 }, grid), false);
+  // Half-cell Y ≡ $5 and south slot Y=$9D still warp via footprint probes.
+  assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0x95, gridOffset: 0 }, grid), true);
+  assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0x9d, gridOffset: 0 }, grid), true);
+  // Far south of the square must not warp.
+  assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0xad, gridOffset: 0 }, grid), false);
 });
 
 test('L3 room $69 stairs map to cellar $0F', () => {
@@ -94,6 +134,19 @@ test('L3 room $69 stairs map to cellar $0F', () => {
   const grid = buildDungeonPlayGrid(room, dungeonPlayOrigin(), UW_PRIMARY_SQUARES, {});
   assert.equal(checkUwStairsEntry({ x: 0xd0, y: 0x8d, gridOffset: 0 }, grid), true);
   assert.equal(checkUwStairsEntry({ x: 0xd4, y: 0x8d, gridOffset: 0 }, grid), true);
+});
+
+test('L5 $64 diamond stairs map to cellar $7 from north and south slots', () => {
+  const path = join(ROOT, 'assets/extracted/dungeons/q1/level_5/level.json');
+  const level = finalizeLevelMeta(JSON.parse(readFileSync(path, 'utf8')));
+  const room = level.rooms.find((r) => r.roomId === 0x64);
+  assert.ok(room?.pushable);
+  assert.equal(cellarForStairsRoom(level, 0x64), 0x07);
+  const grid = buildDungeonPlayGrid(room, dungeonPlayOrigin(), UW_PRIMARY_SQUARES, {});
+  // Stairs square at ($80,$90); west approach and south stop both warp.
+  assert.equal(checkUwStairsEntry({ x: 0x80, y: 0x8d, gridOffset: 0 }, grid), true);
+  assert.equal(checkUwStairsEntry({ x: 0x78, y: 0x8d, gridOffset: 0 }, grid), true);
+  assert.equal(checkUwStairsEntry({ x: 0x80, y: 0x9d, gridOffset: 0 }, grid), true);
 });
 
 test('cellarEnterSpawn uses CellarLadderXs and stand Y $5D', () => {

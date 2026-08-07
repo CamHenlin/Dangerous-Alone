@@ -45,7 +45,7 @@ test('aquamentus is boomerang-immune', () => {
   const boom = throwBoomerang(e.x, e.y, DIR.LEFT);
   boom.x = e.x + 4;
   boom.y = e.y + 4;
-  assert.equal(tryBoomerangHitEnemy(e, boom), false);
+  assert.equal(tryBoomerangHitEnemy(e, boom), 'parry');
   assert.equal(e.stunTimer, 0);
   assert.equal(boom.hit, true); // still returns
   assert.equal(boom.phase, BOOM_PHASE.OUT);

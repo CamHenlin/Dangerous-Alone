@@ -14,6 +14,7 @@ import {
   hasTriforce,
   healLink,
   heartDisplay,
+  stepLinkStatus,
   triforceCount,
   trySpendArrowShot,
 } from './inventory.js';
@@ -47,6 +48,26 @@ test('harmLink applies invuln and can kill', () => {
   assert.equal(last.died, true);
   assert.equal(inv.dead, true);
   assert.equal(harmLink(inv, 2).applied, false);
+});
+
+test('harmLink blue ring halves damage; red quarters (InvRing)', () => {
+  const blue = createInventory();
+  blue.ring = 1;
+  blue.halfHearts = 16;
+  harmLink(blue, 4);
+  assert.equal(blue.halfHearts, 14); // floor(4/2)=2
+
+  const red = createInventory();
+  red.ring = 2;
+  red.halfHearts = 16;
+  harmLink(red, 8);
+  assert.equal(red.halfHearts, 14); // floor(8/4)=2
+
+  const floorOne = createInventory();
+  floorOne.ring = 1;
+  floorOne.halfHearts = 6;
+  harmLink(floorOne, 1);
+  assert.equal(floorOne.halfHearts, 5); // max(1, floor(1/2))
 });
 
 test('healLink clamps to max', () => {
@@ -125,4 +146,17 @@ test('trySpendArrowShot costs 1 rupee (NES WieldArrow)', () => {
   assert.equal(inv.rupees, 2);
   assert.deepEqual(trySpendArrowShot(inv), { ok: true });
   assert.equal(inv.rupees, 1);
+});
+
+// Cave TakeItem arms itemLiftTimer ($80); if stepLinkStatus is never called
+// (e.g. cave mode skipping stepCombat), Link stays frozen forever.
+test('stepLinkStatus counts down itemLiftTimer', () => {
+  const inv = createInventory();
+  inv.itemLiftTimer = 0x80;
+  stepLinkStatus(inv);
+  assert.equal(inv.itemLiftTimer, 0x7f);
+  for (let i = 0; i < 0x7f; i += 1) stepLinkStatus(inv);
+  assert.equal(inv.itemLiftTimer, 0);
+  stepLinkStatus(inv);
+  assert.equal(inv.itemLiftTimer, 0);
 });

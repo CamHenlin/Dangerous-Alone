@@ -3,6 +3,7 @@
  * PersonTextSelector is a byte offset into PersonTextAddrs (= textId for linesForTextId).
  */
 
+import { GRUMBLE, GRUMBLE_TEXT_SEL } from './grumble.js';
 import { isPersonType, MONEY_OR_LIFE_PERSON } from './moneyOrLife.js';
 
 /** Levels 1, 2, 5, 7 — indexed by (objType − $4B). */
@@ -20,6 +21,8 @@ export const UW_PERSON_TEXT_SEL_C = Object.freeze([0x44, 0x46, 0x48, 0x4a]);
 
 /** Money-or-life person ($51) uses a fixed selector. */
 export const MONEY_OR_LIFE_TEXT_SEL = 0x36;
+
+export { GRUMBLE_TEXT_SEL };
 
 /**
  * Which selector table CurLevel uses (InitUnderworldPerson_Full_JumpTable).
@@ -41,6 +44,7 @@ export function personTextTableForLevel(level) {
  * @returns {number | null}
  */
 export function textIdForUnderworldPerson(level, objType) {
+  if (objType === GRUMBLE) return GRUMBLE_TEXT_SEL;
   if (!isPersonType(objType)) return null;
   if (objType === MONEY_OR_LIFE_PERSON) return MONEY_OR_LIFE_TEXT_SEL;
   const idx = (objType - 0x4b) & 0xff;

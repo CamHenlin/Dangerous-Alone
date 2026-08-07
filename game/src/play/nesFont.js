@@ -1,42 +1,18 @@
 import { Container, Sprite, Texture } from 'pixi.js';
+import { nesCharTile } from '@shared/nesCharset.js';
 
 /**
  * NES Zelda BG charset (common_background).
- * Digits $00–$09, letters $0A–$23 (A–Z), space $24, dash $62, X $21.
+ * The character → tile table lives in `@shared/nesCharset.js` so `story/`
+ * text can be validated without a DOM; this module only draws it.
  */
 
 const TILE = 8;
 
-/** Punctuation glyphs reachable from the register board (`ModeE_CharMap`). */
-const PUNCT_TILE = Object.freeze({
-  ',': 0x28,
-  '!': 0x29,
-  "'": 0x2a,
-  '&': 0x2b,
-  '.': 0x2c,
-  '"': 0x2d,
-  '?': 0x2e,
-  /** Outside the register board, but the credits line draws tile $FC. */
-  '©': 0xfc,
-});
-
 /** @type {Map<string, Texture>} */
 const cache = new Map();
 
-/**
- * @param {string} ch
- * @returns {number | null} CHR tile index, or null if unsupported
- */
-export function nesCharTile(ch) {
-  const c = ch.toUpperCase();
-  if (c === ' ') return 0x24;
-  if (c === '-') return 0x62;
-  if (c === 'X') return 0x21;
-  if (PUNCT_TILE[c] != null) return PUNCT_TILE[c];
-  if (c >= '0' && c <= '9') return c.charCodeAt(0) - 48;
-  if (c >= 'A' && c <= 'Z') return 0x0a + (c.charCodeAt(0) - 65);
-  return null;
-}
+export { nesCharTile };
 
 /**
  * @param {CanvasImageSource} img common_background sheet

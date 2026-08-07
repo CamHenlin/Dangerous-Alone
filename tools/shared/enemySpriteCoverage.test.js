@@ -14,7 +14,6 @@ import { ROOT } from './paths.js';
 const NON_MONSTER_LIST_TYPES = new Set([
   0x00,
   0x2e, // whirlwind
-  0x35, // rupee stash
 ]);
 
 test('every ObjLists monster type has a sprite mapping', () => {

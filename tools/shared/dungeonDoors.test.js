@@ -3,14 +3,16 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { DIR } from './collision.js';
+import { DIR, HUD_HEIGHT } from './collision.js';
 import { placeBomb, stepBomb } from './bomb.js';
 import {
   DOORWAY_CENTER_X,
   DOORWAY_CENTER_Y,
   checkDungeonRoomExit,
-  clampUwDoorwayPos,
+  clampDoorwayOvershoot,
+  clampUwDoorwayPath,
   createDoorState,
+  detectUwDoorCross,
   doorPassable,
   doorwayLatchCleared,
   enteringRoomGridOffset,
@@ -19,10 +21,14 @@ import {
   linkInDoorwayCorridor,
   isDoorMarkedOpen,
   nearDoorway,
+  openDoorPair,
   openRoomShutters,
   tryBombDoors,
+  tryUnlockFacingKeyDoor,
   tryUnlockKeyDoor,
 } from './dungeonDoors.js';
+import { PLAY_H, PLAY_W } from './continuousCamera.js';
+import { SCREEN_EDGE } from './world.js';
 import {
   UW_PRIMARY_SQUARES,
   buildDungeonPlayGrid,
@@ -303,16 +309,157 @@ test('dungeonRoomSpawn places Link in door frames', () => {
   }
 });
 
-test('linkInDoorwayCorridor covers spawn and key-door approach', () => {
+test('linkInDoorwayCorridor: latch works; locked key is solid until unlocked', () => {
   const room = keyRoom(0x73);
+  const state = createDoorState();
   const spawn = dungeonRoomSpawn(null, null, DIR.UP);
   assert.equal(
-    linkInDoorwayCorridor(spawn, room, { doorwayBlockSide: 'south' }),
+    linkInDoorwayCorridor(spawn, room, { doorwayBlockSide: 'south', doorState: state }),
     true,
   );
-  // Floor tile just inside north key door — approach slack.
+  // Locked key face is a block — not a collision corridor.
   const approach = { x: DOORWAY_CENTER_X, y: 0x5d, dir: DIR.UP };
-  assert.equal(linkInDoorwayCorridor(approach, room, {}), true);
+  assert.equal(linkInDoorwayCorridor(approach, room, { doorState: state }), false);
+  openDoorPair(state, 0x73, 'north');
+  assert.equal(linkInDoorwayCorridor(approach, room, { doorState: state }), true);
+});
+
+test('tryUnlockFacingKeyDoor removes the block when Link has a key', () => {
+  const room = keyRoom(0x73);
+  const state = createDoorState();
+  const inv = { keys: 1 };
+  const link = { x: DOORWAY_CENTER_X, y: 0x5d, dir: DIR.UP };
+  assert.equal(tryUnlockFacingKeyDoor(link, room, state, inv), 'north');
+  assert.equal(inv.keys, 0);
+  assert.equal(doorPassable(room.doors.north, state, 0x73, 'north'), true);
+  // No key → stays blocked.
+  const room2 = keyRoom(0x74);
+  const state2 = createDoorState();
+  assert.equal(
+    tryUnlockFacingKeyDoor(
+      { x: DOORWAY_CENTER_X, y: 0x5d, dir: DIR.UP },
+      room2,
+      state2,
+      { keys: 0 },
+    ),
+    null,
+  );
+});
+
+test('tryUnlockFacingKeyDoor east unlocks at BoundByRoom lip X=$D0', () => {
+  // Locked E faces freeze Link at X=$D0 before the old $D8 bump lip.
+  const room = {
+    roomId: 0x66,
+    doors: {
+      north: { type: 'open' },
+      south: { type: 'open' },
+      west: { type: 'open' },
+      east: { type: 'key' },
+    },
+  };
+  const state = createDoorState();
+  const inv = { keys: 4 };
+  const link = { x: 0xd0, y: DOORWAY_CENTER_Y, dir: DIR.RIGHT };
+  assert.equal(tryUnlockFacingKeyDoor(link, room, state, inv), 'east');
+  assert.equal(inv.keys, 3);
+  assert.equal(doorPassable(room.doors.east, state, 0x66, 'east'), true);
+});
+
+test('clampDoorwayOvershoot only folds past the entry lip', () => {
+  const link = { x: DOORWAY_CENTER_X, y: SCREEN_EDGE.down + 0x10 };
+  clampDoorwayOvershoot(link, 'south');
+  assert.equal(link.y, SCREEN_EDGE.down);
+  const link2 = { x: DOORWAY_CENTER_X, y: 0xc0 };
+  clampDoorwayOvershoot(link2, 'south');
+  assert.equal(link2.y, 0xc0, 'inside corridor unchanged');
+});
+
+test('detectUwDoorCross keeps world-continuous seam coords (no lip snap)', () => {
+  const room = {
+    roomId: 0x53,
+    doors: {
+      north: { type: 'open' },
+      south: { type: 'open' },
+      west: { type: 'open' },
+      east: { type: 'open' },
+    },
+  };
+  const rooms = [{ roomId: 0x43 }, { roomId: 0x53 }, { roomId: 0x63 }, { roomId: 0x52 }, { roomId: 0x54 }];
+  // First pixel past the geometric north seam (playY < 0).
+  const north = detectUwDoorCross(
+    { x: DOORWAY_CENTER_X, y: HUD_HEIGHT - 1, dir: DIR.UP },
+    room,
+    { rooms },
+  );
+  assert.ok(north);
+  assert.equal(north.nextRoomId, 0x43);
+  assert.equal(north.y, HUD_HEIGHT - 1 + PLAY_H);
+  assert.notEqual(north.y, SCREEN_EDGE.down, 'must not snap to NES south lip');
+
+  const east = detectUwDoorCross(
+    { x: PLAY_W, y: DOORWAY_CENTER_Y, dir: DIR.RIGHT },
+    room,
+    { rooms },
+  );
+  assert.ok(east);
+  assert.equal(east.nextRoomId, 0x54);
+  assert.equal(east.x, 0);
+  assert.notEqual(east.x, SCREEN_EDGE.left + 1);
+});
+
+test('clampUwDoorwayPath opens only passable door sides', () => {
+  const room = {
+    roomId: 0x53,
+    doors: {
+      north: { type: 'open' },
+      south: { type: 'key' },
+      west: { type: 'wall' },
+      east: { type: 'open' },
+    },
+  };
+  const rooms = new Set([0x43, 0x53, 0x54]);
+  const state = createDoorState();
+  const link = { x: DOORWAY_CENTER_X, y: SCREEN_EDGE.up - 4 };
+  clampUwDoorwayPath(link, room, { doorState: state, roomIds: rooms });
+  assert.equal(link.y, SCREEN_EDGE.up - 4, 'open north allows past lip');
+
+  const lockedSouth = { x: DOORWAY_CENTER_X, y: SCREEN_EDGE.down + 4 };
+  clampUwDoorwayPath(lockedSouth, room, { doorState: state, roomIds: rooms });
+  assert.equal(lockedSouth.y, SCREEN_EDGE.down, 'locked south stays on lip');
+
+  const east = { x: SCREEN_EDGE.right + 8, y: DOORWAY_CENTER_Y };
+  clampUwDoorwayPath(east, room, { doorState: state, roomIds: rooms });
+  assert.equal(east.x, SCREEN_EDGE.right + 8, 'open east allows past lip');
+});
+
+test('walkable door path: north seam cross has no 16px Y skip', () => {
+  const room = {
+    roomId: 0x53,
+    doors: {
+      north: { type: 'open' },
+      south: { type: 'open' },
+      west: { type: 'open' },
+      east: { type: 'open' },
+    },
+  };
+  const rooms = [{ roomId: 0x43 }, { roomId: 0x53 }];
+  const open = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  const link = createLinkState(DOORWAY_CENTER_X, 0x5d, DIR.UP);
+  const roomIds = new Set(rooms.map((r) => r.roomId));
+  let cross = null;
+  for (let i = 0; i < 64; i += 1) {
+    stepLink(link, open, DIR.UP, undefined, NO_ROOM_BOUNDS);
+    clampUwDoorwayPath(link, room, { roomIds });
+    cross = detectUwDoorCross(link, room, { rooms });
+    if (cross) break;
+  }
+  assert.ok(cross, `expected north seam cross, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`);
+  // Rebase like main.js — position must stay continuous (old lip clamp jumped $10).
+  const beforeWorldY = link.y - HUD_HEIGHT;
+  link.x = cross.x;
+  link.y = cross.y;
+  assert.equal(link.y - HUD_HEIGHT, beforeWorldY + PLAY_H);
+  assert.ok(link.y > SCREEN_EDGE.down, 'lands past NES lip inside the entry corridor');
 });
 
 test('north DoorwayDir accepts walk columns $70/$80', () => {
@@ -337,19 +484,23 @@ test('L1 $52: north key door exits from walk column $70', () => {
   const state = createDoorState();
   const link = createLinkState(0x70, 0x6d, DIR.UP);
   let exit = null;
+  let liveGrid = grid;
   for (let i = 0; i < 64; i += 1) {
-    const inDoor = linkInDoorwayCorridor(link, room, {});
+    tryUnlockFacingKeyDoor(link, room, state, inv);
+    if (isDoorMarkedOpen(state, room.roomId, 'north')) {
+      liveGrid = buildDungeonPlayGrid(room, dungeonPlayOrigin(), UW_PRIMARY_SQUARES, {
+        doorState: state,
+      });
+    }
+    const inDoor = linkInDoorwayCorridor(link, room, { doorState: state });
+    const roomIds = new Set(level.rooms.map((r) => r.roomId));
     if (inDoor) {
       stepLink(link, open, DIR.UP, undefined, NO_ROOM_BOUNDS);
-      clampUwDoorwayPos(link);
+      clampUwDoorwayPath(link, room, { doorState: state, roomIds });
     } else {
-      stepLink(link, grid, DIR.UP, undefined, UW_ROOM_BOUNDS, opts);
+      stepLink(link, liveGrid, DIR.UP, undefined, UW_ROOM_BOUNDS, opts);
     }
-    exit = checkDungeonRoomExit(link, room, {}, {}, {
-      doorState: state,
-      inv,
-      rooms: level.rooms,
-    });
+    exit = detectUwDoorCross(link, room, { doorState: state, rooms: level.rooms });
     if (exit) break;
   }
   assert.ok(exit, `expected north exit from X=$70, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`);
@@ -367,19 +518,18 @@ test('L1 $53: west exit works from the $9D walk row (not only NES $8D)', () => {
   const opts = dungeonTileOpts();
   const open = Array.from({ length: 22 }, () => Array(32).fill(0x26));
   const link = createLinkState(0x30, 0x9d, DIR.LEFT);
+  const state = createDoorState();
   let exit = null;
-  for (let i = 0; i < 48; i += 1) {
-    const inDoor = linkInDoorwayCorridor(link, room, {});
+  for (let i = 0; i < 64; i += 1) {
+    const inDoor = linkInDoorwayCorridor(link, room, { doorState: state });
+    const roomIds = new Set(level.rooms.map((r) => r.roomId));
     if (inDoor) {
       stepLink(link, open, DIR.LEFT, undefined, NO_ROOM_BOUNDS);
-      clampUwDoorwayPos(link);
+      clampUwDoorwayPath(link, room, { doorState: state, roomIds });
     } else {
       stepLink(link, grid, DIR.LEFT, undefined, UW_ROOM_BOUNDS, opts);
     }
-    exit = checkDungeonRoomExit(link, room, {}, {}, {
-      doorState: createDoorState(),
-      rooms: level.rooms,
-    });
+    exit = detectUwDoorCross(link, room, { doorState: state, rooms: level.rooms });
     if (exit) break;
   }
   assert.ok(exit, `expected west exit from Y=$9D, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`);

@@ -234,16 +234,25 @@ export function alwaysTriesShooting(objType) {
  * @returns {boolean} true if this enemy type was handled
  */
 export function tryCardinalShot(e, out, shotKind, opts = {}) {
+  // Prefer ROM ObjQSpeedFrac; keep legacy whole-px walkSpeed for older callers.
+  const walkFrac =
+    e.walkQSpeedFrac ?? e.qSpeedFrac ?? (e.walkSpeed != null ? undefined : 0x20);
   const walkSpeed = e.walkSpeed ?? e.qSpeed ?? 1;
-  if (e.walkSpeed == null) e.walkSpeed = walkSpeed;
+  if (e.walkSpeed == null && walkFrac == null) e.walkSpeed = walkSpeed;
+  if (e.walkQSpeedFrac == null && walkFrac != null) e.walkQSpeedFrac = walkFrac;
 
   const rngByte = opts.rngByte ?? (() => (e.anim + e.id * 17) & 0xff);
   const shootTimer = e.shootTimer ?? 0;
 
+  const restoreWalk = () => {
+    if (e.walkQSpeedFrac != null) e.qSpeedFrac = e.walkQSpeedFrac;
+    e.qSpeed = walkSpeed;
+  };
+
   // Non-always types with timer 0 only start a sequence when Random >= $F8.
   if (!alwaysTriesShooting(e.objType) && shootTimer === 0) {
     if ((rngByte() & 0xff) < 0xf8) {
-      e.qSpeed = walkSpeed;
+      restoreWalk();
       return true;
     }
   }
@@ -260,11 +269,12 @@ export function tryCardinalShot(e, out, shotKind, opts = {}) {
   e.shootTimer = next;
 
   if (next === 0) {
-    e.qSpeed = walkSpeed;
+    restoreWalk();
     return true;
   }
 
   // Charging / firing: freeze in place (ObjQSpeedFrac := 0).
+  e.qSpeedFrac = 0;
   e.qSpeed = 0;
 
   if (next === 0x10 && e.wantsToShoot) {
@@ -280,11 +290,12 @@ export function tryCardinalShot(e, out, shotKind, opts = {}) {
  * @param {Projectile[]} out
  * @param {import('./boomerang.js').Boomerang[]} [boomOut] Goriya throws land here
  * @param {{ target?: { x: number, y: number } | null, rngByte?: () => number }} [opts]
+ * @returns {string | null} SFX name when a cue should fire (Wizzrobe magic only)
  */
 export function tryEnemyShoot(e, out, boomOut, opts = {}) {
-  if (!e.alive || e.edgePending || (e.stunTimer ?? 0) > 0) return;
-  if (e.armosStatue) return;
-  if (e.objType === OBJ.ZORA && (e.zoraState ?? 0) !== 3) return;
+  if (!e.alive || e.edgePending || (e.stunTimer ?? 0) > 0) return null;
+  if (e.armosStatue) return null;
+  if (e.objType === OBJ.ZORA && (e.zoraState ?? 0) !== 3) return null;
 
   const target = opts.target ?? null;
 
@@ -295,27 +306,27 @@ export function tryEnemyShoot(e, out, boomOut, opts = {}) {
     || e.objType === OBJ.BLUE_OCTOROK_FAST
   ) {
     tryCardinalShot(e, out, PROJ.ROCK, { speed: 2, rngByte: opts.rngByte });
-    return;
+    return null;
   }
 
   if (e.objType === OBJ.RED_MOBLIN || e.objType === OBJ.BLUE_MOBLIN) {
     tryCardinalShot(e, out, PROJ.ARROW, { speed: 3, rngByte: opts.rngByte });
-    return;
+    return null;
   }
 
   if (e.objType === OBJ.RED_LYNEL || e.objType === OBJ.BLUE_LYNEL) {
     tryCardinalShot(e, out, PROJ.SWORD_SHOT, { speed: 3, rngByte: opts.rngByte });
-    return;
+    return null;
   }
 
   e.shootTimer = (e.shootTimer ?? 0) - 1;
 
   if (e.objType === OBJ.RED_GORIYA || e.objType === OBJ.BLUE_GORIYA) {
     // NES $05 (our RED) always checks; $06 (our BLUE) needs Random $23/$77.
-    if (e.shootTimer > 0) return;
-    if (!e.wantsToShoot) return;
+    if (e.shootTimer > 0) return null;
+    if (!e.wantsToShoot) return null;
     const roll = (opts.rngByte?.() ?? (e.anim + e.id * 19)) & 0xff;
-    if (e.objType === OBJ.BLUE_GORIYA && roll !== 0x23 && roll !== 0x77) return;
+    if (e.objType === OBJ.BLUE_GORIYA && roll !== 0x23 && roll !== 0x77) return null;
     e.shootTimer = 0x40;
     e.wantsToShoot = false;
     if (boomOut) {
@@ -323,34 +334,34 @@ export function tryEnemyShoot(e, out, boomOut, opts = {}) {
     } else {
       pushShot(out, PROJ.ROCK, e, { speed: 2, damage: 1 });
     }
-    return;
+    return null;
   }
 
   if (e.objType === OBJ.ZORA) {
-    if (e.shootTimer > 0) return;
+    if (e.shootTimer > 0) return null;
     // NES: one shot at state 3 / timer $FD; then ObjTimer := $20 (burrower).
     e.shootTimer = 0xff;
     const tx = target?.x ?? e.x;
     const ty = target?.y ?? e.y - 0x20;
     out.push(shootFireball(PROJ.FIREBALL, e.x, e.y, tx, ty));
-    return;
+    return null;
   }
 
   // Wizzrobes fire straight from their own state machines, not a shoot timer:
   // red at ObjState $B0 (UpdateRedWizzrobe_2), blue on the row/column test
-  // (BlueWizzrobe_TryShooting).
+  // (BlueWizzrobe_TryShooting). ShootMagicShot → Tune0 `$04`.
   if (isWizzrobeType(e.objType)) {
-    if (!wizzrobeShouldShoot(e, target)) return;
+    if (!wizzrobeShouldShoot(e, target)) return null;
     pushShot(out, PROJ.MAGIC_SHOT, e, { speed: 2 });
-    return;
+    return 'magic_shot';
   }
 
   if (e.objType === OBJ.AQUAMENTUS) {
-    if (e.shootTimer > 0) return;
+    if (e.shootTimer > 0) return null;
     e.shootTimer = 0x70 + (e.anim & 0x1f);
     e.timer = 0x18;
     out.push(...shootAquamentusFireballs(e, target));
-    return;
+    return null;
   }
 
   // Gohma / Ganon / Manhandla / Gleeok(+head): unblockable fireball `$56`.
@@ -364,8 +375,8 @@ export function tryEnemyShoot(e, out, boomOut, opts = {}) {
     || e.objType === OBJ.GLEEOK_4
     || e.objType === OBJ.GLEEOK_HEAD
   ) {
-    if (e.objType === OBJ.GANON && e.ganonPhase === 1) return; // brown: no shots
-    if (e.shootTimer > 0) return;
+    if (e.objType === OBJ.GANON && e.ganonPhase === 1) return null; // brown: no shots
+    if (e.shootTimer > 0) return null;
     e.shootTimer =
       e.objType === OBJ.MANHANDLA
         ? 0x50
@@ -373,11 +384,12 @@ export function tryEnemyShoot(e, out, boomOut, opts = {}) {
           ? 0x40
           : 0x41;
     // Manhandla: sparse (~1/8) like NES Random>=$E0.
-    if (e.objType === OBJ.MANHANDLA && (e.anim & 0x07) !== 0) return;
+    if (e.objType === OBJ.MANHANDLA && (e.anim & 0x07) !== 0) return null;
     const tx = target?.x ?? e.x;
     const ty = target?.y ?? e.y - 0x20;
     out.push(shootFireball(PROJ.FIREBALL_UNBLOCKABLE, e.x, e.y, tx, ty));
   }
+  return null;
 }
 
 /**

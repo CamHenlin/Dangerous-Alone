@@ -28,16 +28,28 @@ const CHR = Object.freeze({
   /** Master-sword HUD slot $20 → Anim_ItemFrameTiles @$27. */
   MAGIC_SWORD_VERT: 0x48,
   ARROW_VERT: 0x28,
-  /** Magical rod (Anim_ItemFrameTiles $4A); magic shot $7A is off-sheet. */
+  /** Magical rod item / swing (Anim_ItemFrameTiles @$0F). */
   MAGIC_ROD: 0x4a,
+  /**
+   * Magic shot slot $23 — demo bank at PPU $70+.
+   * Vert: mirrored $7A; horiz: flippable pair $7C/$7E (Anim_WriteItemSprites).
+   */
+  MAGIC_SHOT_VERT: 0x7a,
+  MAGIC_SHOT_HORIZ: 0x7c,
   BOMB: 0x34,
   CLOUD: 0x44,
+  /** Anim_ItemFrameTiles boom spin: $36 / $38 / $3A / $3C. */
+  BOOMERANG: 0x36,
 });
+
+/** Boomerang flight frames (Anim_ItemFrameTiles @$22…). */
+const BOOMERANG_FRAMES = Object.freeze([0x36, 0x38, 0x3a, 0x3c]);
 
 /**
  * Item / weapon textures sliced from common_sprites (8×16 NES sprites).
  * Optional misc sheet covers Anim_ItemFrameTiles ≥ $F2 (heart drop).
- * Optional highSprite sheet covers PPU $70–$F1 (demo bank — stepladder $76).
+ * Optional highSprite sheet covers PPU $70–$F1 (demo bank — stepladder $76,
+ * magic shot $7A/$7C).
  * @param {Texture} sheetTexture
  * @param {{
  *   miscTexture?: Texture,
@@ -247,9 +259,114 @@ export function createItemSprites(sheetTexture, opts = {}) {
     return orientedWeaponTexture(CHR.ARROW_VERT, dir);
   }
 
-  /** Magical rod / magic shot — tip along `dir`. */
+  /**
+   * Wide mirrored pair from the high/demo bank (magic shot vertical $7A).
+   * @param {number} topTile
+   * @param {{ flipV?: boolean, spritePal?: number }} [drawOpts]
+   */
+  function wideMirroredHighTexture(topTile, drawOpts = {}) {
+    const top = topTile & 0xfe;
+    const spritePal = drawOpts.spritePal ?? 0;
+    const flipV = Boolean(drawOpts.flipV);
+    const gap = 8;
+    const key = `wideM:${top}:${gap}:fv${flipV ? 1 : 0}:p${spritePal}`;
+    let tex = cache.get(key);
+    if (tex) return tex;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = gap + 8;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2d context unavailable');
+    ctx.imageSmoothingEnabled = false;
+    if (flipV) {
+      ctx.translate(0, 16);
+      ctx.scale(1, -1);
+    }
+    const blit = (dx, flipH) => {
+      ctx.save();
+      if (flipH) {
+        ctx.translate(dx + 8, 0);
+        ctx.scale(-1, 1);
+        dx = 0;
+      }
+      drawHighTile(ctx, top, dx, 0);
+      drawHighTile(ctx, top + 1, dx, 8);
+      ctx.restore();
+    };
+    blit(0, false);
+    blit(gap, true);
+    applySpritePalette(canvas, spritePal);
+    tex = Texture.from(canvas);
+    tex.source.scaleMode = 'nearest';
+    cache.set(key, tex);
+    return tex;
+  }
+
+  /**
+   * Wide flippable pair from the high/demo bank (magic shot horizontal $7C/$7E).
+   * Anim_WriteHorizontallyFlippableSpritePair: left facing swaps sides + flip H.
+   * @param {number} leftTop
+   * @param {{ flipH?: boolean, spritePal?: number }} [drawOpts]
+   */
+  function wideFlippableHighTexture(leftTop, drawOpts = {}) {
+    const left = leftTop & 0xfe;
+    const right = (left + 2) & 0xfe;
+    const spritePal = drawOpts.spritePal ?? 0;
+    const flipH = Boolean(drawOpts.flipH);
+    const gap = 8;
+    const key = `wideF:${left}:${right}:${gap}:fh${flipH ? 1 : 0}:p${spritePal}`;
+    let tex = cache.get(key);
+    if (tex) return tex;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = gap + 8;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2d context unavailable');
+    ctx.imageSmoothingEnabled = false;
+    const blit = (tile, dx, flip) => {
+      ctx.save();
+      if (flip) {
+        ctx.translate(dx + 8, 0);
+        ctx.scale(-1, 1);
+        dx = 0;
+      }
+      drawHighTile(ctx, tile, dx, 0);
+      drawHighTile(ctx, tile + 1, dx, 8);
+      ctx.restore();
+    };
+    if (flipH) {
+      blit(right, 0, true);
+      blit(left, gap, true);
+    } else {
+      blit(left, 0, false);
+      blit(right, gap, false);
+    }
+    applySpritePalette(canvas, spritePal);
+    tex = Texture.from(canvas);
+    tex.source.scaleMode = 'nearest';
+    cache.set(key, tex);
+    return tex;
+  }
+
+  /**
+   * Magic shot `$59` — tip along `dir`.
+   * Uses demo-bank beam CHR when loaded; falls back to rod stand-in otherwise.
+   * @param {number} dir
+   */
   function magicShotTexture(dir) {
-    return orientedWeaponTexture(CHR.MAGIC_ROD, dir);
+    if (!highImage) {
+      return orientedWeaponTexture(CHR.MAGIC_ROD, dir);
+    }
+    if (dir & (DIR.LEFT | DIR.RIGHT)) {
+      return wideFlippableHighTexture(CHR.MAGIC_SHOT_HORIZ, {
+        flipH: Boolean(dir & DIR.LEFT),
+      });
+    }
+    return wideMirroredHighTexture(CHR.MAGIC_SHOT_VERT, {
+      flipV: Boolean(dir & DIR.DOWN),
+    });
   }
 
   /**
@@ -263,6 +380,17 @@ export function createItemSprites(sheetTexture, opts = {}) {
   /** Placed bomb / fuse — NES DrawCloud uses blue sprite palette (slot 1). */
   function bombTexture(spritePal = 1) {
     return sprite8x16(CHR.BOMB, { spritePal });
+  }
+
+  /**
+   * In-flight boomerang — spins through Anim_ItemFrameTiles $36/$38/$3A/$3C.
+   * Magic boom uses sprite palette 2 (same as submenu icon).
+   * @param {number} [frameCounter]
+   * @param {number} [spritePal]
+   */
+  function boomerangTexture(frameCounter = 0, spritePal = 0) {
+    const tile = BOOMERANG_FRAMES[(frameCounter >> 1) & 3] ?? CHR.BOOMERANG;
+    return sprite8x16(tile, { spritePal });
   }
 
   function cloudTexture() {
@@ -359,6 +487,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     magicShotTexture,
     weaponTextureHorizontal,
     bombTexture,
+    boomerangTexture,
     cloudTexture,
     spriteTexture,
     itemTexture,

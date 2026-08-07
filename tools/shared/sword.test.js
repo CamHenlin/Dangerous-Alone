@@ -8,11 +8,14 @@ import {
   isSwordActive,
   rectsOverlap,
   stepSword,
+  swordArcAngle,
+  swordArcProgress,
   swordAttackBaseTile,
   swordDamage,
   swordDoesDamage,
   swordDrawPos,
   swordHitbox,
+  swordSpriteRotation,
   tryStartSword,
 } from './sword.js';
 
@@ -44,15 +47,19 @@ test('swordDamage by tier', () => {
   assert.equal(swordDamage(SWORD.MAGIC), 0x40);
 });
 
-test('hitbox only during HIT phase', () => {
+test('hitbox only during HIT phase and sweeps with the arc', () => {
   const sword = createSwordState();
   tryStartSword(sword, DIR.RIGHT, SWORD.WOOD);
   assert.equal(swordHitbox(sword, 0x80, 0x80), null);
   sword.phase = SWORD_PHASE.HIT;
   sword.timer = 8;
-  const box = swordHitbox(sword, 0x80, 0x80);
-  assert.ok(box);
-  assert.equal(box.x, 0x80 + 11);
+  const early = swordHitbox(sword, 0x80, 0x80);
+  assert.ok(early);
+  sword.timer = 1;
+  const late = swordHitbox(sword, 0x80, 0x80);
+  assert.ok(late);
+  // Arc should move the box — not a static poke at +11.
+  assert.ok(early.x !== late.x || early.y !== late.y);
 });
 
 test('attack base tiles match CHR', () => {
@@ -66,13 +73,29 @@ test('rectsOverlap', () => {
   assert.equal(rectsOverlap({ x: 0, y: 0, w: 8, h: 8 }, { x: 8, y: 0, w: 8, h: 8 }), false);
 });
 
-test('sword blade hidden in windup, shown in hit', () => {
+test('sword blade hidden in windup, shown in hit with angle', () => {
   const sword = createSwordState();
   tryStartSword(sword, DIR.RIGHT, SWORD.WOOD);
   assert.equal(swordDrawPos(sword, 0x80, 0x80), null);
   sword.phase = SWORD_PHASE.HIT;
+  sword.timer = 8;
   const pos = swordDrawPos(sword, 0x80, 0x80);
   assert.ok(pos);
-  assert.equal(pos.x, 0x80 + 11);
   assert.equal(pos.dir, DIR.RIGHT);
+  assert.equal(typeof pos.angle, 'number');
+  assert.ok(Number.isFinite(swordSpriteRotation(pos.angle)));
+});
+
+test('arc progress advances across the hit window', () => {
+  const sword = createSwordState();
+  tryStartSword(sword, DIR.DOWN, SWORD.WOOD);
+  sword.phase = SWORD_PHASE.HIT;
+  sword.timer = 8;
+  const a0 = swordArcAngle(sword);
+  const p0 = swordArcProgress(sword);
+  sword.timer = 1;
+  const a1 = swordArcAngle(sword);
+  const p1 = swordArcProgress(sword);
+  assert.ok(p1 > p0);
+  assert.ok(a1 !== a0);
 });

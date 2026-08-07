@@ -172,6 +172,60 @@ export function heartContainers(inv) {
 }
 
 /**
+ * Shop / potion shelves restock every visit. `caveTaken` is shared with
+ * permanent gift caves and is saved, so a bomb purchase would otherwise
+ * erase that slot forever. Clear this cave's ware keys when entering.
+ *
+ * @param {{ caveId?: number, kind?: string } | null | undefined} cave
+ * @param {Set<string>} taken
+ */
+export function clearShopVisitTaken(cave, taken) {
+  if (!cave || !taken) return;
+  if (cave.kind !== 'shop' && cave.kind !== 'potion') return;
+  const id = cave.caveId;
+  if (id == null) return;
+  for (let i = 0; i < 3; i += 1) taken.delete(`${id}:${i}`);
+}
+
+/**
+ * Unique shop goods Link already carries — hide from the shelf and refuse
+ * another purchase. Magic shield is intentionally excluded (Like-Likes can
+ * steal it). Consumables (bombs, keys, bait, hearts, potions) stay buyable.
+ *
+ * @param {object} inv
+ * @param {number} itemId
+ */
+export function alreadyOwnsShopItem(inv, itemId) {
+  if (!inv) return false;
+  switch (itemId) {
+    case ITEM.WOOD_ARROW:
+      return (inv.arrow ?? 0) >= 1;
+    case ITEM.SILVER_ARROW:
+      return (inv.arrow ?? 0) >= 2;
+    case ITEM.BLUE_CANDLE:
+      return (inv.candle ?? 0) >= CANDLE_TIER.BLUE;
+    case ITEM.RED_CANDLE:
+      return (inv.candle ?? 0) >= CANDLE_TIER.RED;
+    case ITEM.BLUE_RING:
+      return (inv.ring ?? 0) >= 1;
+    case ITEM.RED_RING:
+      return (inv.ring ?? 0) >= 2;
+    case ITEM.BOW:
+      return (inv.bow ?? 0) >= 1;
+    case ITEM.RECORDER:
+      return (inv.flute ?? 0) >= 1;
+    case ITEM.RAFT:
+      return (inv.raft ?? 0) >= 1;
+    case ITEM.LADDER:
+      return (inv.ladder ?? 0) >= 1;
+    case ITEM.MAGIC_KEY:
+      return (inv.magicKey ?? 0) >= 1;
+    default:
+      return false;
+  }
+}
+
+/**
  * Apply a purchased / gifted item id to inventory.
  * @param {object} inv
  * @param {number} itemId
@@ -280,18 +334,46 @@ export function activeSlots(cave) {
 }
 
 /**
+ * Cave kinds that persist "taken" via the OW room item flag
+ * (`GetRoomFlagUWItemState` / `SetRoomFlagUWItemState` in Z_01.asm).
+ * Several screens share one caveId; the entrance room distinguishes them.
+ * @param {string | undefined} kind
+ */
+export function caveRemembersByRoom(kind) {
+  return kind === 'take_any' || kind === 'door' || kind === 'moblin';
+}
+
+/**
+ * Stable `caveTaken` key. Room-scoped kinds encode the OW screen so looting
+ * one take-any / door / moblin cave does not empty the others.
+ * @param {{ caveId?: number, kind?: string }} cave
+ * @param {string | number} suffix slot index, `'any'`, `'door'`, `'gift'`, …
+ * @param {number | null | undefined} [roomId] OW screen Link entered from
+ */
+export function caveTakenKey(cave, suffix, roomId = null) {
+  const id = cave?.caveId ?? 0;
+  if (caveRemembersByRoom(cave?.kind) && roomId != null) {
+    return `${roomId & 0xff}:${id}:${suffix}`;
+  }
+  return `${id}:${suffix}`;
+}
+
+/**
  * @param {object} inv
  * @param {object} cave
  * @param {number} slotIndex 0–2
- * @param {{ taken?: Set<string> }} [state] per-cave taken keys `${caveId}:${slot}`
+ * @param {{ taken?: Set<string>, roomId?: number | null }} [state]
+ *   `taken` keys are `${caveId}:${slot}` for unique caves, or
+ *   `${roomId}:${caveId}:${slot|any}` for room-flag caves.
  */
 export function tryBuyCaveSlot(inv, cave, slotIndex, state = {}) {
   const slot = cave.slots[slotIndex];
   if (!slot || slot.item === ITEM.NOTHING) {
     return { ok: false, reason: 'Empty slot' };
   }
-  const key = `${cave.caveId}:${slotIndex}`;
-  const takeAnyKey = `${cave.caveId}:any`;
+  const roomId = state.roomId ?? null;
+  const key = caveTakenKey(cave, slotIndex, roomId);
+  const takeAnyKey = caveTakenKey(cave, 'any', roomId);
   if (state.taken?.has(key) && cave.kind === 'give') {
     return { ok: false, reason: 'Already taken' };
   }
@@ -303,6 +385,13 @@ export function tryBuyCaveSlot(inv, cave, slotIndex, state = {}) {
   // `InvLetter` reaches 2, so holding the letter is not enough to buy.
   if (cave.kind === 'potion' && (inv.letter ?? 0) < 2) {
     return { ok: false, reason: 'Show the letter first' };
+  }
+
+  if (
+    (cave.kind === 'shop' || cave.kind === 'potion')
+    && alreadyOwnsShopItem(inv, slot.item)
+  ) {
+    return { ok: false, reason: 'Already own this' };
   }
 
   const heartsNeed = heartRequirement(cave);
@@ -332,7 +421,9 @@ export function tryBuyCaveSlot(inv, cave, slotIndex, state = {}) {
   // Take-any: pick one, then clear the offer (NES one-choice).
   if (cave.kind === 'take_any') {
     state.taken?.add(takeAnyKey);
-    for (let i = 0; i < 3; i += 1) state.taken?.add(`${cave.caveId}:${i}`);
+    for (let i = 0; i < 3; i += 1) {
+      state.taken?.add(caveTakenKey(cave, i, roomId));
+    }
   }
 
   // Letter cave: the old woman hands over the unused letter (`InvLetter` = 1).
@@ -422,10 +513,10 @@ export function tryGamble(inv, cave, slotIndex = 1, amountsOrRng = Math.random) 
  * Door repair charge (pay once per cave room — GetRoomFlagUWItemState).
  * @param {object} inv
  * @param {object} cave
- * @param {{ taken?: Set<string> }} [state]
+ * @param {{ taken?: Set<string>, roomId?: number | null }} [state]
  */
 export function tryDoorRepair(inv, cave, state = {}) {
-  const key = `${cave.caveId}:door`;
+  const key = caveTakenKey(cave, 'door', state.roomId ?? null);
   if (state.taken?.has(key)) {
     return { ok: false, reason: 'Already paid' };
   }
@@ -442,10 +533,10 @@ export function tryDoorRepair(inv, cave, state = {}) {
  * Moblin secret money — grant price amount as rupees (ROM stores amounts in price bytes).
  * @param {object} inv
  * @param {object} cave
- * @param {{ taken?: Set<string> }} state
+ * @param {{ taken?: Set<string>, roomId?: number | null }} state
  */
 export function tryMoblinGift(inv, cave, state = {}) {
-  const key = `${cave.caveId}:gift`;
+  const key = caveTakenKey(cave, 'gift', state.roomId ?? null);
   if (state.taken?.has(key)) {
     return { ok: false, reason: 'Already looted' };
   }
@@ -453,6 +544,21 @@ export function tryMoblinGift(inv, cave, state = {}) {
   inv.rupees = Math.min(255, inv.rupees + amount);
   state.taken?.add(key);
   return { ok: true, label: `Moblin gave ${amount} rupees`, amount };
+}
+
+/**
+ * NES take-any-road destinations: four OW screens form a loop; the three
+ * staircases advance Link by +1 / +2 / +3 from the entrance he used.
+ * @param {readonly number[]} roads
+ * @param {number} fromRoomId entrance OW screen
+ * @param {number} stairIndex 0..2 (left / middle / right)
+ * @returns {number | null}
+ */
+export function takeAnyRoadDest(roads, fromRoomId, stairIndex) {
+  if (!roads?.length || stairIndex < 0 || stairIndex > 2) return null;
+  let from = roads.indexOf(fromRoomId & 0xff);
+  if (from < 0) from = 0;
+  return roads[(from + stairIndex + 1) % roads.length] ?? null;
 }
 
 /**

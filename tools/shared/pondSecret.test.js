@@ -1,14 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { SECRET_STAIRS_TILES } from './owSecrets.js';
 import {
   POND_CYCLE_COLORS,
   POND_CYCLE_END,
   POND_FIRST_UNWALKABLE,
+  POND_STAIRS_COL,
+  POND_STAIRS_ROW,
   createPondSecret,
+  isPondSecretRevealed,
+  pondCollisionFloor,
   pondFirstUnwalkable,
   pondSecretDone,
+  pondSecretKey,
   pondSecretStarted,
+  restorePondSecret,
+  revealPondStairs,
   startPondSecret,
   stepPondSecret,
 } from './pondSecret.js';
@@ -94,4 +102,38 @@ test('the drain takes 88 frames end to end', () => {
     if (stepPondSecret(state, f & 0xff).revealStairs) revealFrame = f;
   }
   assert.equal(revealFrame, 4 + 10 * 8);
+});
+
+test('RevealPondStairs paints $70–$73 at the hardcoded square', () => {
+  assert.equal(POND_STAIRS_COL, 6);
+  assert.equal(POND_STAIRS_ROW, 5);
+  const tileGrid = Array.from({ length: 22 }, () => Array(32).fill(0x95));
+  assert.equal(revealPondStairs(tileGrid), true);
+  assert.equal(tileGrid[10][12], SECRET_STAIRS_TILES[0]);
+  assert.equal(tileGrid[11][12], SECRET_STAIRS_TILES[1]);
+  assert.equal(tileGrid[10][13], SECRET_STAIRS_TILES[2]);
+  assert.equal(tileGrid[11][13], SECRET_STAIRS_TILES[3]);
+});
+
+test('pond reveal key restores walkability without a layout secret marker', () => {
+  const key = pondSecretKey(0x42);
+  assert.equal(key, '66:5:6');
+  const revealed = new Set([key]);
+  assert.equal(isPondSecretRevealed(revealed, 0x42), true);
+  assert.equal(isPondSecretRevealed(new Set(), 0x42), false);
+  const state = restorePondSecret(revealed, 0x42);
+  assert.equal(state.walkable, true);
+  assert.equal(pondSecretDone(state), true);
+  assert.equal(startPondSecret(state), false);
+});
+
+test('pondCollisionFloor stays open from the reveal flag even if state was reset', () => {
+  const idle = createPondSecret();
+  assert.equal(pondCollisionFloor(idle, new Set(), 0x42), null);
+  assert.equal(
+    pondCollisionFloor(idle, new Set([pondSecretKey(0x42)]), 0x42),
+    POND_FIRST_UNWALKABLE,
+  );
+  idle.walkable = true;
+  assert.equal(pondCollisionFloor(idle, new Set(), 0x42), POND_FIRST_UNWALKABLE);
 });

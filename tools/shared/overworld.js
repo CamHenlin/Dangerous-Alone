@@ -190,6 +190,7 @@ export function decodeScreen(tables, mapIndex) {
       table3: t3,
       exitX: (t1 >> 4) & 0x0f,
       zora: Boolean(t1 & 0x08),
+      /** LevelBlockAttrsA bit $04 — ROM sea/shore ambient (`PlayEffect $20`). */
       wave: Boolean(t1 & 0x04),
       outerPalette: t1 & 0x03,
       caveId: (t2 >> 2) & 0x3f,

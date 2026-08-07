@@ -20,6 +20,9 @@ export const BOOMERANG_STUN_FRAMES = 0xa0;
  * @property {number} maxDist
  * @property {string} phase
  * @property {boolean} hit
+ * @property {boolean} [magic]
+ * @property {boolean} [hostile]
+ * @property {number} [ownerId]
  */
 
 /**
@@ -40,6 +43,7 @@ export function throwBoomerang(linkX, linkY, dir, magic = false) {
     phase: BOOM_PHASE.OUT,
     hit: false,
     hostile: false,
+    magic: Boolean(magic),
   };
 }
 

@@ -1,17 +1,30 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { DIR } from './collision.js';
+import { loadDungeonTables, buildLevel, roomToTileGrid } from './dungeons.js';
+import { dungeonFloorRect, dungeonPlayOrigin } from './dungeonPlay.js';
 import {
   PUSH_HOLD_FRAMES,
   PUSH_STATE,
+  PUSH_TRAVEL,
   createPushBlock,
   findPushBlockTile,
+  linkPushingBlock,
+  nudgeLinkOntoPushAxis,
   pushBlockSquareTiles,
   pushOpensShutters,
   pushSpawnsStairs,
   BLOCK_STAIRS_POS,
   stepPushBlock,
 } from './pushBlock.js';
+import { SECRET } from './roomSecrets.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const romPath = path.join(ROOT, 'zelda.nes');
+const schemaPath = path.join(ROOT, 'assets/schema/dungeons.json');
 
 test('findPushBlockTile prefers NES play row $A (floor row 6)', () => {
   const grid = Array.from({ length: 14 }, () => Array(24).fill(0x24));
@@ -68,4 +81,51 @@ test('cannot push until room cleared', () => {
   const link = { x: block.x, y: block.y + 8, dir: DIR.UP };
   for (let i = 0; i < 40; i += 1) stepPushBlock(block, link, DIR.UP, false);
   assert.equal(block.state, PUSH_STATE.IDLE);
+});
+
+test('L7 $0d Wallmaster room: push middle-right block east for stairs', {
+  skip: !fs.existsSync(romPath),
+}, () => {
+  const prg = fs.readFileSync(romPath).subarray(16);
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  const tables = loadDungeonTables(prg, schema);
+  const level = buildLevel(tables, 7, 1);
+  const room = level.rooms.find((r) => r.roomId === 0x0d);
+  assert.ok(room?.pushable);
+  assert.equal(room.specialItem?.effectType, SECRET.BLOCK_STAIRS);
+
+  const floor = dungeonFloorRect(dungeonPlayOrigin());
+  const tiles = roomToTileGrid(room, tables.primarySquares);
+  const block = createPushBlock(room, { x: floor.x, y: floor.y }, tiles);
+  assert.ok(block);
+  // Middle of the right-hand vertical stack (screen $C0,$90).
+  assert.equal(block.x, 0xc0);
+  assert.equal(block.y, 0x90);
+
+  // Adjacent blocks block UP/DOWN; the open push is from the left → RIGHT.
+  const link = { x: 0xb0, y: 0x8d, dir: DIR.RIGHT };
+  assert.equal(linkPushingBlock(block, link, DIR.RIGHT), true);
+  assert.equal(linkPushingBlock(block, link, DIR.UP), false);
+
+  for (let i = 0; i < PUSH_HOLD_FRAMES + PUSH_TRAVEL; i += 1) {
+    stepPushBlock(block, link, DIR.RIGHT, true);
+  }
+  assert.equal(block.state, PUSH_STATE.DONE);
+  assert.equal(block.x, 0xd0);
+  assert.equal(pushSpawnsStairs(room), true);
+});
+
+test('nudgeLinkOntoPushAxis slides from the neighboring walk row', () => {
+  const block = {
+    x: 0xc0,
+    y: 0x90,
+    state: PUSH_STATE.IDLE,
+  };
+  const link = { x: 0xb0, y: 0x9d, gridOffset: 0 }; // one row below align ($8d)
+  assert.equal(linkPushingBlock(block, link, DIR.RIGHT), false);
+  assert.equal(nudgeLinkOntoPushAxis(block, link, DIR.RIGHT), 'up');
+  assert.equal(link.y, 0x9c);
+  for (let i = 0; i < 16; i += 1) nudgeLinkOntoPushAxis(block, link, DIR.RIGHT);
+  assert.equal(link.y, 0x8d);
+  assert.equal(linkPushingBlock(block, link, DIR.RIGHT), true);
 });

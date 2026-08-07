@@ -54,14 +54,16 @@ export function createMazeState() {
 export function checkMaze(state, roomId, dir) {
   const maze = MAZES[roomId];
   if (!maze) {
-    // Not in a maze — CheckMazes resets the step and leaves the room alone.
-    state.step = 0;
+    // NES CheckMazes only runs on maze screens — leaving a normal screen
+    // must not touch MazeStep (or a mid-sequence free exit east of the
+    // woods would wipe progress the moment you walk back in).
     return { allowExit: true, playSecretTune: false, solved: false };
   }
 
   if (dir === maze.dirs[state.step]) {
     if (state.step === maze.dirs.length - 1) {
       // Final step: secret tune, and the player walks out.
+      state.step = 0;
       return { allowExit: true, playSecretTune: true, solved: true };
     }
     state.step += 1;

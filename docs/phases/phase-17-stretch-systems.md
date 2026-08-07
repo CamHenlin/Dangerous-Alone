@@ -26,7 +26,6 @@
 
 - Whirlwind skips full NT scroll / multi-screen flight
 - Book of Magic does not yet leave residual fire from rod shots
-- Grumble has no textbox; only bait proximity + despawn
 
 ## Commands
 

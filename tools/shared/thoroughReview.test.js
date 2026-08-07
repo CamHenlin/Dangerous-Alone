@@ -281,13 +281,15 @@ test('the two mazes have different free directions', () => {
   assert.equal(hills.step, 0);
 });
 
-test('leaving any non-maze screen clears the step', () => {
+test('leaving a non-maze screen does not clear maze progress', () => {
   const state = createMazeState();
   checkMaze(state, FOREST_MAZE_ROOM, DIR.UP);
   assert.equal(state.step, 1);
-  const r = checkMaze(state, 0x77, DIR.UP);
+  // Free-exit east, then leave the eastern neighbor — NES keeps MazeStep.
+  checkMaze(state, FOREST_MAZE_ROOM, DIR.RIGHT);
+  const r = checkMaze(state, 0x62, DIR.LEFT);
   assert.equal(r.allowExit, true, 'ordinary screens are unaffected');
-  assert.equal(state.step, 0);
+  assert.equal(state.step, 1, 'progress survives the detour');
 });
 
 test('only $61 and $1B are maze screens', () => {

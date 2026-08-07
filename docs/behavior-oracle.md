@@ -112,6 +112,7 @@ Cross-phase checklist of behaviors that must match the original game (or are int
 | DROP-04 | Drops | Fairy flyer SM; non-fairy take lifts `$80` + item SFX | Phase 14 | implemented |
 | DROP-06 | Drops | Item takers: Link / sword / boom / arrow only | Phase 14 | implemented |
 | ENM-16 | AI | Wanderer turn rates + tile-boundary facing (`wandererAi.js`) | Phase 14 | implemented |
+| ENM-45 | AI | ObjQSpeedFrac MoveObject ×4/frame (`objQSpeed.js`: darknut/octorok/bubble/rope/trap/leever/…) | QoL audit | implemented |
 | ENM-20 | AI | Bait 3×`$FF` phases; chase-set excludes Lynel | Phase 14 | implemented |
 | ENM-22 | AI | Keese flyer state machine | Phase 14 | implemented |
 | ENM-36 | AI | Gibdo/Stalfos turn rate `$80` via wanderer | Phase 14 | implemented |
@@ -136,6 +137,7 @@ Cross-phase checklist of behaviors that must match the original game (or are int
 | CAV-10 | Cave | Take-any one choice; door repair one-shot; MoneyGame amounts | Phase 16 | implemented |
 | ENM-40 | Combat | Moldorm/Lamnola: two 5-seg chains (10 objs); hits shorten tail | Phase 17 / thorough review N2 | implemented |
 | ENM-41 | Combat | Hungry Goriya `$36` feeds on bait then despawns | Phase 17 | implemented |
+| ENM-41b | Combat | Grumble: CheckPersonBlocking (Y&lt;`$8E` clears UP) + text `$24` | Phase 17 follow-up | implemented |
 | ENM-42 | Combat | UW statue layouts `$23`/`$24` shoot `$55` | Phase 17 | implemented |
 | WPN-01 | Weapons | Candle fire move `$10` / stand `$3F`; `DAMAGE.FIRE` | Phase 17 | implemented |
 | WPN-02 | Weapons | Magical rod `$59`; sword beam `$57` at full hearts | Phase 17 | implemented |

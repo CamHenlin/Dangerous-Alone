@@ -74,6 +74,17 @@ test('dungeonMinimapCell respects map / visit / compass', () => {
   });
   assert.equal(boss.compassOnly, true);
   assert.equal(boss.bossMark, true);
+
+  const tip = dungeonMinimapCell(0x36, {
+    onMap,
+    visited,
+    currentRoomId: 0x73,
+    hasMap: false,
+    hasCompass: false,
+    hintRooms: [0x36],
+  });
+  assert.equal(tip.hintMark, true);
+  assert.equal(tip.compassOnly, true);
 });
 
 test('overworldMarker decodes screen id', () => {

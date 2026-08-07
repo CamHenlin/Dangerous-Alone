@@ -31,8 +31,9 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | 15 | [Boss AI & Quest 2 overworld](./phase-15-bosses-q2-ow.md) | Complete |
 | 16 | [ROM fidelity pass](./phase-16-rom-fidelity-pass.md) | Complete |
 | 17 | [Stretch systems](./phase-17-stretch-systems.md) | Complete |
-| 18 | [Quality of life 1](./phase-18-quality-of-life.md) | Not started |
-| 19 | [Quality of life 2](./phase-19-quality-of-life-2.md) | Not started |
+| 18 | [Quality of life 1](./phase-18-quality-of-life.md) | Complete |
+| 19 | [Quality of life 2](./phase-19-quality-of-life-2.md) | Complete |
+| 20 | [Continuous-camera cleanup](./phase-20-streaming-cleanup.md) | Complete |
 | — | [Thorough review (fidelity audit)](./phase-thorough-review.md) | Complete |
 
 ## Shared docs
@@ -42,3 +43,4 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | [../rom-notes.md](../rom-notes.md) | Verified offsets, hashes, revision notes |
 | [../behavior-oracle.md](../behavior-oracle.md) | Cross-phase “must match original” checklist |
 | [../context/](../context/README.md) | Manual + walkthrough for later playability checks |
+| [../../story/](../../story/README.md) | Every line an NPC says — edit here, no re-extract (Phase 19) |

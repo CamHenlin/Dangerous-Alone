@@ -304,6 +304,11 @@ function writePlayWorld({ tables, screens, start, outDir }) {
       row: screen.row,
       col: screen.col,
       caveId: screen.attrs.caveId,
+      // Which quests actually open this cave — the same cave id appears on
+      // screens the current quest never reveals (level 5 claims $0B and $1B).
+      // Phase 19 map marks need this to pick the reachable entrance.
+      ignoreSecretQ1: screen.attrs.ignoreSecretQ1,
+      ignoreSecretQ2: screen.attrs.ignoreSecretQ2,
       file,
       image: `../overworld/screens/screen_${idHex}.png`,
     });

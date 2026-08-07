@@ -6,6 +6,7 @@ import {
   buildLevel,
   decodeUwColumn,
   loadDungeonTables,
+  discoverConnectedRooms,
   roomsFromDrawnMap,
   uwSquareToTiles,
 } from './dungeons.js';
@@ -72,6 +73,30 @@ test('Level 3 discovers raft cellar $0F', { skip: !fs.existsSync(romPath) }, () 
   const raft = level.rooms.find((r) => r.roomId === 0x0f);
   assert.equal(raft.floorItem.itemType, 0x0c);
   assert.deepEqual(raft.cellarExits, { left: 0x69, right: 0x69 });
+});
+
+test('Level 7 discovers bomb-secret rooms omitted from DrawnMap', {
+  skip: !fs.existsSync(romPath),
+}, () => {
+  const tables = load();
+  const level = buildLevel(tables, 7, 1);
+  // DrawnMap skips $08 / $1a; both are linked by bombable doors from mapped rooms.
+  const secretWest = level.rooms.find((r) => r.roomId === 0x08);
+  const secretMid = level.rooms.find((r) => r.roomId === 0x1a);
+  assert.ok(secretWest, 'L7 $08 (nose tip) should be playable');
+  assert.ok(secretMid, 'L7 $1a (between $19 and $1b) should be playable');
+  assert.equal(secretWest.doors.south.type, 'bombable');
+  assert.equal(secretWest.doors.east.type, 'bombable');
+  assert.equal(secretMid.doors.west.type, 'bombable');
+  assert.equal(secretMid.doors.east.type, 'bombable');
+
+  const fromDrawn = roomsFromDrawnMap(level.drawnMap, level.submenuMapRotation);
+  assert.equal(fromDrawn.has(0x1a), false);
+  const grown = discoverConnectedRooms(new Set(fromDrawn), tables, tables.levelBlocks.find(
+    (b) => b.quest === 1 && b.levels.includes(7),
+  ));
+  assert.ok(grown.has(0x08));
+  assert.ok(grown.has(0x1a));
 });
 
 test('Level 9 and Q2 are represented', { skip: !fs.existsSync(romPath) }, () => {

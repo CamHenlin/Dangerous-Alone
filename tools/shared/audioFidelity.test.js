@@ -12,6 +12,7 @@ import {
   dmcSampleHz,
   dpcmToFloat,
   hardwareEnvelopeVolume,
+  apuLengthCounterFrames,
   noiseClockHz,
   songEnvelopeVolume,
   tune1EnvelopeDuty,
@@ -310,6 +311,12 @@ test('nextNoiseLfsr never latches to zero and cycles', () => {
     seen.add(reg);
   }
   assert.ok(seen.size > 4000, 'output is not stuck in a short loop');
+});
+
+test('apuLengthCounterFrames converts $400F loads to 60 Hz frames', () => {
+  // NoiseLengths $18 / $58 → indexes 3 / 11 → 2 / 10 clocks @ 120 Hz.
+  assert.equal(apuLengthCounterFrames(0x18), 1);
+  assert.equal(apuLengthCounterFrames(0x58), 5);
 });
 
 test('renderNoiseEvents produces silence for volume-0 frames', () => {

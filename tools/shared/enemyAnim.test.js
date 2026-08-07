@@ -10,6 +10,7 @@ import {
   hasEnemySprite,
   sheetForPpuTile,
   uwSpecialSheetForLevel,
+  wallmasterRightTile,
 } from './enemyAnim.js';
 
 test('OW octorok tiles map into overworld sheet', () => {
@@ -97,6 +98,17 @@ test('walker lynel/moblin use facing frames 0–3', () => {
   assert.equal(enemyDrawFlags(0x03, DIR.RIGHT, 0).mirror, false);
 });
 
+test('goriya shares darknut side CHR facing (H-flip on LEFT)', () => {
+  // UW $B8/$BC face right; Darknut and Goriya both flip when facing left.
+  assert.equal(enemyFrameTile(0x05, 0), 0xb8);
+  assert.equal(enemyFrameTile(0x06, 0), 0xb8);
+  assert.equal(enemyDrawFlags(0x05, DIR.LEFT, 0).flipH, true);
+  assert.equal(enemyDrawFlags(0x05, DIR.RIGHT, 0).flipH, false);
+  assert.equal(enemyDrawFlags(0x06, DIR.LEFT, 0).flipH, true);
+  assert.equal(enemyDrawFlags(0x06, DIR.RIGHT, 0).flipH, false);
+  assert.equal(enemyDrawFlags(0x05, DIR.LEFT, 0).mirror, false);
+});
+
 test('rope / gibdo / bubble CHR from UW heaps', () => {
   assert.equal(enemyFrameTile(0x28, 0), 0xa0);
   assert.equal(enemyFrameTile(0x28, 1), 0xa4);
@@ -105,12 +117,17 @@ test('rope / gibdo / bubble CHR from UW heaps', () => {
   assert.equal(hasEnemySprite(0x4a), true);
 });
 
-test('red darknut down frames are not wallmaster $AC', () => {
-  // L3 $69 spawns red darknuts ($0B); blue table wrongly used $AC (hand).
-  assert.equal(enemyFrameTile(0x0b, 1), 0xb0); // down0
-  assert.equal(enemyFrameTile(0x0b, 4), 0xb2); // down1
-  assert.notEqual(enemyFrameTile(0x0b, 1), 0xac);
-  assert.equal(enemyFrameTile(0x0c, 1), 0xac); // blue keeps ROM down0
+test('red and blue darknuts share ObjAnimFrameHeap H/D/U strips', () => {
+  // ObjAnimations: $0B→$64, $0C→$6A — both decode to the same six left-tiles.
+  const expected = [0xb8, 0xac, 0xb4, 0xbc, 0xb0, 0xb4];
+  for (const t of [0x0b, 0x0c]) {
+    for (let i = 0; i < expected.length; i += 1) {
+      assert.equal(enemyFrameTile(t, i), expected[i], `type $${t.toString(16)} frame ${i}`);
+    }
+  }
+  assert.equal(enemyFrameIndex(0x0b, DIR.DOWN, 0), 1);
+  assert.equal(enemyDrawFlags(0x0b, DIR.LEFT, 0).flipH, true);
+  assert.equal(enemyDrawFlags(0x0b, DIR.DOWN, 0).mirror, false);
 });
 
 test('underworld persons use Old Man tile $98 mirrored', () => {
@@ -122,6 +139,18 @@ test('underworld persons use Old Man tile $98 mirrored', () => {
   const { sheet, index } = sheetForPpuTile(0x98, 'dungeon');
   assert.equal(sheet, 'uwCommon');
   assert.equal(index, 0x98 - 0x8e);
+});
+
+test('wallmaster uses NotMirrored open/closed hand columns', () => {
+  // Mirroring $AC made Digdogger-like blobs; NES DrawObjectNotMirrored + patch.
+  assert.equal(enemyFrameTile(0x27, 0), 0xac);
+  assert.equal(enemyFrameTile(0x27, 1), 0x9c);
+  assert.equal(wallmasterRightTile(0), 0xae);
+  assert.equal(wallmasterRightTile(1), 0x9e);
+  assert.equal(enemyDrawFlags(0x27, DIR.RIGHT, 0).mirror, false);
+  assert.equal(enemyDrawFlags(0x27, DIR.LEFT, 0).flipH, true);
+  assert.equal(sheetForPpuTile(0xac, 'dungeon', 7).sheet, 'uw127');
+  assert.equal(sheetForPpuTile(0x9e, 'dungeon', 7).sheet, 'uw127');
 });
 
 test('stalfos always uses tile $A8; walk cycle is mirrored H-flip', () => {

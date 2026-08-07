@@ -13,6 +13,8 @@
  * otherwise note byte (even offset into NoteTable). $08 = rest in table.
  */
 
+import { apuLengthCounterFrames, dutyVolume } from './audioTables.js';
+
 export const NES_CLOCK = 1789773;
 /** Music engine advances once per NTSC frame. */
 export const FRAME_HZ = 60.0988;
@@ -74,6 +76,14 @@ export function readSongDescriptor(bank0, descOffset) {
 }
 
 /**
+ * ROM `GetSongNoiseNoteLength` @ Z_00.asm:1073 — bits 0,7,6 → duration index.
+ * @param {number} note
+ */
+export function songNoiseDurationIndex(note) {
+  return ((note & 1) << 2) | ((note >> 6) & 3);
+}
+
+/**
  * Expand one voice script into timed events.
  * @param {Uint8Array | Buffer} bank0
  * @param {number} cpuStart
@@ -93,22 +103,44 @@ export function expandVoice(bank0, cpuStart, delaySet, channel, noteTable) {
   while (guard++ < 2000) {
     const byte = bank0[off++];
     if (byte === 0x00 || byte === undefined) break;
-    if (byte & 0x80) {
-      if (channel === 'noise') {
-        // Drum-style: each high-bit byte is often a hit using delay index.
-        const d = delaySet[byte & 0x07] ?? 6;
-        events.push({ t, dur: d, hz: 0, note: byte });
-        t += d;
-      } else {
-        dur = delaySet[byte & 0x07] ?? dur;
-      }
+    if (channel === 'noise') {
+      // DriveSong @HandleNoise: every script byte is a drum event; duration
+      // comes from GetSongNoiseNoteLength (not the pulse high-bit convention).
+      const d = delaySet[songNoiseDurationIndex(byte)] ?? 6;
+      events.push({ t, dur: d, hz: 0, note: byte });
+      t += d;
       continue;
     }
-    const hz = channel === 'noise' ? 0 : noteToHz(noteTable, byte);
-    events.push({ t, dur, hz, note: byte });
+    if (byte & 0x80) {
+      dur = delaySet[byte & 0x07] ?? dur;
+      continue;
+    }
+    events.push({ t, dur, hz: noteToHz(noteTable, byte), note: byte });
     t += dur;
   }
   return events;
+}
+
+/**
+ * Noise scripts loop until the phrase ends (`@HandleNoise` restarts on $00).
+ * @param {{ t: number, dur: number, hz: number, note: number }[]} events
+ * @param {number} phraseFrames
+ */
+export function loopNoiseToPhrase(events, phraseFrames) {
+  if (!events.length || phraseFrames <= 0) return events;
+  let loopLen = 0;
+  for (const e of events) loopLen = Math.max(loopLen, e.t + e.dur);
+  if (loopLen <= 0) return events;
+  /** @type {{ t: number, dur: number, hz: number, note: number }[]} */
+  const out = [];
+  for (let base = 0; base < phraseFrames; base += loopLen) {
+    for (const e of events) {
+      const t = base + e.t;
+      if (t >= phraseFrames) break;
+      out.push({ ...e, t, dur: Math.min(e.dur, phraseFrames - t) });
+    }
+  }
+  return out;
 }
 
 /**
@@ -152,7 +184,45 @@ export function finalizeSongDuration(song) {
     }
   }
   song.durationFrames = max;
+  // Percussion loops independently of melody; fill the phrase so later bars
+  // keep their drum hits (ROM `@HandleNoise` restarts the script on $00).
+  if (song.channels?.noise?.length) {
+    song.channels.noise = loopNoiseToPhrase(song.channels.noise, max);
+  }
   return song;
+}
+
+/**
+ * Turn script noise notes into audible LFSR hits.
+ *
+ * Each drum write loads NoiseVolumes/Periods/Lengths; the length counter then
+ * silences the channel long before the next script note. Playing the full
+ * script duration as noise is what made the overworld theme hiss continuously.
+ *
+ * @param {{ t: number, dur: number, note: number }[]} events
+ * @param {{ volumes?: number[], periods?: number[], lengths?: number[] }} tables
+ * @returns {{ t: number, dur: number, period: number, volume: number }[]}
+ */
+export function mapSongNoiseEvents(events, tables = {}) {
+  const volumes = tables.volumes ?? [];
+  const periods = tables.periods ?? [];
+  const lengths = tables.lengths ?? [];
+  /** @type {{ t: number, dur: number, period: number, volume: number }[]} */
+  const out = [];
+  for (const ev of events) {
+    const idx = (ev.note & 0x3e) >> 4;
+    const volume = dutyVolume(volumes[idx] ?? 0).volume;
+    if (volume <= 0) continue;
+    const dur = Math.min(ev.dur, apuLengthCounterFrames(lengths[idx] ?? 0));
+    if (dur <= 0) continue;
+    out.push({
+      t: ev.t,
+      dur,
+      period: periods[idx] ?? 0,
+      volume,
+    });
+  }
+  return out;
 }
 
 /**

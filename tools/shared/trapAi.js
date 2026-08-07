@@ -1,9 +1,22 @@
 import { DIR } from './collision.js';
 import { OBJ } from './enemies.js';
+import { QSPEED, consumeQSpeedPixels } from './objQSpeed.js';
 
 /** NES TrapXs / TrapYs (screen space, HUD included in Y). */
 export const TRAP_XS = Object.freeze([0x20, 0x20, 0xd0, 0xd0, 0x40, 0xb0]);
 export const TRAP_YS = Object.freeze([0x5d, 0xbd, 0x5d, 0xbd, 0x8d, 0x8d]);
+
+/** NES rush stop: center X `$78` / center Y `$90` in the trap's home room. */
+export const TRAP_RUSH_X = 0x78;
+export const TRAP_RUSH_Y = 0x90;
+
+/** Movement clamp matching the corner trap extents (home-room local). */
+export const TRAP_BOUNDS = Object.freeze({
+  minX: 0x20,
+  maxX: 0xd0,
+  minY: 0x5d,
+  maxY: 0xbd,
+});
 
 /** Allowed dir bits per trap index (TrapAllowedDirs). */
 const TRAP_ALLOWED = Object.freeze([0x05, 0x09, 0x06, 0x0a, 0x01, 0x02]);
@@ -25,14 +38,14 @@ export function isTrapType(objType) {
  * Expand generator `$49` (6) / `$4A` (4) into child trap spawn specs.
  * @param {number} objType
  * @param {{ x?: number, y?: number }} [origin] dungeon room origin
- * @returns {{ objType: number, x: number, y: number, trapIndex: number }[]}
+ * @returns {{ objType: number, x: number, y: number, trapIndex: number, trapOriginX: number, trapOriginY: number }[]}
  */
 export function expandTrapGenerator(objType, origin = { x: 0, y: 0 }) {
   if (!isTrapType(objType)) return [];
   const count = objType === OBJ.TRAP ? 6 : 4;
   const ox = origin.x ?? 0;
   const oy = origin.y ?? 0;
-  /** @type {{ objType: number, x: number, y: number, trapIndex: number }[]} */
+  /** @type {{ objType: number, x: number, y: number, trapIndex: number, trapOriginX: number, trapOriginY: number }[]} */
   const out = [];
   for (let i = 0; i < count; i += 1) {
     out.push({
@@ -40,20 +53,44 @@ export function expandTrapGenerator(objType, origin = { x: 0, y: 0 }) {
       x: TRAP_XS[i] + ox,
       y: TRAP_YS[i] + oy,
       trapIndex: i,
+      // Anchor-local origin of the home room; soft-enter rebase must keep this
+      // aligned so rush targets stay in the trap's room, not the camera room.
+      trapOriginX: ox,
+      trapOriginY: oy,
     });
   }
   return out;
 }
 
 /**
+ * Home-room movement box in the current anchor coordinate space.
+ * @param {{ trapOriginX?: number, trapOriginY?: number }} e
+ */
+export function trapHomeBounds(e) {
+  const ox = e.trapOriginX ?? 0;
+  const oy = e.trapOriginY ?? 0;
+  return {
+    minX: TRAP_BOUNDS.minX + ox,
+    maxX: TRAP_BOUNDS.maxX + ox,
+    minY: TRAP_BOUNDS.minY + oy,
+    maxY: TRAP_BOUNDS.maxY + oy,
+  };
+}
+
+/**
  * @param {object} e trap enemy
  * @param {{ x: number, y: number }} link
- * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} [_bounds]
+ *   Ignored — traps stay in their home room (camera chase bounds would let a
+ *   rebased neighbour rush into the wrong screen under Phase 18 soft-enter).
  */
-export function stepTrap(e, link, bounds) {
+export function stepTrap(e, link, _bounds) {
   const idx = e.trapIndex ?? 0;
   const allowed = TRAP_ALLOWED[idx] ?? 0x0f;
   const state = e.trapState ?? TRAP_STATE.SENSE;
+  const ox = e.trapOriginX ?? 0;
+  const oy = e.trapOriginY ?? 0;
+  const bounds = trapHomeBounds(e);
 
   if (state === TRAP_STATE.SENSE) {
     const dy = Math.abs(link.y - e.y);
@@ -64,7 +101,7 @@ export function stepTrap(e, link, bounds) {
         e.trapHome = e.x;
         e.dir = dir;
         e.trapState = TRAP_STATE.RUSH;
-        e.qSpeed = 2; // ~$70
+        e.qSpeedFrac = QSPEED.TRAP_RUSH; // InitTrap rush $70
       }
       return;
     }
@@ -74,27 +111,29 @@ export function stepTrap(e, link, bounds) {
         e.trapHome = e.y;
         e.dir = dir;
         e.trapState = TRAP_STATE.RUSH;
-        e.qSpeed = 2;
+        e.qSpeedFrac = QSPEED.TRAP_RUSH;
       }
     }
     return;
   }
 
-  // Move
-  const spd = state === TRAP_STATE.RUSH ? 2 : 1;
+  // MoveObject-style QSpeed ($70 rush / $20 return).
+  e.qSpeedFrac =
+    state === TRAP_STATE.RUSH ? QSPEED.TRAP_RUSH : QSPEED.TRAP_RETURN;
+  const spd = consumeQSpeedPixels(e);
   if (e.dir & DIR.RIGHT) e.x += spd;
   if (e.dir & DIR.LEFT) e.x -= spd;
   if (e.dir & DIR.DOWN) e.y += spd;
   if (e.dir & DIR.UP) e.y -= spd;
 
-  // Clamp to room
+  // Clamp to the trap's home room — not the camera chase box.
   e.x = Math.max(bounds.minX, Math.min(bounds.maxX, e.x));
   e.y = Math.max(bounds.minY, Math.min(bounds.maxY, e.y));
 
   if (state === TRAP_STATE.RUSH) {
     const horiz = Boolean(e.dir & (DIR.LEFT | DIR.RIGHT));
     const cur = horiz ? e.x : e.y;
-    const target = horiz ? 0x78 : 0x90;
+    const target = horiz ? TRAP_RUSH_X + ox : TRAP_RUSH_Y + oy;
     if (Math.abs(cur - target) < 5) {
       e.dir =
         e.dir & DIR.RIGHT
@@ -105,7 +144,7 @@ export function stepTrap(e, link, bounds) {
               ? DIR.UP
               : DIR.DOWN;
       e.trapState = TRAP_STATE.RETRACT;
-      e.qSpeed = 1;
+      e.qSpeedFrac = QSPEED.TRAP_RETURN;
     }
     return;
   }
@@ -114,10 +153,11 @@ export function stepTrap(e, link, bounds) {
   const horiz = Boolean(e.dir & (DIR.LEFT | DIR.RIGHT));
   const home = e.trapHome ?? (horiz ? e.x : e.y);
   const cur = horiz ? e.x : e.y;
+  // At $20 (~0.5 px/f), snap when within one step of home.
   if (Math.abs(cur - home) <= 2) {
     if (horiz) e.x = home;
     else e.y = home;
     e.trapState = TRAP_STATE.SENSE;
-    e.qSpeed = 0;
+    e.qSpeedFrac = 0;
   }
 }

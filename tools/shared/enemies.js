@@ -18,6 +18,7 @@ import {
   monsterSlotsFree,
   resolveSpawns,
   tryAddMonster,
+  tryAddMonsterToRoom,
 } from './spawn.js';
 import { BOOMERANG_STUN_FRAMES, boomerangHits } from './boomerang.js';
 import { enemyChasesBait } from './bait.js';
@@ -58,6 +59,7 @@ import { gleeokOverlapsHitbox, gleeokTouchesLink } from './gleeok.js';
 import { damageHalfHeartsForType } from './damage.js';
 import { DAMAGE, invincibilityMaskForType, isImmuneToDamage } from './damageMasks.js';
 import { expandTrapGenerator, isTrapType, stepTrap } from './trapAi.js';
+import { expandRupeeStash, isRupeeStash, RUPEE_STASH } from './rupeeStash.js';
 import { isPersonType } from './moneyOrLife.js';
 import {
   advanceGridOffset,
@@ -90,6 +92,30 @@ import {
 } from './moldormLamnola.js';
 import { GRUMBLE, createGrumble, isGrumble, stepGrumble } from './grumble.js';
 import { FLAME_DAMAGE, flameHits } from './candle.js';
+import {
+  BLUE_LEEVER_STATE_QSPEEDS,
+  QSPEED,
+  RED_LEEVER_STATE_QSPEEDS,
+  armosQSpeedFrac,
+  consumeQSpeedPixels,
+  qSpeedFracForType,
+} from './objQSpeed.js';
+import {
+  DIRECTIONS8,
+  FLYER_STATE,
+  KEESE_FLYING_MAX_SPEED_FRAC,
+  flyerSpeedThresholdTransition,
+  keeseInitFlyerSpeed,
+  moveFlyer,
+} from './flyerMove.js';
+
+export {
+  QSPEED,
+  consumeQSpeedPixels,
+  qSpeedFracForType,
+  qSpeedToPxPerFrame,
+  usesObjQSpeed,
+} from './objQSpeed.js';
 
 function oppositeDir(dir) {
   if (dir & DIR.UP) return DIR.DOWN;
@@ -152,6 +178,8 @@ export const OBJ = Object.freeze({
   /** Pond fairy fountain (InitPondFairy / UpdatePondFairy). */
   POND_FAIRY: 0x2f,
   GIBDO: 0x30,
+  /** Rupee stash room generator → 10 pickups (InitRupeeStash). */
+  RUPEE_STASH,
   /** Hungry Goriya / Grumble — bait gate. */
   GRUMBLE,
   RED_LAMNOLA,
@@ -238,6 +266,7 @@ export const ENEMY_COLOR = Object.freeze({
   [OBJ.BUBBLE_BLUE]: 0x4060c0,
   [OBJ.BUBBLE_RED]: 0xc04040,
   [OBJ.GIBDO]: 0xa08040,
+  [OBJ.RUPEE_STASH]: 0x40a0e0,
   [OBJ.GRUMBLE]: 0xc06040,
   [OBJ.RED_LAMNOLA]: 0xc04020,
   [OBJ.BLUE_LAMNOLA]: 0x4060c0,
@@ -303,7 +332,9 @@ let nextId = 1;
  * @property {boolean} alive
  * @property {number} anim
  * @property {number} timer
- * @property {number} qSpeed
+ * @property {number} qSpeed whole pixels/frame (legacy movers)
+ * @property {number} [qSpeedFrac] NES ObjQSpeedFrac (MoveObject ×4/frame)
+ * @property {number} [posFrac] NES ObjPosFrac accumulator
  * @property {number} shootTimer
  * @property {number} stunTimer
  * @property {number} invulnMask NES ObjInvincibilityMask
@@ -313,7 +344,7 @@ let nextId = 1;
  */
 
 /**
- * @param {{ objType: number, x: number, y: number, edgePending?: boolean, dir?: number, trapIndex?: number, slotIndex?: number }} spawn
+ * @param {{ objType: number, x: number, y: number, edgePending?: boolean, dir?: number, trapIndex?: number, trapOriginX?: number, trapOriginY?: number, slotIndex?: number }} spawn
  * @returns {Enemy | null}
  */
 export function createEnemy(spawn) {
@@ -322,11 +353,7 @@ export function createEnemy(spawn) {
   const hp = hpForType(objType);
   const keese =
     objType === OBJ.BLUE_KEESE || objType === OBJ.RED_KEESE || objType === OBJ.BLACK_KEESE;
-  const fast =
-    objType === OBJ.RED_OCTOROK_FAST
-    || objType === OBJ.BLUE_OCTOROK_FAST
-    || objType === OBJ.RED_LEEVER
-    || objType === OBJ.BLUE_DARKNUT;
+  const qFrac = qSpeedFracForType(objType);
   const boss = isBossType(objType);
   const leever = isLeever(objType);
   const trap = isTrapType(objType);
@@ -350,7 +377,13 @@ export function createEnemy(spawn) {
             ? (spawn.y || 0x80)
             : y,
     hp: grumble ? 0xffff : resolvedHp,
-    dir: spawn.dir ?? (objType === OBJ.PEAHAT ? DIR.UP : DIR.LEFT),
+    dir:
+      spawn.dir
+      ?? (keese
+        ? DIRECTIONS8[(x + y) & 7]
+        : objType === OBJ.PEAHAT
+          ? DIR.UP
+          : DIR.LEFT),
     invuln: 0,
     alive: true,
     anim: 0,
@@ -358,8 +391,16 @@ export function createEnemy(spawn) {
       ? 30 + ((spawn.x ?? 0) & 0x3f)
       : objType === OBJ.ARMOS
         ? 0x30
-        : 20 + ((spawn.x ?? 0) & 0x1f),
-    qSpeed: trap ? 0 : fast ? 2 : 1,
+        : keese
+          ? 0
+          : 20 + ((spawn.x ?? 0) & 0x1f),
+    // Legacy whole-px field (flyers/worms/boss helpers). Walker types use qSpeedFrac.
+    qSpeed: qFrac != null ? 0 : 1,
+    // NES ObjQSpeedFrac — MoveObject applies ×4/frame (see objQSpeed.js).
+    qSpeedFrac: qFrac,
+    /** Restored after _TryShooting freeze (ObjQSpeedFrac := 0). */
+    walkQSpeedFrac: qFrac,
+    posFrac: 0,
     shootTimer: 0,
     stunTimer: 0,
     invulnMask: grumble ? 0xff : invincibilityMaskForType(objType),
@@ -370,8 +411,12 @@ export function createEnemy(spawn) {
     feedTimer: 0,
     leeverPhase: leever ? LEEVER_PHASE.BURIED : undefined,
     slotIndex: spawn.slotIndex,
-    // Flyer: 0..4 active, 5 = resting (weapon-vulnerable for peahat).
-    flyerState: objType === OBJ.PEAHAT || objType === OBJ.FLYING_GHINI ? 2 : undefined,
+    // Flyer: 0..4 active, 5 = resting (weapon-vulnerable for peahat) / keese delay.
+    flyerState: keese
+      ? FLYER_STATE.SPEED_UP
+      : objType === OBJ.PEAHAT || objType === OBJ.FLYING_GHINI
+        ? 2
+        : undefined,
     armosStatue: objType === OBJ.ARMOS,
     /** Armos fade-in frames after wake (weapons ignored). */
     armosFade: objType === OBJ.ARMOS ? 0x30 : 0,
@@ -379,8 +424,15 @@ export function createEnemy(spawn) {
     trapIndex: spawn.trapIndex,
     trapState: trap ? 0 : undefined,
     trapHome: undefined,
+    trapOriginX: trap ? (spawn.trapOriginX ?? 0) : undefined,
+    trapOriginY: trap ? (spawn.trapOriginY ?? 0) : undefined,
     captureTimer: 0,
     wallmasterGrab: false,
+    /** Set when capture slide finishes — play warps to dungeon entrance. */
+    wallmasterWarpPending: false,
+    /** Dir toward nearest wall for the post-grab slide. */
+    wallmasterRetreatDir: undefined,
+    wallmasterTilesCrossed: objType === OBJ.WALLMASTER ? 0 : undefined,
     wallmasterCrawl: objType === OBJ.WALLMASTER ? 0 : undefined,
     turnRate: isWandererType(objType) ? turnRateForType(objType) : undefined,
     turnTimer: 0,
@@ -391,7 +443,11 @@ export function createEnemy(spawn) {
         ? 0
         : undefined,
     flyerTurns: keese ? 6 : undefined,
-    flyerSpeed: keese ? 1 : undefined,
+    // NES Flyer_ObjSpeed (not whole px/frame) — see flyerMove.js.
+    flyerSpeed: keese ? keeseInitFlyerSpeed(objType) : undefined,
+    flyerSpeedFrac: keese ? 0 : undefined,
+    flyingMaxSpeedFrac: keese ? KEESE_FLYING_MAX_SPEED_FRAC : undefined,
+    flyerDistTraveled: keese ? 0 : undefined,
   };
   if (
     isBossType(objType)
@@ -426,6 +482,7 @@ export function enemyIsHidden(e) {
 export function enemyIsHostile(e) {
   if (!e?.alive || e.npc || e.edgePending) return false;
   if (e.objType === OBJ.BOULDER_SET) return false;
+  if (isRupeeStash(e.objType)) return false;
   if (e.armosStatue) return true; // touch wakes; weapons ignored separately
   if (isLeever(e.objType)) return e.leeverPhase === LEEVER_PHASE.ACTIVE;
   if (e.objType === OBJ.ZORA) {
@@ -464,6 +521,13 @@ export function spawnEnemiesFromAttrs(attrs, opts = {}) {
   for (const s of spawns) {
     if (isTrapType(s.objType)) {
       for (const t of expandTrapGenerator(s.objType, opts.origin)) {
+        const e = createEnemy({ ...t, slotIndex: slot++ });
+        if (e) list.push(e);
+      }
+      continue;
+    }
+    if (isRupeeStash(s.objType)) {
+      for (const t of expandRupeeStash(opts.origin)) {
         const e = createEnemy({ ...t, slotIndex: slot++ });
         if (e) list.push(e);
       }
@@ -604,7 +668,7 @@ export function enemyNeedsWalkableGround(e) {
 }
 
 /**
- * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function, standingTile?: Function }} [tileOpts]
  */
 function resolveEnemyTileOpts(tileOpts = {}) {
   const firstUnwalkable = tileOpts.firstUnwalkable ?? OW_FIRST_UNWALKABLE;
@@ -615,6 +679,19 @@ function resolveEnemyTileOpts(tileOpts = {}) {
 }
 
 /**
+ * Preserve continuous-camera tile probes when unpacking stepEnemy opts.
+ * @param {object} [opts]
+ */
+function enemyTileOptsFrom(opts = {}) {
+  return {
+    firstUnwalkable: opts.firstUnwalkable,
+    walkableRemap: opts.walkableRemap,
+    collidingTile: opts.collidingTile,
+    standingTile: opts.standingTile,
+  };
+}
+
+/**
  * True when the standing tile under the enemy is impassable for walkers.
  * @param {number[][]} tileGrid
  * @param {number} x
@@ -622,9 +699,12 @@ function resolveEnemyTileOpts(tileOpts = {}) {
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
  */
 export function isEnemyStandingSolid(tileGrid, x, y, tileOpts = {}) {
-  if (!tileGrid) return false;
+  if (!tileGrid && typeof tileOpts.standingTile !== 'function') return false;
   const { firstUnwalkable, walkableRemap } = resolveEnemyTileOpts(tileOpts);
-  const tile = standingTile(tileGrid, x, y);
+  const tile =
+    typeof tileOpts.standingTile === 'function'
+      ? tileOpts.standingTile(x, y)
+      : standingTile(tileGrid, x, y);
   return !normalizeOwTile(tile, firstUnwalkable, walkableRemap).walkable;
 }
 
@@ -637,10 +717,14 @@ export function isEnemyStandingSolid(tileGrid, x, y, tileOpts = {}) {
  * @returns {((x: number, y: number) => { tile: number, walkable: boolean }) | null}
  */
 export function makeStandingProbe(tileGrid, tileOpts = {}) {
-  if (!tileGrid) return null;
+  if (!tileGrid && typeof tileOpts.standingTile !== 'function') return null;
   const { firstUnwalkable, walkableRemap } = resolveEnemyTileOpts(tileOpts);
   return (x, y) => {
-    const tile = standingTile(tileGrid, x, y) & 0xff;
+    const tile = (
+      typeof tileOpts.standingTile === 'function'
+        ? tileOpts.standingTile(x, y)
+        : standingTile(tileGrid, x, y)
+    ) & 0xff;
     return {
       tile,
       walkable: normalizeOwTile(tile, firstUnwalkable, walkableRemap).walkable,
@@ -649,68 +733,117 @@ export function makeStandingProbe(tileGrid, tileOpts = {}) {
 }
 
 /**
- * Slide a walker off water/rock onto the nearest NES-aligned walkable cell.
+ * NES spawn alignment for continuous (possibly negative / multi-screen) coords.
+ * `x & $F0` / `y & $F0` fold X≥256 and Y≥256 back into one screen — the same
+ * class of bug as clamping continuous probes with `$F8`.
+ * @param {number} x
+ * @param {number} y
+ */
+export function alignEnemySpawnCell(x, y) {
+  return {
+    x: Math.floor(x / 16) * 16,
+    y: Math.floor(y / 16) * 16 + 0x0d,
+  };
+}
+
+/**
+ * True when a walker has at least one open cardinal from (x, y).
+ * @param {number[][] | null | undefined} tileGrid
+ * @param {number} x
+ * @param {number} y
+ * @param {{ collidingTile?: Function, firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
+ */
+function enemyHasOpenDir(tileGrid, x, y, tileOpts = {}) {
+  const canProbe =
+    Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function';
+  if (!canProbe) return true;
+  return (
+    canEnemyMove(tileGrid, x, y, DIR.UP, tileOpts)
+    || canEnemyMove(tileGrid, x, y, DIR.DOWN, tileOpts)
+    || canEnemyMove(tileGrid, x, y, DIR.LEFT, tileOpts)
+    || canEnemyMove(tileGrid, x, y, DIR.RIGHT, tileOpts)
+  );
+}
+
+/**
+ * Slide a walker off water/rock (or a no-exit pocket) onto the nearest
+ * NES-aligned walkable cell that can still move.
  * @param {Enemy} e
  * @param {number[][]} tileGrid
  * @param {object} [opts]
- * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [opts.tileOpts]
- * @param {number} [opts.maxRadius] search in 8px steps
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function, standingTile?: Function }} [opts.tileOpts]
+ * @param {number} [opts.maxRadius] search in 16px (then 8px) steps
  * @returns {{ ejected: boolean, dx: number, dy: number }}
  */
 export function ejectEnemyFromSolid(e, tileGrid, opts = {}) {
-  if (!tileGrid || !enemyNeedsWalkableGround(e)) {
-    return { ejected: false, dx: 0, dy: 0 };
-  }
   const tileOpts = opts.tileOpts ?? {};
-  if (!isEnemyStandingSolid(tileGrid, e.x, e.y, tileOpts)) {
+  const hasProbe = Boolean(tileGrid) || typeof tileOpts.standingTile === 'function';
+  if (!hasProbe || !enemyNeedsWalkableGround(e)) {
     return { ejected: false, dx: 0, dy: 0 };
   }
 
-  const maxRadius = opts.maxRadius ?? 6; // ×8px → 48px
   const walkableAt = (x, y) => !isEnemyStandingSolid(tileGrid, x, y, tileOpts);
+  const openAt = (x, y) => enemyHasOpenDir(tileGrid, x, y, tileOpts);
+  const standingSolid = !walkableAt(e.x, e.y);
+  const immobile = !openAt(e.x, e.y);
+  // Stuck on a bush/rock, or wedged with no exit even on sand.
+  if (!standingSolid && !immobile) {
+    return { ejected: false, dx: 0, dy: 0 };
+  }
 
-  // Prefer spawn-aligned cells (X multiple of $10, Y | $0D).
-  const ox = e.x & 0xf0;
-  const oy = (e.y & 0xf0) | 0x0d;
+  const maxRadius = opts.maxRadius ?? 6; // ×16px → 96px
+  // Continuous mode places foes in anchor-relative coords (may be negative /
+  // past one screen). Only apply classic OW room lips for single-screen eject.
+  const clampSingleRoom = typeof tileOpts.standingTile !== 'function';
+  const inSearchBounds = (x, y) => {
+    if (!clampSingleRoom) return true;
+    return x >= 0x10 && x <= 0xe0 && y >= 0x4d && y <= 0xcd;
+  };
+
+  const commit = (x, y) => {
+    const out = { ejected: true, dx: x - e.x, dy: y - e.y };
+    e.x = x;
+    e.y = y;
+    e.gridOffset = 0;
+    return out;
+  };
+
+  /** @type {{ x: number, y: number } | null} */
+  let soft = null;
+  const consider = (x, y) => {
+    if (!inSearchBounds(x, y) || !walkableAt(x, y)) return null;
+    if (openAt(x, y)) return commit(x, y);
+    if (!soft) soft = { x, y };
+    return null;
+  };
+
+  // Prefer spawn-aligned cells (X multiple of $10, Y ≡ $D in each $10 band).
+  const { x: ox, y: oy } = alignEnemySpawnCell(e.x, e.y);
   for (let r = 0; r <= maxRadius; r += 1) {
     for (let dy = -r; dy <= r; dy += 1) {
       for (let dx = -r; dx <= r; dx += 1) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const x = ox + dx * 16;
-        const y = oy + dy * 16;
-        if (x < 0x10 || x > 0xe0 || y < 0x4d || y > 0xcd) continue;
-        if (walkableAt(x, y)) {
-          const out = { ejected: true, dx: x - e.x, dy: y - e.y };
-          e.x = x;
-          e.y = y;
-          e.gridOffset = 0;
-          return out;
-        }
+        const hit = consider(ox + dx * 16, oy + dy * 16);
+        if (hit) return hit;
       }
     }
   }
 
   // Fallback: finer 8px ring around the original pixel.
-  const fx = e.x & 0xf8;
-  const fy = (e.y & 0xf8) | 0x05;
+  const fx = Math.floor(e.x / 8) * 8;
+  const fy = Math.floor(e.y / 8) * 8 + 5;
   for (let r = 1; r <= maxRadius * 2; r += 1) {
     for (let dy = -r; dy <= r; dy += 1) {
       for (let dx = -r; dx <= r; dx += 1) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const x = fx + dx * 8;
-        const y = fy + dy * 8;
-        if (x < 0x10 || x > 0xe0 || y < 0x4d || y > 0xcd) continue;
-        if (walkableAt(x, y)) {
-          const out = { ejected: true, dx: x - e.x, dy: y - e.y };
-          e.x = x;
-          e.y = y;
-          e.gridOffset = 0;
-          return out;
-        }
+        const hit = consider(fx + dx * 8, fy + dy * 8);
+        if (hit) return hit;
       }
     }
   }
 
+  // Last resort: walkable even if still boxed in (better than sitting in a bush).
+  if (soft) return commit(soft.x, soft.y);
   return { ejected: false, dx: 0, dy: 0 };
 }
 
@@ -721,7 +854,8 @@ export function ejectEnemyFromSolid(e, tileGrid, opts = {}) {
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
  */
 export function ejectEnemiesFromSolid(enemies, tileGrid, tileOpts = {}) {
-  if (!tileGrid || !enemies?.length) return;
+  const hasProbe = Boolean(tileGrid) || typeof tileOpts.standingTile === 'function';
+  if (!hasProbe || !enemies?.length) return;
   for (const e of enemies) {
     ejectEnemyFromSolid(e, tileGrid, { tileOpts });
   }
@@ -734,34 +868,37 @@ export function ejectEnemiesFromSolid(enemies, tileGrid, tileOpts = {}) {
  * @param {{ chase?: { x: number, y: number } | null, firstUnwalkable?: number, walkableRemap?: readonly number[] }} [opts]
  */
 function stepLeever(e, bounds, tileGrid, opts = {}) {
-  const tileOpts = {
-    firstUnwalkable: opts.firstUnwalkable,
-    walkableRemap: opts.walkableRemap,
-  };
+  const tileOpts = enemyTileOptsFrom(opts);
   const chase = opts.chase;
   const phase = e.leeverPhase ?? LEEVER_PHASE.BURIED;
+  const blue = e.objType === OBJ.BLUE_LEEVER;
 
   if (phase === LEEVER_PHASE.BURIED) {
+    // BlueLeever state0 $08; red state0 does not crawl ($00).
+    e.qSpeedFrac = blue ? BLUE_LEEVER_STATE_QSPEEDS[0] : RED_LEEVER_STATE_QSPEEDS[0];
     if (chase) faceTowardChase(e, chase);
-    // Tunnel under the sand — bounds only.
-    if ((e.anim & 1) === 0) moveAndCollide(e, 1, bounds, null);
+    if (e.qSpeedFrac > 0) moveAndCollideQSpeed(e, bounds, null, tileOpts);
     if (e.timer <= 0) {
       e.leeverPhase = LEEVER_PHASE.EMERGE;
       e.timer = 16;
+      e.qSpeedFrac = blue ? BLUE_LEEVER_STATE_QSPEEDS[1] : RED_LEEVER_STATE_QSPEEDS[1];
     }
     return;
   }
 
   if (phase === LEEVER_PHASE.EMERGE) {
+    e.qSpeedFrac = blue ? BLUE_LEEVER_STATE_QSPEEDS[2] : RED_LEEVER_STATE_QSPEEDS[2];
     if (e.timer <= 0) {
       e.leeverPhase = LEEVER_PHASE.ACTIVE;
       // Red stays up longer / chases harder.
       e.timer = e.objType === OBJ.RED_LEEVER ? 90 + (e.id & 0x1f) : 50 + (e.id & 0x1f);
+      e.qSpeedFrac = blue ? BLUE_LEEVER_STATE_QSPEEDS[3] : RED_LEEVER_STATE_QSPEEDS[3];
     }
     return;
   }
 
   if (phase === LEEVER_PHASE.DIG) {
+    e.qSpeedFrac = blue ? BLUE_LEEVER_STATE_QSPEEDS[4] : RED_LEEVER_STATE_QSPEEDS[4];
     if (e.timer <= 0) {
       e.leeverPhase = LEEVER_PHASE.BURIED;
       e.timer = 40 + ((e.anim + e.id) & 0x3f);
@@ -769,7 +906,8 @@ function stepLeever(e, bounds, tileGrid, opts = {}) {
     return;
   }
 
-  // ACTIVE — chase-biased wander on the surface.
+  // ACTIVE — chase-biased wander on the surface (state 3 → $20).
+  e.qSpeedFrac = blue ? BLUE_LEEVER_STATE_QSPEEDS[3] : RED_LEEVER_STATE_QSPEEDS[3];
   if (e.timer <= 0) {
     e.leeverPhase = LEEVER_PHASE.DIG;
     e.timer = 16;
@@ -782,7 +920,7 @@ function stepLeever(e, bounds, tileGrid, opts = {}) {
       e.dir = pickWanderDir(tileGrid, e.x, e.y, e.id + e.anim, tileOpts);
     }
   }
-  moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts);
+  moveEnemyStep(e, bounds, tileGrid, tileOpts);
 }
 
 /**
@@ -794,7 +932,10 @@ function stepLeever(e, bounds, tileGrid, opts = {}) {
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
  */
 export function canEnemyMove(tileGrid, x, y, dir, tileOpts = {}) {
-  if (!tileGrid || !dir) return true;
+  if ((!tileGrid && typeof tileOpts.collidingTile !== 'function') || !dir) return true;
+  if (typeof tileOpts.collidingTile === 'function') {
+    return Boolean(tileOpts.collidingTile(x, y, dir)?.walkable);
+  }
   return getMonsterCollidingTile(tileGrid, x, y, dir, {
     firstUnwalkable: tileOpts.firstUnwalkable ?? OW_FIRST_UNWALKABLE,
     walkableRemap: tileOpts.walkableRemap,
@@ -902,7 +1043,7 @@ export function applyVireJump(e) {
  */
 function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}) {
   const checkTiles =
-    Boolean(tileGrid)
+    (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
     && onTileBoundary(e)
     && !enemyIgnoresTiles(e.objType);
   if (checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
@@ -919,6 +1060,44 @@ function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}) {
   moveDir(e, speed);
   bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
   if (e.x !== beforeX || e.y !== beforeY) advanceGridOffset(e, speed);
+}
+
+/**
+ * Wanderer move using ObjQSpeedFrac (InitDarknut / MoveObject).
+ * @param {Enemy} e
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ * @param {number[][] | null | undefined} tileGrid
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
+ */
+function moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts = {}) {
+  const checkTiles =
+    (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
+    && onTileBoundary(e)
+    && !enemyIgnoresTiles(e.objType);
+  if (checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
+    e.dir = pickUnblockedDir(tileGrid, e.x, e.y, e.dir, e.id + e.anim, tileOpts);
+    e.timer = Math.min(e.timer, 4);
+    if (!canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
+      bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
+      return;
+    }
+  }
+  // Direction none (blocked) skips MoveObject — do not advance posFrac.
+  if (!e.dir) return;
+  const speed = consumeQSpeedPixels(e);
+  if (speed <= 0) return;
+  const beforeX = e.x;
+  const beforeY = e.y;
+  moveDir(e, speed);
+  bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
+  const moved = Math.abs(e.x - beforeX) + Math.abs(e.y - beforeY);
+  if (moved > 0) advanceGridOffset(e, moved);
+}
+
+/** Prefer ObjQSpeedFrac MoveObject; fall back to whole-pixel qSpeed. */
+function moveEnemyStep(e, bounds, tileGrid, tileOpts = {}) {
+  if (e.qSpeedFrac != null) moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts);
+  else moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts);
 }
 
 /**
@@ -949,10 +1128,7 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     return;
   }
 
-  const tileOpts = {
-    firstUnwalkable: opts.firstUnwalkable,
-    walkableRemap: opts.walkableRemap,
-  };
+  const tileOpts = enemyTileOptsFrom(opts);
   const chase = opts.chase;
   const link = opts.link ?? chase;
 
@@ -962,6 +1138,9 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     if (link) stepTrap(e, link, bounds);
     return;
   }
+
+  // Stationary pickups — UpdateRupeeStash only draws / checks touch.
+  if (isRupeeStash(t)) return;
 
   if (isWormType(t)) {
     stepWorm(e, bounds, chase, opts.enemies ?? []);
@@ -980,8 +1159,14 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
 
   if (t === OBJ.ARMOS && (e.armosFade ?? 0) > 0) {
     e.armosFade -= 1;
-    if (e.armosFade === 0 && typeof opts.onArmosAwake === 'function') {
-      opts.onArmosAwake(e);
+    if (e.armosFade === 0) {
+      // InitArmos: $20 if Random < $80, else $60.
+      const rnd = typeof opts.rngByte === 'function'
+        ? opts.rngByte()
+        : (e.id * 17 + e.anim) & 0xff;
+      e.qSpeedFrac = armosQSpeedFrac(rnd);
+      e.walkQSpeedFrac = e.qSpeedFrac;
+      if (typeof opts.onArmosAwake === 'function') opts.onArmosAwake(e);
     }
     return;
   }
@@ -1031,7 +1216,16 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     });
     if (spawn && opts.enemies) {
       // UpdateBoulderSet uses FindEmptyMonsterSlot — no slot, no rockfall.
-      tryAddMonster(opts.enemies, createEnemy(spawn));
+      // Streamed rooms budget slots per room, so the boulder inherits the
+      // spawner's home room and is already revealed (its parent is on camera).
+      const home = e.homeRoomId;
+      const rock = createEnemy(spawn);
+      if (rock) {
+        if (home != null) rock.homeRoomId = home;
+        rock.viewActivated = e.viewActivated ?? true;
+        if (home == null) tryAddMonster(opts.enemies, rock);
+        else tryAddMonsterToRoom(opts.enemies, rock, home);
+      }
     }
     return;
   }
@@ -1096,57 +1290,75 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
       }
     }
     const goBefore = e.gridOffset ?? 0;
-    moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts);
+    moveEnemyStep(e, bounds, tileGrid, tileOpts);
     // UpdateVireState0: hop while facing left/right (table sums to 0 over a tile).
     // Only after a real step so a bounced edge cannot re-apply the same offset.
     if (t === OBJ.VIRE && (e.gridOffset ?? 0) !== goBefore) applyVireJump(e);
     return;
   }
 
-  // Fallback wander.
+  // Fallback wander (Gel and other ObjQSpeed types not in isWandererType).
   if (e.timer <= 0) {
     if (chase) faceTowardChase(e, chase);
     else e.dir = pickWanderDir(tileGrid, e.x, e.y, e.id + e.anim, tileOpts);
     e.timer = 24 + ((e.id * 3) & 0x1f);
   }
-  moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts);
+  moveEnemyStep(e, bounds, tileGrid, tileOpts);
 }
 
-/** ControlKeeseFlight-style state machine (shared shape with fairy). */
+/**
+ * ControlKeeseFlight + MoveFlyer (Z_04).
+ * Speed uses Flyer_ObjSpeed fractions (max $C0 → 0.75 px/f), not whole pixels.
+ */
 function stepKeese(e, bounds, chase) {
-  if (e.flyerState == null) e.flyerState = 0;
-  if (e.timer <= 0) {
-    const st = e.flyerState;
-    if (st === 0) {
-      // SpeedUp
-      e.flyerSpeed = Math.min(2, (e.flyerSpeed ?? 1) + 1);
-      e.flyerState = 1;
-      e.timer = 4;
-    } else if (st === 1) {
-      // Decide → chase / wander / slow
-      const r = (e.anim + e.id * 13) & 0xff;
-      e.flyerState = r >= 0xa0 ? 2 : r >= 0x20 ? 3 : 4;
-      e.flyerTurns = 6;
-      e.timer = 8;
-    } else if (st === 5) {
-      e.flyerState = 0;
-      e.timer = 10;
-    } else {
-      e.flyerTurns = (e.flyerTurns ?? 1) - 1;
-      if (e.flyerTurns <= 0) {
-        e.flyerState = st === 4 ? 5 : 1;
-        if (st === 4) e.flyerSpeed = 1;
-        e.timer = 12;
-      } else {
-        if (st === 2 && chase) faceTowardChase(e, chase);
-        else e.dir = DIRS[(e.anim + e.flyerTurns) & 3];
-        e.timer = 6 + (e.anim & 3);
+  if (e.flyerState == null) e.flyerState = FLYER_STATE.SPEED_UP;
+  if (e.flyerSpeed == null) e.flyerSpeed = keeseInitFlyerSpeed(e.objType);
+  if (e.flyerSpeedFrac == null) e.flyerSpeedFrac = 0;
+  if (e.flyingMaxSpeedFrac == null) e.flyingMaxSpeedFrac = KEESE_FLYING_MAX_SPEED_FRAC;
+
+  const st = e.flyerState;
+  if (st === FLYER_STATE.SPEED_UP) {
+    e.flyerSpeed = (e.flyerSpeed + 1) & 0xff;
+    const next = flyerSpeedThresholdTransition(e.flyerSpeed, e.flyingMaxSpeedFrac);
+    if (next) {
+      e.flyerState = next.state;
+      if (next.state === FLYER_STATE.DELAY) {
+        e.timer = 0x40 | ((e.anim + e.id) & 0x3f);
       }
     }
+  } else if (st === FLYER_STATE.DECIDE) {
+    // Flyer_KeeseDecideState: ≥$A0 chase, ≥$20 wander, else slow.
+    const r = (e.anim + e.id * 13) & 0xff;
+    e.flyerState =
+      r >= 0xa0 ? FLYER_STATE.CHASE : r >= 0x20 ? FLYER_STATE.WANDER : FLYER_STATE.SLOW_DOWN;
+    e.flyerTurns = 6;
+  } else if (st === FLYER_STATE.DELAY) {
+    if (e.timer <= 0) e.flyerState = FLYER_STATE.SPEED_UP;
+  } else if (st === FLYER_STATE.SLOW_DOWN) {
+    e.flyerSpeed = (e.flyerSpeed - 1) & 0xff;
+    const next = flyerSpeedThresholdTransition(e.flyerSpeed, e.flyingMaxSpeedFrac);
+    if (next) {
+      e.flyerState = next.state;
+      if (next.state === FLYER_STATE.DELAY) {
+        e.timer = 0x40 | ((e.anim + e.id) & 0x3f);
+      }
+    }
+  } else if (e.timer <= 0) {
+    // Flyer_Chase / Flyer_Wander: $10 delay between turns, then back to Decide.
+    e.flyerTurns = (e.flyerTurns ?? 1) - 1;
+    if (e.flyerTurns <= 0) {
+      e.flyerState = FLYER_STATE.DECIDE;
+    } else {
+      e.timer = 0x10;
+      if (st === FLYER_STATE.CHASE && chase) faceTowardChase(e, chase);
+      else e.dir = DIRECTIONS8[(e.anim + e.flyerTurns) & 7];
+    }
   }
-  if (e.flyerState === 5) return; // Delay
-  const spd = e.flyerState === 4 ? 1 : e.flyerSpeed ?? 1;
-  moveAndCollide(e, spd, bounds, null);
+
+  // MoveFlyer runs every frame (incl. delay — whole speed is 0 then).
+  if (moveFlyer(e)) {
+    bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
+  }
 }
 
 /** Peahat / Flying Ghini simplified flyer: states 0–4 move, 5 rest (hurt window). */
@@ -1171,38 +1383,48 @@ function stepFlyer(e, bounds, chase) {
 
 /** Zora burrower states 0–5; fireball at state 3 (via shootTimer in tryEnemyShoot). */
 function stepZora(e, bounds) {
-  if (e.timer > 0) return;
-  e.zoraState = ((e.zoraState ?? 0) + 1) % 6;
+  // UpdateZora → UpdateBurrower: same BlueLeeverStateQSpeeds table.
+  const st = e.zoraState ?? 0;
+  e.qSpeedFrac = BLUE_LEEVER_STATE_QSPEEDS[st] ?? 0;
+  if (e.timer > 0) {
+    if ((st === 2 || st === 4) && e.qSpeedFrac > 0) {
+      moveAndCollideQSpeed(e, bounds, null);
+    }
+    return;
+  }
+  e.zoraState = (st + 1) % 6;
   const times = [40, 24, 32, 48, 32, 24];
   e.timer = times[e.zoraState] ?? 32;
+  e.qSpeedFrac = BLUE_LEEVER_STATE_QSPEEDS[e.zoraState] ?? 0;
   if (e.zoraState === 3) e.shootTimer = 0; // fire next tryEnemyShoot
   if (e.zoraState === 2 || e.zoraState === 4) {
     e.dir = DIRS[e.anim & 3];
-    moveAndCollide(e, 1, bounds, null);
+    moveAndCollideQSpeed(e, bounds, null);
   }
 }
 
 function stepRope(e, bounds, tileGrid, tileOpts, link) {
+  // UpdateRope: rush ObjQSpeedFrac $60; otherwise $20 (reset on facing change).
   if (link) {
     const dx = Math.abs(link.x - e.x);
     const dy = Math.abs(link.y - e.y);
     if (dx < 8 && dy >= 8) {
       e.dir = link.y >= e.y ? DIR.DOWN : DIR.UP;
-      e.qSpeed = 2; // rush ~$60
+      e.qSpeedFrac = QSPEED.ROPE_RUSH;
     } else if (dy < 8 && dx >= 8) {
       e.dir = link.x >= e.x ? DIR.RIGHT : DIR.LEFT;
-      e.qSpeed = 2;
+      e.qSpeedFrac = QSPEED.ROPE_RUSH;
     } else if (e.timer <= 0) {
-      e.qSpeed = 1;
+      e.qSpeedFrac = QSPEED.ROPE_SLOW;
       e.dir = pickWanderDir(tileGrid, e.x, e.y, e.id + e.anim, tileOpts);
       e.timer = 20 + (e.anim & 0x1f);
     }
   } else if (e.timer <= 0) {
-    e.qSpeed = 1;
+    e.qSpeedFrac = QSPEED.ROPE_SLOW;
     e.dir = pickWanderDir(tileGrid, e.x, e.y, e.id + e.anim, tileOpts);
     e.timer = 24;
   }
-  moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts);
+  moveEnemyStep(e, bounds, tileGrid, tileOpts);
 }
 
 /** Wake Armos statue on Link contact — starts fade-in (weapons ignored). */
@@ -1215,7 +1437,75 @@ export function wakeArmos(e) {
 }
 
 /**
- * Wallmaster: idle along walls, rush when Link shares axis within 8px, grab on touch.
+ * Post-grab retreat length. NES finishes the remaining emerge trip (up to 7);
+ * we synthesize a short slide into the nearest wall, then warp.
+ */
+const WALLMASTER_CAPTURE_TILES = 3;
+
+/**
+ * Pick the wall to retreat into (shortest axis distance to room edge).
+ * @param {{ x: number, y: number }} e
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ */
+function wallmasterRetreatDir(e, bounds) {
+  const distL = e.x - bounds.minX;
+  const distR = bounds.maxX - e.x;
+  const distU = e.y - bounds.minY;
+  const distD = bounds.maxY - e.y;
+  const min = Math.min(distL, distR, distU, distD);
+  if (min === distL) return DIR.LEFT;
+  if (min === distR) return DIR.RIGHT;
+  if (min === distU) return DIR.UP;
+  return DIR.DOWN;
+}
+
+/**
+ * Capture slide: MoveObject at $18 with no tile/bounce clamp, pin Link, count tiles.
+ * NES keeps the trip running until TilesCrossed ≥ 7, then Mode 3 unfurl.
+ * @param {Enemy} e
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ * @param {{ x: number, y: number } | null | undefined} link
+ */
+function stepWallmasterCapture(e, bounds, link) {
+  e.qSpeedFrac = QSPEED.WALLMASTER;
+  if (e.wallmasterRetreatDir == null) {
+    e.wallmasterRetreatDir = wallmasterRetreatDir(e, bounds);
+    e.wallmasterTilesCrossed = e.wallmasterTilesCrossed ?? 0;
+    e.gridOffset = 0;
+  }
+  e.dir = e.wallmasterRetreatDir;
+
+  const speed = consumeQSpeedPixels(e);
+  if (speed > 0) {
+    moveDir(e, speed);
+    advanceGridOffset(e, speed);
+    // NES: at GridOffset $10 / $F0, truncate, INC step + tiles crossed.
+    const go = e.gridOffset & 0xff;
+    if (go === 0x10 || go === 0xf0) {
+      e.gridOffset = 0;
+      e.wallmasterTilesCrossed = (e.wallmasterTilesCrossed ?? 0) + 1;
+    }
+  }
+
+  if (link) {
+    link.x = e.x;
+    link.y = e.y;
+  }
+
+  // Chase bounds already pad past the lip; leaving them means the hand is in the wall.
+  const intoWall =
+    e.x < bounds.minX
+    || e.x > bounds.maxX
+    || e.y < bounds.minY
+    || e.y > bounds.maxY;
+  if (intoWall || (e.wallmasterTilesCrossed ?? 0) >= WALLMASTER_CAPTURE_TILES) {
+    e.wallmasterWarpPending = true;
+  }
+}
+
+/**
+ * Wallmaster: idle along walls, rush when Link shares axis within 8px;
+ * on grab, slide into the wall with Link pinned until trip end.
  * @param {Enemy} e
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
  * @param {number[][] | null} tileGrid
@@ -1223,11 +1513,16 @@ export function wakeArmos(e) {
  * @param {{ x: number, y: number } | null | undefined} link
  */
 function stepWallmaster(e, bounds, tileGrid, tileOpts, link) {
-  if (e.wallmasterGrab) return;
+  if (e.wallmasterGrab) {
+    stepWallmasterCapture(e, bounds, link);
+    return;
+  }
+  // Emerge setup: ObjQSpeedFrac $18.
+  e.qSpeedFrac = e.qSpeedFrac ?? QSPEED.WALLMASTER;
   const crawl = e.wallmasterCrawl ?? 0;
   if (crawl > 0) {
     e.wallmasterCrawl = crawl - 1;
-    moveAndCollide(e, 2, bounds, tileGrid, tileOpts);
+    moveEnemyStep(e, bounds, tileGrid, tileOpts);
     return;
   }
   if (link) {
@@ -1250,7 +1545,15 @@ function stepWallmaster(e, bounds, tileGrid, tileOpts, link) {
     e.dir = edgeDirs[(e.anim + e.id) & 3];
     e.timer = 24 + (e.anim & 0x1f);
   }
-  if ((e.anim & 3) === 0) moveAndCollide(e, 1, bounds, tileGrid, tileOpts);
+  moveEnemyStep(e, bounds, tileGrid, tileOpts);
+}
+
+/**
+ * True while a Wallmaster has Link and is sliding to the wall / entrance warp.
+ * @param {Enemy} e
+ */
+export function wallmasterIsCapturing(e) {
+  return Boolean(e?.alive && e.objType === OBJ.WALLMASTER && e.wallmasterGrab);
 }
 
 
@@ -1272,11 +1575,15 @@ export function darknutParries(monsterDir, weaponDir) {
  * @param {Enemy} e
  * @param {import('./boomerang.js').Boomerang} boom
  */
+/**
+ * @returns {true | false | 'parry'}
+ */
 export function tryBoomerangHitEnemy(e, boom) {
   if (!e.alive || e.stunTimer > 0 || !enemyWeaponVulnerable(e)) return false;
   if (!boomerangHits(boom, enemyRect(e))) return false;
   boom.hit = true;
-  if (isImmuneToDamage(e.invulnMask, DAMAGE.BOOMERANG)) return false;
+  // Immune → PlayParryTune (Z_01.asm:5903), not DealDamage.
+  if (isImmuneToDamage(e.invulnMask, DAMAGE.BOOMERANG)) return 'parry';
   e.stunTimer = BOOMERANG_STUN_FRAMES;
   // NES: boom DealDamage with 0 points — Gel (HP nibble 0) dies on touch.
   if (e.hp <= 0) e.alive = false;
@@ -1290,14 +1597,13 @@ export function tryBoomerangHitEnemy(e, boom) {
  * @param {number} linkY
  * @param {number} swordTier
  */
+/**
+ * @returns {true | false | 'parry'}
+ */
 export function trySwordHitEnemy(e, sword, linkX, linkY, swordTier, opts = {}) {
   if (!e.alive || e.npc || e.invuln > 0 || !enemyWeaponVulnerable(e)) return false;
   if (e.immortal || e.objType === BOSS.GLEEOK_HEAD) return false;
   if (bossNeedsArrow(e.objType)) return false;
-  // Dodongo: sword only while stunned (mask $FE path in ASM).
-  const dodongoStunned =
-    isDodongo(e.objType) && e.bossState === DODONGO_STATE.STUNNED;
-  if (!dodongoStunned && isImmuneToDamage(e.invulnMask, DAMAGE.SWORD)) return false;
   // Brown Ganon needs the silver arrow; blue Ganon only while he is unseen.
   if (!ganonAcceptsSwordHit(e)) return false;
   if (isPatra(e.objType) && opts.enemies && !patraParentVulnerable(e, opts.enemies)) {
@@ -1310,11 +1616,19 @@ export function trySwordHitEnemy(e, sword, linkX, linkY, swordTier, opts = {}) {
   } else if (!rectsOverlap(box, enemyRect(e))) {
     return false;
   }
+  // Dodongo: sword only while stunned (mask $FE path in ASM).
+  const dodongoStunned =
+    isDodongo(e.objType) && e.bossState === DODONGO_STATE.STUNNED;
+  // Connected but blocked → PlayParryTune (Darknut face / invuln mask).
+  // Fire/bomb skips are handled in those helpers; sword always chirps.
+  if (!dodongoStunned && isImmuneToDamage(e.invulnMask, DAMAGE.SWORD)) {
+    return 'parry';
+  }
   if (
     (e.objType === OBJ.RED_DARKNUT || e.objType === OBJ.BLUE_DARKNUT)
     && darknutParries(e.dir, sword.dir ?? 0)
   ) {
-    return false; // parry — no damage
+    return 'parry';
   }
   const dmg = swordDamage(swordTier);
   e.invuln = 16;
@@ -1342,6 +1656,9 @@ export function trySwordHitEnemy(e, sword, linkX, linkY, swordTier, opts = {}) {
  * @param {import('./projectiles.js').Projectile} arrow
  * @param {{ enemies?: Enemy[] }} [opts]
  */
+/**
+ * @returns {true | false | 'parry'}
+ */
 export function tryArrowHitEnemy(e, arrow, opts = {}) {
   if (!e.alive || e.npc || e.invuln > 0 || !enemyWeaponVulnerable(e) || !arrow?.alive) {
     return false;
@@ -1357,20 +1674,21 @@ export function tryArrowHitEnemy(e, arrow, opts = {}) {
     arrow.alive = false;
     return true;
   }
+  // Gohma closed eye / wrong part → PlayParryTune (@PlayParryTune Z_04.asm:8500).
   if (isGohma(e.objType) && !gohmaEyeVulnerable(e, arrow)) {
     arrow.alive = false;
-    return false;
+    return 'parry';
   }
   if (isImmuneToDamage(e.invulnMask, DAMAGE.ARROW)) {
     arrow.alive = false;
-    return false;
+    return 'parry';
   }
   const tier = arrow.arrowTier ?? 1;
   // Ganon: silver only in brown phase.
   if (e.objType === BOSS.GANON) {
     if (tier < 2 || e.ganonPhase !== 1) {
       arrow.alive = false;
-      return false;
+      return 'parry';
     }
   }
   const dmg =
@@ -1423,6 +1741,9 @@ export function tryFireHitEnemy(e, flame, opts = {}) {
  * @param {import('./projectiles.js').Projectile} p
  * @param {{ enemies?: Enemy[] }} [opts]
  */
+/**
+ * @returns {true | false | 'parry'}
+ */
 export function tryBeamOrRodHitEnemy(e, p, opts = {}) {
   if (!e.alive || e.npc || e.invuln > 0 || !enemyWeaponVulnerable(e) || !p?.alive) {
     return false;
@@ -1435,11 +1756,11 @@ export function tryBeamOrRodHitEnemy(e, p, opts = {}) {
   const dtype = p.kind === 0x59 ? DAMAGE.MAGIC : DAMAGE.SWORD;
   if (isImmuneToDamage(e.invulnMask, dtype)) {
     p.alive = false;
-    return false;
+    return 'parry';
   }
   if (isPatra(e.objType) && opts.enemies && !patraParentVulnerable(e, opts.enemies)) {
     p.alive = false;
-    return false;
+    return 'parry';
   }
   const dmg = p.weaponDamage || (p.kind === 0x59 ? 0x20 : 0x10);
   e.invuln = 12;

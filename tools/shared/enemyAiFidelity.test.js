@@ -44,7 +44,8 @@ const BOUNDS = Object.freeze({ minX: 0x20, maxX: 0xd8, minY: 0x4d, maxY: 0xd0 })
 function hitSword() {
   const sword = createSwordState();
   sword.phase = SWORD_PHASE.HIT;
-  sword.timer = 8;
+  // Mid-arc (not windup tip): RIGHT swing faces forward so e.x-20 overlaps.
+  sword.timer = 3;
   sword.dir = DIR.RIGHT;
   return sword;
 }
@@ -258,6 +259,7 @@ test('ghini $21 uses the common wanderer at turn rate $FF (UpdateGhini)', () => 
 test('ghini turn rate $FF always wins the roll and locks onto Link', () => {
   const link = { x: 0x80, y: 0x5d };
   const e = createEnemy({ objType: OBJ.GHINI, x: 0x80, y: 0x8d });
+  e.posFrac = 0x80; // QSpeed $20 → 1 px this frame
   stepEnemy(e, BOUNDS, null, { chase: link, link });
   assert.equal(e.dir, DIR.UP);
   assert.equal(e.y, 0x8c);

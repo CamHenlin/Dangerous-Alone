@@ -308,3 +308,66 @@ export function openSidesForRoom(room, doorState) {
   }
   return sides;
 }
+
+/**
+ * Cells that should draw above Link in a doorway: wall mass / lintel above the
+ * opening, plus the solid seam columns between paired E/W door faces. Walk-height
+ * jambs beside `$24` cavities are omitted so they do not clip him in the opening.
+ * @param {number} row
+ * @param {number} col
+ */
+export function isDoorOcclusionCell(row, col) {
+  // North door: lintel row + wall above (cols 14–17).
+  if (col >= 14 && col <= 17 && row <= 1) return true;
+  // South door: outer wall only (r20+). The inner lip (r18) must stay under
+  // Link once he walks north into the room — overlaying it left a bar over
+  // his head after leaving the door.
+  if (col >= 14 && col <= 17 && row >= 20) return true;
+  // West door band (cols 0–3): everything above the cavity, plus the seam/outer
+  // jamb columns (0–1) through the passage so the wall middle fully hides Link.
+  // Inner jamb (col 3) at walk height stays clear so the opening does not clip.
+  if (col >= 0 && col <= 3) {
+    if (row <= 9) return true;
+    if (col <= 1 && row >= 10 && row <= 12) return true;
+  }
+  // East door band (cols 28–31): mirror (outer jamb col 30 + seam col 31).
+  if (col >= 28 && col <= 31) {
+    if (row <= 9) return true;
+    if (col >= 30 && row >= 10 && row <= 12) return true;
+  }
+  return false;
+}
+
+/** @deprecated use isDoorOcclusionCell */
+export function isDoorLintelCell(side, row, col) {
+  if (side === 'north') return isDoorOcclusionCell(row, col) && col >= 14 && col <= 17 && row <= 1;
+  if (side === 'south') return isDoorOcclusionCell(row, col) && col >= 14 && col <= 17 && row >= 18;
+  if (side === 'west') return isDoorOcclusionCell(row, col) && col >= 0 && col <= 3;
+  if (side === 'east') return isDoorOcclusionCell(row, col) && col >= 28 && col <= 31;
+  return false;
+}
+
+/**
+ * Room tiles that occlude Link in doorways (lintels + wall above + E/W seam).
+ * Empty cells are 0. Built from the full wall/door compose so brick above the
+ * opening matches the background.
+ * @param {object} room
+ * @param {object} [opts]
+ * @param {Iterable<string>} [opts.openSides]
+ * @param {readonly number[]} [opts.primarySquares]
+ * @returns {number[][]}
+ */
+export function composeDoorFrameTiles(room, opts = {}) {
+  if (isCellarRoom(room, null) || room?.layoutId === 0x3e || room?.layoutId === 0x3f) {
+    return Array.from({ length: PLAY_ROWS }, () => Array(PLAY_COLS).fill(0));
+  }
+  const full = composeDungeonRoomTiles(room, opts);
+  /** @type {number[][]} */
+  const grid = Array.from({ length: PLAY_ROWS }, () => Array(PLAY_COLS).fill(0));
+  for (let row = 0; row < PLAY_ROWS; row += 1) {
+    for (let col = 0; col < PLAY_COLS; col += 1) {
+      if (isDoorOcclusionCell(row, col)) grid[row][col] = full[row][col] & 0xff;
+    }
+  }
+  return grid;
+}

@@ -233,12 +233,14 @@ export function createNameEntryUi(deps = {}) {
     frame += 1;
 
     let dirty = false;
+    // Direction / Select → Tune1 `$01` ("selection changed", same as rupee).
+    // A-button glyph press reuses bomb_set (Z_02.asm:2013).
     if (stepDirections(state, input.mask())) {
-      playSfx?.('name_cursor');
+      playSfx?.('rupee');
     }
     if (input.pressedSelect()) {
       pressSelect(state);
-      playSfx?.('name_cursor');
+      playSfx?.('rupee');
     }
     if (input.pressedA()) {
       // `@CheckAB` @ `Z_02.asm:2013` reuses the bomb-set cue for the keypress.

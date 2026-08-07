@@ -66,6 +66,8 @@ const T = Object.freeze({
   BUBBLE_RED: 0x2d,
   POND_FAIRY: 0x2f,
   GIBDO: 0x30,
+  /** Rupee stash pickup — Anim_ItemFrameTiles rupee ($32). */
+  RUPEE_STASH: 0x35,
   DODONGO_1: BOSS.DODONGO_1,
   DODONGO: BOSS.DODONGO,
   GOHMA_RED: BOSS.GOHMA_RED,
@@ -126,9 +128,11 @@ const FRAME_TILES = Object.freeze({
   [T.RED_OCTOROK_FAST]: [0xb4, 0xb0, 0xb0, 0xb8, 0xb2, 0xb2],
   [T.BLUE_OCTOROK_SLOW]: [0xb4, 0xb0, 0xb0, 0xb8, 0xb2, 0xb2],
   [T.BLUE_OCTOROK_FAST]: [0xb4, 0xb0, 0xb0, 0xb8, 0xb2, 0xb2],
-  // ObjAnimFrameHeap: red base $21, blue base $64 (UpdateDarknut: H,D,U ×2).
-  // Blue down0 is $AC (shared hand metatile); red must not use that table.
-  [T.RED_DARKNUT]: [0xb4, 0xb0, 0xb0, 0xb8, 0xb2, 0xb2],
+  // ObjAnimations[type+1]: red $0B → heap $64, blue $0C → heap $6A.
+  // Both strips are H0,D0,U0,H1,D1,U1 and identical in the ROM ($B8,$AC,$B4…).
+  // Red previously reused the octorok @$21 strip; DrawObjectNotMirrored then
+  // paired octorok left columns with the wrong +2/+3 tiles and split the body.
+  [T.RED_DARKNUT]: [0xb8, 0xac, 0xb4, 0xbc, 0xb0, 0xb4],
   [T.BLUE_DARKNUT]: [0xb8, 0xac, 0xb4, 0xbc, 0xb0, 0xb4],
   [T.BLUE_TEKTITE]: [0xca, 0xcc],
   [T.RED_TEKTITE]: [0xca, 0xcc],
@@ -155,6 +159,8 @@ const FRAME_TILES = Object.freeze({
   // Wizzrobe: side0, side1, up0, up1
   [T.BLUE_WIZZROBE]: [0xb4, 0xb8, 0xbc, 0xbe],
   [T.RED_WIZZROBE]: [0xb4, 0xb8, 0xbc, 0xbe],
+  // Open $AC..$AF (NotMirrored). Closed heap is $9C/$9E but left is patched to $AC
+  // (Z_04 Wallmaster @PatchSprites) — see wallmasterRightTile.
   [T.WALLMASTER]: [0xac, 0x9c],
   [T.ROPE]: [0xa0, 0xa4],
   [T.STALFOS]: [0xa8],
@@ -163,6 +169,8 @@ const FRAME_TILES = Object.freeze({
   [T.BUBBLE_RED]: [0x8e],
   // DrawFairy → Anim_ItemFrameTiles @$19/$1A ($50 / $52), narrow 8×16.
   [T.POND_FAIRY]: [0x50, 0x52],
+  // DrawItemInInventory slot $16 → Anim_ItemFrameTiles @$1C → $32.
+  [T.RUPEE_STASH]: [0x32],
   [T.GIBDO]: [0xa4],
   [T.TRAP]: [0x96],
   [T.TRAP2]: [0x96],
@@ -424,6 +432,15 @@ export function enemyFrameTile(objType, frameIndex) {
 }
 
 /**
+ * Wallmaster right-column tile after DrawObjectNotMirrored (+2) / @PatchSprites.
+ * Frame 0: open hand right ($AE). Frame 1: closed-hand right ($9E); left stays $AC.
+ * @param {number} frameIndex
+ */
+export function wallmasterRightTile(frameIndex) {
+  return (frameIndex & 1) ? 0x9e : 0xae;
+}
+
+/**
  * NES draw flags for a 16×16 enemy.
  *
  * @param {number} objType
@@ -490,6 +507,16 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
     return { mirror: false, flipH, flipV: false };
   }
 
+  // Goriya side CHR is the same UW strip as Darknut ($B8/$BC) — faces right,
+  // so H-flip on LEFT. Lynel/Moblin OW side CHR faces left (flip on RIGHT).
+  if (objType === T.RED_GORIYA || objType === T.BLUE_GORIYA) {
+    return {
+      mirror: false,
+      flipH: Boolean(dir & DIR.LEFT),
+      flipV: false,
+    };
+  }
+
   if (objType === T.ARMOS || isWalker(objType)) {
     return {
       mirror: false,
@@ -507,6 +534,17 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
     return { mirror: false, flipH: false, flipV: false };
   }
 
+  // Wallmaster: DrawObjectNotMirrored (Z_04). Mirroring $AC turns the open hand
+  // into a blob. Step H-flip is via [0F] / WallmasterDirsAndAttrs — approximate
+  // with facing; full attr table can come later.
+  if (objType === T.WALLMASTER) {
+    return {
+      mirror: false,
+      flipH: Boolean(dir & DIR.LEFT),
+      flipV: false,
+    };
+  }
+
   const alwaysMirror =
     objType === T.BLUE_TEKTITE
     || objType === T.RED_TEKTITE
@@ -522,8 +560,7 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
     || objType === T.PEAHAT
     || objType === T.BLUE_KEESE
     || objType === T.RED_KEESE
-    || objType === T.BLACK_KEESE
-    || objType === T.WALLMASTER;
+    || objType === T.BLACK_KEESE;
 
   let mirror = alwaysMirror;
   if (isOctorok(objType)) {

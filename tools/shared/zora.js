@@ -27,7 +27,9 @@ export function zoraCandidateFromRandomByte(r) {
 
 /**
  * Try to spawn a Zora on a water tile (CheckZora).
- * No-op when attrs.zora is false or a living Zora is already present.
+ * No-op when attrs.zora is false or a living Zora is already present
+ * in this room (continuous OW may stream a neighbor Zora — that must not
+ * block the current screen's CheckZora).
  *
  * @param {{ zora?: boolean }} attrs
  * @param {number[][]} tileGrid
@@ -35,11 +37,22 @@ export function zoraCandidateFromRandomByte(r) {
  * @param {object} [opts]
  * @param {() => number} [opts.rngByte] returns 0–255
  * @param {number} [opts.attempts] NES uses $0D
+ * @param {number | null} [opts.roomId] when set, uniqueness is per home room
  * @returns {import('./enemies.js').Enemy | null} newly created Zora, or null
  */
 export function trySpawnZora(attrs, tileGrid, enemies, opts = {}) {
   if (!attrs?.zora || !tileGrid?.length) return null;
-  if (enemies.some((e) => e.alive && e.objType === OBJ.ZORA)) return null;
+  const roomId = opts.roomId == null ? null : opts.roomId & 0xff;
+  if (
+    enemies.some(
+      (e) =>
+        e.alive
+        && e.objType === OBJ.ZORA
+        && (roomId == null || (e.homeRoomId ?? roomId) === roomId),
+    )
+  ) {
+    return null;
+  }
 
   const rngByte = opts.rngByte ?? (() => (Math.random() * 256) & 0xff);
   const attempts = opts.attempts ?? 0x0d;

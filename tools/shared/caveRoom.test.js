@@ -5,12 +5,18 @@ import { createLinkState, stepLink } from './linkMotion.js';
 import {
   CAVE_ENTER_SPAWN,
   CAVE_FIRE_TILE,
+  CAVE_ROAD_XS,
+  CAVE_ROAD_Y,
   caveDwellerDraw,
+  caveHintLine,
+  caveWareSlots,
   checkCaveExit,
   createCaveTileGrid,
   dwellerKind,
+  roadStairUnderLink,
   wareUnderLink,
 } from './caveRoom.js';
+import { ITEM } from './caves.js';
 import { sheetForPpuTile } from './enemyAnim.js';
 
 test('dwellerKind maps ROM bytes', () => {
@@ -65,4 +71,55 @@ test('wareUnderLink detects overlap', () => {
   assert.ok(wareUnderLink({ x: 0x78, y: 0x98 }, slots));
   assert.ok(wareUnderLink({ x: 0x78, y: 0xa0 }, slots)); // Link a bit below ware
   assert.equal(wareUnderLink({ x: 0x20, y: 0x40 }, slots), null);
+});
+
+test('caveWareSlots hides owned unique goods', () => {
+  const cave = {
+    caveId: 0x1d,
+    slots: [
+      { item: ITEM.MAGIC_SHIELD, price: 130 },
+      { item: ITEM.BOMBS, price: 20 },
+      { item: ITEM.WOOD_ARROW, price: 80 },
+    ],
+  };
+  const inv = { arrow: 1, magicShield: 0 };
+  const slots = caveWareSlots(cave, new Set(), inv);
+  assert.equal(slots.find((s) => s.item === ITEM.WOOD_ARROW)?.gone, true);
+  assert.equal(slots.find((s) => s.item === ITEM.BOMBS)?.gone, false);
+  assert.equal(slots.find((s) => s.item === ITEM.MAGIC_SHIELD)?.gone, false);
+});
+
+test('caveWareSlots scopes take-any emptiness to the entrance room', () => {
+  const cave = {
+    caveId: 0x11,
+    kind: 'take_any',
+    slots: [
+      { item: ITEM.RED_POTION, price: 0 },
+      { item: ITEM.NOTHING, price: 0 },
+      { item: ITEM.HEART_CONTAINER, price: 0 },
+    ],
+  };
+  const taken = new Set(['123:17:any', '123:17:0', '123:17:2']); // room $7b
+  const atL8 = caveWareSlots(cave, taken, null, 0x7b);
+  assert.ok(atL8.every((s) => s.gone));
+  const atP3 = caveWareSlots(cave, taken, null, 0x2f);
+  assert.ok(atP3.every((s) => !s.gone));
+  // Legacy global key must not empty every take-any cave.
+  const legacy = caveWareSlots(cave, new Set(['17:any']), null, 0x2f);
+  assert.ok(legacy.every((s) => !s.gone));
+});
+
+test('roadStairUnderLink finds the three staircase columns', () => {
+  assert.equal(roadStairUnderLink({ x: CAVE_ROAD_XS[0], y: CAVE_ROAD_Y }), 0);
+  assert.equal(roadStairUnderLink({ x: CAVE_ROAD_XS[1], y: CAVE_ROAD_Y }), 1);
+  assert.equal(roadStairUnderLink({ x: CAVE_ROAD_XS[2], y: CAVE_ROAD_Y }), 2);
+  assert.equal(roadStairUnderLink({ x: 0x20, y: CAVE_ROAD_Y }), -1);
+  assert.equal(roadStairUnderLink({ x: CAVE_ROAD_XS[1], y: 0x40 }), -1);
+});
+
+test('caveHintLine depends on cave kind', () => {
+  assert.match(caveHintLine('road'), /STAIRS/);
+  assert.match(caveHintLine('give'), /ITEM/);
+  assert.match(caveHintLine('shop'), /ITEM/);
+  assert.equal(caveHintLine('clue'), 'SOUTH TO LEAVE');
 });

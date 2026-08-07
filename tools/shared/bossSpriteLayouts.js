@@ -87,6 +87,35 @@ export function dodongoWalkDraw(dir, animFrame = 0) {
 }
 
 /**
+ * Dodongo bloated tiles (DodongoFrameImagesBloated / frame images $04/$05/$07/$09).
+ * Horizontal: $EC/$F0; DOWN $F8 mirrored; UP $FE mirrored.
+ * @param {number} dir
+ * @returns {{
+ *   side: boolean,
+ *   flipH: boolean,
+ *   mirror: boolean,
+ *   leftTile: number,
+ *   rightTile: number | null,
+ * }}
+ */
+export function dodongoBloatedDraw(dir) {
+  if (dir & DIR.UP) {
+    return { side: false, flipH: false, mirror: true, leftTile: 0xfe, rightTile: null };
+  }
+  if (dir & DIR.DOWN) {
+    return { side: false, flipH: false, mirror: true, leftTile: 0xf8, rightTile: null };
+  }
+  const facingLeft = Boolean(dir & DIR.LEFT);
+  return {
+    side: true,
+    flipH: facingLeft,
+    mirror: false,
+    leftTile: facingLeft ? 0xf0 : 0xec,
+    rightTile: facingLeft ? 0xec : 0xf0,
+  };
+}
+
+/**
  * @param {number} dir
  * @deprecated use dodongoWalkDraw
  */
@@ -129,8 +158,8 @@ export function enemySpriteOffset(objType) {
     // Composite origin is canvas top-left; ObjX/Y stay at NES body ($74,$57).
     return { x: GLEEOK_CANVAS_OX - GLEEOK_BODY_X, y: GLEEOK_CANVAS_OY - GLEEOK_BODY_Y };
   }
-  // Narrow item fairy: center 8×16 in the 16px object slot (same as drop fairies).
-  if (objType === 0x2f) return { x: 4, y: 0 };
+  // Narrow item fairy / rupee stash: center 8×16 in the 16px object slot.
+  if (objType === 0x2f || objType === 0x35) return { x: 4, y: 0 };
   return { x: 0, y: 0 };
 }
 
@@ -143,6 +172,7 @@ export function enemyHalfSprite(objType) {
     objType === 0x14
     || objType === 0x15
     || objType === 0x2f // pond fairy
+    || objType === 0x35 // rupee stash
     || objType === MOLDORM
     || objType === RED_LAMNOLA
     || objType === BLUE_LAMNOLA

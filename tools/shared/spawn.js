@@ -227,6 +227,50 @@ export function tryAddMonster(enemies, enemy) {
 }
 
 /**
+ * Continuous camera (Phase 18) keeps several rooms alive at once, so the NES's
+ * flat 11-slot table has to become 11 slots *per room* — otherwise the first
+ * two streamed neighbours eat the budget and the room Link is standing in
+ * spawns nothing. A global ceiling still bounds per-frame AI work.
+ */
+export const STREAM_ROOM_CAP = MONSTER_SLOT_COUNT * 4;
+
+/**
+ * Monster slots `roomId` is holding. Dead foes linger in the list until their
+ * room leaves the camera but their NES slot is free, so they must not keep the
+ * room from spawning. Untagged foes count as members (single-screen modes
+ * never tag).
+ * @param {readonly { homeRoomId?: number | null, alive?: boolean }[] | null | undefined} enemies
+ * @param {number} roomId
+ */
+export function monstersInRoom(enemies, roomId) {
+  const id = roomId & 0xff;
+  let n = 0;
+  for (const e of enemies ?? []) {
+    if (e?.alive === false) continue;
+    if (((e?.homeRoomId ?? id) & 0xff) === id) n += 1;
+  }
+  return n;
+}
+
+/**
+ * `tryAddMonster` with the slot budget scoped to the spawning room.
+ * @template {{ homeRoomId?: number | null }} T
+ * @param {T[]} enemies
+ * @param {T | null | undefined} enemy
+ * @param {number} roomId home room the monster is being spawned into
+ * @param {{ globalCap?: number }} [opts]
+ * @returns {boolean} true when the monster was added
+ */
+export function tryAddMonsterToRoom(enemies, enemy, roomId, opts = {}) {
+  if (!enemy || !enemies) return false;
+  const globalCap = opts.globalCap ?? STREAM_ROOM_CAP;
+  if (enemies.length >= globalCap) return false;
+  if (monstersInRoom(enemies, roomId) >= MONSTER_SLOT_COUNT) return false;
+  enemies.push(enemy);
+  return true;
+}
+
+/**
  * Trim a freshly built spawn list to the object-slot budget.
  * @template T
  * @param {T[]} list

@@ -234,6 +234,8 @@ export function serializeGameState(state) {
     },
     owSecretsRevealed: toSortedArray(state.owSecretsRevealed ?? []),
     caveTaken: toSortedArray(state.caveTaken ?? []),
+    /** Phase 19: OW (`roomId:condition`) and UW (`d:level:roomId:condition`) tip marks. */
+    hintMarks: toSortedArray(state.hintMarks ?? []),
     dungeons: serializeDungeonProgress(state.dungeonProgress),
   };
 }
@@ -338,6 +340,9 @@ export function applyLoadedSave(payload, target) {
   for (const k of payload.owSecretsRevealed ?? []) target.owSecretsRevealed.add(k);
   target.caveTaken.clear();
   for (const k of payload.caveTaken ?? []) target.caveTaken.add(k);
+  // Saves written before Phase 19 have no marks; the radar just starts clean.
+  target.hintMarks?.clear();
+  for (const k of payload.hintMarks ?? []) target.hintMarks?.add(k);
   target.dungeonProgress.clear();
   for (const [level, data] of hydrateDungeonProgress(payload.dungeons)) {
     target.dungeonProgress.set(level, data);

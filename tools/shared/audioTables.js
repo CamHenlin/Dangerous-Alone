@@ -19,10 +19,28 @@ export const NOISE_PERIODS = [
   4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
+/**
+ * APU length-counter lookup (nesdev). Index is bits 7–3 of a $4003/$4007/
+ * $400B/$400F write. Values are clocks at 120 Hz (two per NTSC frame).
+ */
+export const APU_LENGTH_CLOCKS = [
+  10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
+  12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+];
+
 /** $4010 rate index → CPU cycles per DPCM output bit (NTSC). */
 export const DMC_RATE_CYCLES = [
   428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
+
+/**
+ * How many 60 Hz frames a length-counter load stays audible.
+ * @param {number} lengthByte value written to $400F (LLLL L---)
+ */
+export function apuLengthCounterFrames(lengthByte) {
+  const clocks = APU_LENGTH_CLOCKS[(lengthByte >> 3) & 0x1f] ?? 0;
+  return Math.ceil(clocks / 2);
+}
 
 /**
  * Rate at which the noise shift register is clocked.

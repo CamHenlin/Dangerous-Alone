@@ -17,6 +17,7 @@ import {
   tryFireHitEnemy,
 } from './enemies.js';
 import { tryFeedGrumble, stepGrumble, createGrumble, GRUMBLE } from './grumble.js';
+import { applyPersonBlocking, roomHasPersonBlocker } from './personBlocking.js';
 import { heartsFull, createInventory, grantRoomItem, B_ITEM } from './inventory.js';
 import {
   MOLDORM,
@@ -138,6 +139,16 @@ test('grumble feeds on bait then despawns', () => {
   assert.equal(bait.alive, false);
   while (g.alive) stepGrumble(g);
   assert.equal(g.alive, false);
+});
+
+test('grumble blocks north until fed (CheckPersonBlocking band)', () => {
+  const g = createGrumble(createEnemy);
+  assert.ok(roomHasPersonBlocker([g]));
+  assert.equal(applyPersonBlocking(0x8d, DIR.UP), 0);
+  g.fed = true;
+  g.feedTimer = 0;
+  stepGrumble(g);
+  assert.equal(roomHasPersonBlocker([g]), false);
 });
 
 test('statue layouts $23/$24 shoot fireballs', () => {

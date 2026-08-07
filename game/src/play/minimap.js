@@ -1,3 +1,4 @@
+import { MARK_KIND } from '@shared/mapMarks.js';
 import {
   dungeonMapRooms,
   dungeonMinimapCell,
@@ -14,7 +15,13 @@ const COLORS = Object.freeze({
   boss: 0xe04040,
   triforce: 0xe8d040,
   player: 0xffffff,
+  /** Phase 19 radar marks: the labyrinth to head for, and NPC tip-offs. */
+  markDungeon: 0xe8b020,
+  markHint: 0x40c8f0,
 });
+
+/** Frames per pulse of a radar mark (slow enough not to fight the player dot). */
+const MARK_PULSE = 40;
 
 /**
  * NES-style dungeon room grid with player / compass marks.
@@ -30,6 +37,8 @@ const COLORS = Object.freeze({
  * @param {number} [opts.cellW]
  * @param {number} [opts.cellH]
  * @param {boolean} [opts.compact] crop to occupied rooms (HUD)
+ * @param {{ roomId: number }[]} [opts.marks] Phase 19 dungeon tip-offs
+ * @param {number} [opts.frame] free-running counter driving the mark pulse
  */
 export function drawDungeonMinimap(g, level, opts = {}) {
   const visited = opts.visited instanceof Set ? opts.visited : new Set(opts.visited ?? []);
@@ -41,6 +50,9 @@ export function drawDungeonMinimap(g, level, opts = {}) {
   const cw = opts.cellW ?? 6;
   const ch = opts.cellH ?? 5;
   const onMap = dungeonMapRooms(level);
+  const hintRooms = new Set((opts.marks ?? []).map((m) => m.roomId));
+  const pulse = ((opts.frame ?? 0) % MARK_PULSE) / MARK_PULSE;
+  const glow = 0.55 + 0.45 * Math.sin(pulse * Math.PI * 2);
 
   let minCol = 0;
   let minRow = 0;
@@ -71,6 +83,7 @@ export function drawDungeonMinimap(g, level, opts = {}) {
         hasCompass,
         bossRoom: level.bossRoom,
         triforceRoom: level.triforceRoom,
+        hintRooms,
       });
       if (!cell.onMap) continue;
       if (!cell.visible && !cell.compassOnly) continue;
@@ -79,14 +92,25 @@ export function drawDungeonMinimap(g, level, opts = {}) {
       const y = oy + (row - minRow) * ch;
 
       if (cell.compassOnly) {
+        const peek = cell.hintMark
+          ? COLORS.markHint
+          : cell.bossMark
+            ? COLORS.boss
+            : COLORS.triforce;
         g.rect(x + 1, y + 1, cw - 2, ch - 2);
-        g.fill(cell.bossMark ? COLORS.boss : COLORS.triforce);
+        g.fill({ color: peek, alpha: cell.hintMark ? glow : 1 });
         continue;
       }
 
       g.rect(x + 0.5, y + 0.5, cw - 1, ch - 1);
       g.fill(cell.visited || cell.current ? COLORS.visited : COLORS.unvisited);
 
+      if (cell.hintMark) {
+        g.rect(x + 0.5, y + 0.5, cw - 1, ch - 1);
+        g.fill({ color: COLORS.markHint, alpha: 0.55 + 0.35 * glow });
+        g.rect(x - 0.5, y - 0.5, cw + 1, ch + 1);
+        g.stroke({ width: 1, color: COLORS.markHint, alpha: glow });
+      }
       if (cell.bossMark) {
         g.rect(x + Math.max(1, (cw / 2) | 0) - 1, y + 1, 2, 2);
         g.fill(COLORS.boss);
@@ -112,6 +136,8 @@ export function drawDungeonMinimap(g, level, opts = {}) {
  * @param {number} [opts.y]
  * @param {number} [opts.cellW]
  * @param {number} [opts.cellH]
+ * @param {{ roomId: number, kind: string }[]} [opts.marks] Phase 19 radar marks
+ * @param {number} [opts.frame] free-running counter driving the mark pulse
  */
 export function drawOverworldMinimap(g, roomId, opts = {}) {
   const ox = opts.x ?? 8;
@@ -130,6 +156,21 @@ export function drawOverworldMinimap(g, roomId, opts = {}) {
       g.rect(x + 0.5, y + 0.5, cw - 1, ch - 1);
       g.fill(COLORS.owCell);
     }
+  }
+
+  // Destination marks under the player dot: gold for the labyrinth Link should
+  // be heading for, blue for a place an NPC has pointed at. Both breathe so a
+  // mark on the screen Link is standing on is still visible behind the dot.
+  const pulse = ((opts.frame ?? 0) % MARK_PULSE) / MARK_PULSE;
+  const glow = 0.55 + 0.45 * Math.sin(pulse * Math.PI * 2);
+  for (const mark of opts.marks ?? []) {
+    const cell = overworldMarker(mark.roomId);
+    if (!cell) continue;
+    const color = mark.kind === MARK_KIND.HINT ? COLORS.markHint : COLORS.markDungeon;
+    g.rect(ox + cell.col * cw + 0.5, oy + cell.row * ch + 0.5, cw - 1, ch - 1);
+    g.fill({ color, alpha: 0.9 });
+    g.rect(ox + cell.col * cw - 0.5, oy + cell.row * ch - 0.5, cw + 1, ch + 1);
+    g.stroke({ width: 1, color, alpha: glow });
   }
 
   const marker = overworldMarker(roomId);

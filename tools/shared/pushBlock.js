@@ -116,6 +116,59 @@ export function linkPushingBlock(block, link, inputDir) {
 }
 
 /**
+ * While shoving a block face from the neighboring walk row (±$10), ease Link
+ * onto the NES align axis one pixel per frame. Exact CMP align is easy to miss
+ * visually because the block metatile is 16px tall/wide.
+ *
+ * @param {PushBlock} block
+ * @param {{ x: number, y: number, gridOffset?: number }} link
+ * @param {number} inputDir
+ * @returns {'up' | 'down' | 'left' | 'right' | null} nudge direction, if any
+ */
+export function nudgeLinkOntoPushAxis(block, link, inputDir) {
+  if (!block || !inputDir || !link) return null;
+  if (block.state !== PUSH_STATE.IDLE) return null;
+  const linkY = link.y + 3;
+  const dx = link.x - block.x;
+  const dy = linkY - block.y;
+
+  // Horizontal face: pressing into the block, one walk-row off on Y.
+  if (
+    ((inputDir & DIR.RIGHT) && dx <= 0 && dx > -0x11)
+    || ((inputDir & DIR.LEFT) && dx >= 0 && dx < 0x11)
+  ) {
+    if (dy === 0) return null;
+    if (Math.abs(dy) > 0x10) return null;
+    if (dy < 0) {
+      link.y += 1;
+      link.gridOffset = 0;
+      return 'down';
+    }
+    link.y -= 1;
+    link.gridOffset = 0;
+    return 'up';
+  }
+
+  // Vertical face: pressing into the block, one walk-column off on X.
+  if (
+    ((inputDir & DIR.UP) && dy >= 0 && dy < 0x11)
+    || ((inputDir & DIR.DOWN) && dy <= 0 && dy > -0x11)
+  ) {
+    if (dx === 0) return null;
+    if (Math.abs(dx) > 0x10) return null;
+    if (dx < 0) {
+      link.x += 1;
+      link.gridOffset = 0;
+      return 'right';
+    }
+    link.x -= 1;
+    link.gridOffset = 0;
+    return 'left';
+  }
+  return null;
+}
+
+/**
  * @param {PushBlock} block
  * @param {{ x: number, y: number, dir: number }} link
  * @param {number} inputDir

@@ -44,7 +44,8 @@ export function roomBounds(roomIds) {
  * @property {boolean} current
  * @property {boolean} bossMark
  * @property {boolean} triforceMark
- * @property {boolean} compassOnly boss/TF peek without a room square
+ * @property {boolean} hintMark NPC tip-off (e.g. recorder room)
+ * @property {boolean} compassOnly boss/TF/hint peek without a room square
  */
 
 /**
@@ -58,9 +59,12 @@ export function roomBounds(roomIds) {
  * @param {boolean} [opts.hasCompass]
  * @param {number} [opts.bossRoom]
  * @param {number} [opts.triforceRoom]
+ * @param {Set<number>|Iterable<number>} [opts.hintRooms]
  * @returns {DungeonMinimapCell}
  */
 export function dungeonMinimapCell(roomId, opts) {
+  const hintRooms =
+    opts.hintRooms instanceof Set ? opts.hintRooms : new Set(opts.hintRooms ?? []);
   const onMap = opts.onMap.has(roomId);
   if (!onMap) {
     return {
@@ -70,6 +74,7 @@ export function dungeonMinimapCell(roomId, opts) {
       current: false,
       bossMark: false,
       triforceMark: false,
+      hintMark: false,
       compassOnly: false,
     };
   }
@@ -77,6 +82,7 @@ export function dungeonMinimapCell(roomId, opts) {
   const visited = opts.visited.has(roomId);
   const hasMap = Boolean(opts.hasMap);
   const hasCompass = Boolean(opts.hasCompass);
+  const hintMark = hintRooms.has(roomId);
   const visible = hasMap || visited || current;
   const bossMark = hasCompass && roomId === opts.bossRoom;
   const triforceMark = hasCompass && roomId === opts.triforceRoom;
@@ -87,7 +93,8 @@ export function dungeonMinimapCell(roomId, opts) {
     current,
     bossMark,
     triforceMark,
-    compassOnly: !visible && (bossMark || triforceMark),
+    hintMark,
+    compassOnly: !visible && (bossMark || triforceMark || hintMark),
   };
 }
 

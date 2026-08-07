@@ -172,6 +172,11 @@ nes_zelda/
 │   ├── extract/              ← Node CLI: ROM → asset pack
 │   ├── verify/               ← compare dumps / hashes
 │   └── shared/               ← pure JS helpers used by tools + tests
+├── story/                    ← editable NPC dialogue + dungeon briefings
+│   ├── README.md             ← entry shapes, charset rules, key tables
+│   ├── caves.js              ← overworld cave dwellers
+│   ├── persons.js            ← underworld old men, per dungeon
+│   └── levels.js             ← dungeon dossiers + Triforce briefings
 ├── assets/
 │   ├── schema/               ← JSON schemas / format docs (committed)
 │   └── extracted/            ← dumps from your ROM (gitignored)

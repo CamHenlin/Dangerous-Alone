@@ -1,13 +1,15 @@
 /**
  * GameMode $12 (UpdateMode12EndLevel) triforce-piece ceremony.
  *
- * NES sequence (Z_01.asm CheckPowerTriforceFanfare, Z_05.asm
- * StartFillingHearts / UpdateMode12EndLevel_Sub2):
- *   1. Link halts; the triforce fanfare plays.
- *   2. While `ObjTimer` counts down, the palette alternates between the level
- *      palette and white every 4 frames (`AND #$07 / CMP #$04`).
- *   3. `World_IsFillingHearts` runs `World_FillHearts` to top Link up.
- *   4. Control returns to the player.
+ * NES sequence (Z_05.asm InitMode12 / UpdateMode12EndLevel,
+ * Z_07.asm DrawLinkLiftingItem):
+ *   1. Link halts holding the shard overhead (`ItemTypeToLift` = $1B).
+ *   2. End-level fanfare plays; palette flashes white every 4 frames.
+ *   3. `World_FillHearts` tops Link up.
+ *   4. Curtain wipe → `EndGameMode12` warps to the dungeon entrance on OW.
+ *
+ * This port inserts the between-labyrinth briefing after step 3; the play
+ * loop then calls `exitDungeon` when that dialogue closes.
  */
 
 import {

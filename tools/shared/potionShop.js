@@ -42,7 +42,8 @@ export function letterWasShown(inv) {
 }
 
 /**
- * Wares, prices and dialogue are all suppressed while the gate is closed.
+ * Wares and prices stay suppressed while the gate is closed. Dialogue still
+ * runs — the medicine shop uses `lockedPages` until the letter is shown.
  * @param {{ kind?: string } | null} cave
  * @param {{ letter?: number }} inv
  */

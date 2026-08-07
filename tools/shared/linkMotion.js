@@ -10,6 +10,11 @@ import {
   normalizeOwTile,
 } from './collision.js';
 import {
+  CONTINUOUS_OW,
+  clampMapEdgePos,
+  hitsMapEdgeLimit,
+} from './continuousCamera.js';
+import {
   isLadderWaterTile,
   ladderAllowsStanding,
   ladderOverridesBlock,
@@ -54,13 +59,19 @@ export const NO_ROOM_BOUNDS = -1;
  */
 export const UW_ROOM_BOUNDS = -2;
 
+export { CONTINUOUS_OW };
+
 /**
  * @param {number} x
  * @param {number} y
  * @param {number | null} [roomId]
+ * @param {number | null} [anchorRoomId] real map room when `roomId` is CONTINUOUS_OW
  */
-function clampLinkPos(x, y, roomId = null) {
+function clampLinkPos(x, y, roomId = null, anchorRoomId = null) {
   if (roomId === NO_ROOM_BOUNDS || roomId === UW_ROOM_BOUNDS) return { x, y };
+  if (roomId === CONTINUOUS_OW) {
+    return clampMapEdgePos(x, y, anchorRoomId ?? 0);
+  }
   if (roomId != null) return clampWorldPos(x, y, roomId);
   return clampOwLinkPos(x, y);
 }
@@ -70,10 +81,14 @@ function clampLinkPos(x, y, roomId = null) {
  * @param {number} y
  * @param {number} dir
  * @param {number | null} [roomId]
+ * @param {number | null} [anchorRoomId]
  */
-function hitsLinkBound(x, y, dir, roomId = null) {
+function hitsLinkBound(x, y, dir, roomId = null, anchorRoomId = null) {
   if (roomId === NO_ROOM_BOUNDS) return false;
   if (roomId === UW_ROOM_BOUNDS) return hitsUwBound(x, y, dir);
+  if (roomId === CONTINUOUS_OW) {
+    return hitsMapEdgeLimit(x, y, dir, anchorRoomId ?? 0);
+  }
   if (roomId != null) return hitsWorldLimit(x, y, dir, roomId);
   return hitsOwBound(x, y, dir);
 }
@@ -91,12 +106,18 @@ function hitsLinkBound(x, y, dir, roomId = null) {
  * @param {number} nextY
  * @param {number} dir
  * @param {number | null} [roomId]
+ * @param {number | null} [anchorRoomId]
  */
-function pixelHitsRoomBound(nextX, nextY, dir, roomId = null) {
+function pixelHitsRoomBound(nextX, nextY, dir, roomId = null, anchorRoomId = null) {
   if (roomId === UW_ROOM_BOUNDS || roomId === NO_ROOM_BOUNDS) return false;
   void dir;
-  const clamped = clampLinkPos(nextX, nextY, roomId);
+  const clamped = clampLinkPos(nextX, nextY, roomId, anchorRoomId);
   return clamped.x !== nextX || clamped.y !== nextY;
+}
+
+/** @param {object} [tileOpts] */
+function anchorFromOpts(tileOpts = {}) {
+  return tileOpts.anchorRoomId ?? null;
 }
 
 /** Reduce multi-bit input to one direction (priority: U D L R). */
@@ -120,10 +141,11 @@ export function pickSingleDir(inputMask) {
  * @param {number} y
  * @param {number | null} [roomId]
  */
-export function filterInputByRoomBounds(inputMask, x, y, roomId = null) {
+export function filterInputByRoomBounds(inputMask, x, y, roomId = null, tileOpts = {}) {
   let m = inputMask & 0x0f;
+  const anchor = anchorFromOpts(tileOpts);
   for (const d of [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT]) {
-    if ((m & d) && hitsLinkBound(x, y, d, roomId)) m &= ~d;
+    if ((m & d) && hitsLinkBound(x, y, d, roomId, anchor)) m &= ~d;
   }
   return m;
 }
@@ -216,8 +238,11 @@ export function nextGridStandingSolid(tileGrid, x, y, dir, tileOpts = {}) {
 
 export function canLinkMove(tileGrid, x, y, dir, roomId = null, tileOpts = {}) {
   if (!dir) return false;
-  if (hitsLinkBound(x, y, dir, roomId)) return false;
-  const hit = getLinkCollidingTile(tileGrid, x, y, dir, tileOpts);
+  if (hitsLinkBound(x, y, dir, roomId, anchorFromOpts(tileOpts))) return false;
+  const hit =
+    typeof tileOpts.collidingTile === 'function'
+      ? tileOpts.collidingTile(x, y, dir)
+      : getLinkCollidingTile(tileGrid, x, y, dir, tileOpts);
   let walkable = hit.walkable;
   // One-tile stepladder: water under an active ladder object may be crossed.
   if (!walkable && tileOpts.ladder && tileOpts.ladderMode) {
@@ -235,7 +260,12 @@ export function canLinkMove(tileGrid, x, y, dir, roomId = null, tileOpts = {}) {
   // RIGHT only: NES look-ahead is +$10, which skips a lone solid column at +$08.
   // LEFT/UP/DOWN already sample the adjacent tile (−8 / +8), so an extra
   // next-cell standing test would stop Link a full tile early on UW faces.
-  if ((dir & DIR.RIGHT) && nextGridStandingSolid(tileGrid, x, y, dir, tileOpts)) {
+  // Continuous multi-room probes already sample across the seam.
+  if (
+    (dir & DIR.RIGHT)
+    && !tileOpts.collidingTile
+    && nextGridStandingSolid(tileGrid, x, y, dir, tileOpts)
+  ) {
     if (tileOpts.ladder && tileOpts.ladderMode) {
       const next = nextGridCellPos(x, y, dir);
       const nextTile = standingTile(tileGrid, next.x, next.y);
@@ -295,7 +325,7 @@ export function stepShove(link, tileGrid, shoveDir, shovePixels, opts = {}) {
     else if (shoveDir & DIR.LEFT) link.x -= 1;
     else if (shoveDir & DIR.RIGHT) link.x += 1;
 
-    if (pixelHitsRoomBound(link.x, link.y, shoveDir, roomId)) {
+    if (pixelHitsRoomBound(link.x, link.y, shoveDir, roomId, anchorFromOpts(tileOpts))) {
       link.x = x0;
       link.y = y0;
       link.gridOffset = 0;
@@ -330,9 +360,12 @@ function resolveTileOpts(tileOpts = {}) {
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], ladder?: object, ladderMode?: string }} [tileOpts]
  */
 export function isLinkStandingSolid(tileGrid, x, y, tileOpts = {}) {
-  if (!tileGrid) return false;
+  if (!tileGrid && typeof tileOpts.standingTile !== 'function') return false;
   const { firstUnwalkable, walkableRemap } = resolveTileOpts(tileOpts);
-  const tile = standingTile(tileGrid, x, y);
+  const tile =
+    typeof tileOpts.standingTile === 'function'
+      ? tileOpts.standingTile(x, y)
+      : standingTile(tileGrid, x, y);
   if (normalizeOwTile(tile, firstUnwalkable, walkableRemap).walkable) return false;
   if (
     tileOpts.ladder
@@ -367,7 +400,7 @@ export function ejectLinkFromSolid(link, tileGrid, opts = {}) {
     return { ejected: false, dx: 0, dy: 0 };
   }
 
-  const clampPos = (x, y) => clampLinkPos(x, y, roomId);
+  const clampPos = (x, y) => clampLinkPos(x, y, roomId, anchorFromOpts(tileOpts));
 
   const walkableAt = (x, y) => {
     const c = clampPos(x, y);
@@ -563,7 +596,7 @@ function applyQuarterStep(link, dir, qSpeed, roomId, tileGrid = null, tileOpts =
     }
   }
 
-  if (pixelHitsRoomBound(link.x, link.y, dir, roomId)) {
+  if (pixelHitsRoomBound(link.x, link.y, dir, roomId, anchorFromOpts(tileOpts))) {
     link.x = x0;
     link.y = y0;
     link.gridOffset = grid0;
@@ -620,7 +653,7 @@ export function stepLink(
   // that freezes cave-mouth approaches under overhanging rock.
   const committed = link.gridOffset !== 0;
   // Mirror NES: BoundByRoom clears blocked components before dir selection.
-  const boundMask = filterInputByRoomBounds(inputMask, link.x, link.y, roomId);
+  const boundMask = filterInputByRoomBounds(inputMask, link.x, link.y, roomId, tileOpts);
   let moveDir;
 
   if (committed) {
@@ -693,7 +726,7 @@ export function stepLink(
     else if (moveDir & DIR.LEFT) nextX -= 1;
     else if (moveDir & DIR.RIGHT) nextX += 1;
     const nextPixelBlocked =
-      pixelHitsRoomBound(nextX, nextY, moveDir, roomId)
+      pixelHitsRoomBound(nextX, nextY, moveDir, roomId, anchorFromOpts(tileOpts))
       || isLinkStandingSolid(tileGrid, nextX, nextY, tileOpts);
     if (stuckOnSolid || nextPixelBlocked) {
       snapToGridCellStart(link);

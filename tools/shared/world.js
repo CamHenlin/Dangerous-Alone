@@ -1,4 +1,12 @@
-import { DIR, HUD_HEIGHT, OW_BOUNDS, tileAtPlayPixel } from './collision.js';
+import {
+  DIR,
+  HUD_HEIGHT,
+  OW_BOUNDS,
+  OW_WARP_TILES,
+  tileAtPlayPixel,
+} from './collision.js';
+
+export { OW_WARP_TILES };
 
 /** Map size in screens. */
 export const MAP_W = 16;
@@ -14,9 +22,6 @@ export const SCREEN_EDGE = Object.freeze({
   left: 0x00,
   right: 0xf0,
 });
-
-/** Tiles that trigger OW underground entry while standing (HandleWarpOW). */
-export const OW_WARP_TILES = Object.freeze([0x24, 0x88, 0x70, 0x71, 0x72, 0x73]);
 
 /**
  * @param {number} roomId
@@ -173,23 +178,25 @@ export function standingTile(tileGrid, objX, objY) {
  * @param {number} [roomId] current OW room (Level 6 wide mouth is $22)
  * @returns {{ kind: 'level' | 'cave', id: number } | null}
  */
-export function checkCaveEntry(link, tileGrid, attrs, roomId = null) {
+export function checkCaveEntry(link, tileGrid, attrs, roomId = null, opts = {}) {
   // NES: UndergroundExitType | ObjGridOffset ≠ 0 → skip (no "moving" flag).
   if (link.gridOffset !== 0) {
     return null;
   }
-  // NES requires Y low nibble $D (aligned standing pose).
-  if ((link.y & 0x0f) !== 0x0d) {
+  // Continuous OW: prefer a multi-room standing probe so seam X/Y still hit
+  // the warp column after soft-cross (single-grid `& $F8` folds X≥256).
+  const tile =
+    typeof opts.standingTile === 'function'
+      ? opts.standingTile(link.x, link.y)
+      : standingTile(tileGrid, link.x, link.y);
+  if (!OW_WARP_TILES.includes(tile & 0xff)) {
     return null;
   }
-  const tile = standingTile(tileGrid, link.x, link.y);
-  if (!OW_WARP_TILES.includes(tile)) {
-    return null;
-  }
-  // NES also requires X multiple of $10 (or $8 in room $22). That softlocks
-  // 2-wide mouths like the OW $1A waterfall: walking up centered (~$64) lands
-  // on warp tile $88, but X isn't $10-aligned and water/rock block sliding.
-  // Standing tile already proves feet are on the mouth column (X & $F8).
+  // NES also requires Y low nibble $D and X multiple of $10 (or $8 in room
+  // $22). Continuous soft-cross + stair QSpeed $30 can park Link on the mouth
+  // at Y=$80/$84 with rock above blocking further steps — standing tile
+  // already proves feet are on the warp, so those alignments must still enter
+  // (same rationale as the OW $1A waterfall X softlock fix).
   void roomId;
   const caveId = attrs?.caveId ?? 0;
   if (caveId >= 1 && caveId <= 9) {

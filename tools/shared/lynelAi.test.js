@@ -48,7 +48,7 @@ test('Lynel charges sword shot then fires at timer $10', () => {
   tryCardinalShot(e, out, PROJ.SWORD_SHOT, { speed: 3, rngByte: () => 0xff });
   assert.equal(out.length, 0);
   assert.equal(e.shootTimer, 0x30);
-  assert.equal(e.qSpeed, 0);
+  assert.equal(e.qSpeedFrac, 0, 'charging freezes ObjQSpeedFrac');
 
   e.shootTimer = 0x11;
   tryCardinalShot(e, out, PROJ.SWORD_SHOT, { speed: 3, rngByte: () => 0xff });
@@ -56,7 +56,7 @@ test('Lynel charges sword shot then fires at timer $10', () => {
   assert.equal(out[0].kind, PROJ.SWORD_SHOT);
   assert.equal(e.wantsToShoot, false);
   assert.equal(e.shootTimer, 0x10);
-  assert.equal(e.qSpeed, 0);
+  assert.equal(e.qSpeedFrac, 0);
 });
 
 test('blue Lynel rarely starts a shot without prior timer', () => {
@@ -67,7 +67,7 @@ test('blue Lynel rarely starts a shot without prior timer', () => {
   tryCardinalShot(e, out, PROJ.SWORD_SHOT, { rngByte: () => 0x00 });
   assert.equal(out.length, 0);
   assert.equal(e.shootTimer, 0);
-  assert.ok(e.qSpeed > 0);
+  assert.equal(e.qSpeedFrac, 0x20, 'keeps room-default walk speed when not firing');
 });
 
 test('stepEnemy Lynel faces Link on tile boundary when close', () => {

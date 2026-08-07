@@ -36,8 +36,9 @@ const ANIM_ITEM_FRAME_TILES = Object.freeze([
 
 /**
  * Horiz / off-sheet weapon frames outside common_sprites ($00–$6F).
- * Ladder $76 is NOT remapped — it lives in the demo sprite bank at PPU $70+
- * (see `itemSprites` `highTexture` / DemoPatternVramAddrs $0700).
+ * Ladder $76 and magic-shot $7A/$7C are drawn from the demo bank in
+ * `itemSprites` (PPU $70+); these stand-ins are only for `chrTileForItemId`
+ * callers that lack that sheet (inventory/drop icon paths).
  */
 const OFF_SHEET_STAND_IN = Object.freeze({
   0x70: 0x34,

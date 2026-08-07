@@ -24,7 +24,7 @@ test('wooden sword kills a dummy in one hit', () => {
   const [e] = spawnDummiesForScreen(0x78);
   const sword = createSwordState();
   sword.phase = SWORD_PHASE.HIT;
-  sword.timer = 8;
+  sword.timer = 3; // mid-arc faces forward
   sword.dir = DIR.RIGHT;
   // Place Link so blade overlaps enemy
   const linkX = e.x - 20;

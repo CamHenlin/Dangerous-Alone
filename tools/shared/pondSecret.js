@@ -9,9 +9,17 @@
  * (`ObjectFirstUnwalkableTile`) so Link can wade in, and at step `$B` the
  * staircase appears at a fixed spot in the pond.
  *
+ * Unlike burn/bomb secrets, the pond has no `$E9`/`$EA` marker square in the
+ * layout — `RevealPondStairs` hardcodes ObjX/Y then calls
+ * `RevealAndFlagSecretStairsObj`. Persistence therefore uses a synthetic
+ * `${mapIndex}:{row}:{col}` key derived from that fixed spot.
+ *
  * Not modelled: `AnimatePond` (`Z_05.asm:807`) runs the colour cycle backwards
  * while the screen scrolls away, which we skip since the screen is torn down.
  */
+
+import { HUD_HEIGHT } from './collision.js';
+import { revealSecretTiles } from './owSecrets.js';
 
 /** `PondCycleColors` @ `Z_07.asm:5873` — NES colour index per cycle step. */
 export const POND_CYCLE_COLORS = Object.freeze([
@@ -32,6 +40,9 @@ export const POND_FIRST_UNWALKABLE = 0x99;
 /** `RevealPondStairs` hardcodes the staircase position. */
 export const POND_STAIRS_X = 0x60;
 export const POND_STAIRS_Y = 0x90;
+/** Square coords for `RevealPondStairs` ($60 / $90). */
+export const POND_STAIRS_COL = POND_STAIRS_X / 16;
+export const POND_STAIRS_ROW = (POND_STAIRS_Y - HUD_HEIGHT) / 16;
 
 /**
  * @typedef {object} PondSecretState
@@ -42,6 +53,52 @@ export const POND_STAIRS_Y = 0x90;
 /** @returns {PondSecretState} */
 export function createPondSecret() {
   return { cycle: 0, walkable: false };
+}
+
+/**
+ * Save / reveal key for the hardcoded pond staircase (same shape as other OW secrets).
+ * @param {number} mapIndex
+ */
+export function pondSecretKey(mapIndex) {
+  return `${mapIndex & 0xff}:${POND_STAIRS_ROW}:${POND_STAIRS_COL}`;
+}
+
+/**
+ * @param {Set<string> | Iterable<string> | null | undefined} revealed
+ * @param {number} mapIndex
+ */
+export function isPondSecretRevealed(revealed, mapIndex) {
+  if (!revealed) return false;
+  const key = pondSecretKey(mapIndex);
+  if (typeof revealed.has === 'function') return revealed.has(key);
+  for (const k of revealed) {
+    if (k === key) return true;
+  }
+  return false;
+}
+
+/**
+ * Restore pond state after a room load when the secret was already found.
+ * @param {Set<string> | Iterable<string> | null | undefined} revealed
+ * @param {number} mapIndex
+ * @returns {PondSecretState}
+ */
+export function restorePondSecret(revealed, mapIndex) {
+  const state = createPondSecret();
+  if (isPondSecretRevealed(revealed, mapIndex)) {
+    state.cycle = POND_CYCLE_END;
+    state.walkable = true;
+  }
+  return state;
+}
+
+/**
+ * `RevealPondStairs` — paint OW stairs `$70–$73` at the fixed pond square.
+ * @param {number[][]} tileGrid
+ * @returns {boolean}
+ */
+export function revealPondStairs(tileGrid) {
+  return revealSecretTiles(tileGrid, POND_STAIRS_ROW, POND_STAIRS_COL, 0xe9);
 }
 
 /** Draining or drained; `@RevealSecret` ignores a second recorder blast. */
@@ -72,6 +129,20 @@ export function startPondSecret(state) {
  */
 export function pondFirstUnwalkable(state) {
   return state.walkable ? POND_FIRST_UNWALKABLE : null;
+}
+
+/**
+ * Collision floor for Link — live drain state or an already-flagged pond secret.
+ * Callers that shove/eject must use this too, or water becomes solid again and
+ * Link is slid off the lakebed every frame.
+ * @param {PondSecretState} state
+ * @param {Set<string> | Iterable<string> | null | undefined} revealed
+ * @param {number} mapIndex
+ * @returns {number | null}
+ */
+export function pondCollisionFloor(state, revealed, mapIndex) {
+  if (isPondSecretRevealed(revealed, mapIndex)) return POND_FIRST_UNWALKABLE;
+  return pondFirstUnwalkable(state);
 }
 
 /**

@@ -6,11 +6,14 @@
  */
 
 import { DIR, HUD_HEIGHT, OW_BOUNDS } from './collision.js';
-import { ITEM, activeSlots } from './caves.js';
+import { ITEM, activeSlots, alreadyOwnsShopItem, caveTakenKey } from './caves.js';
 
 /** Cave ware X positions (NES ObjX). */
 export const CAVE_WARE_XS = Object.freeze([0x58, 0x78, 0x98]);
 export const CAVE_WARE_Y = 0x98;
+/** Take-any-road staircases share the ware columns. */
+export const CAVE_ROAD_XS = CAVE_WARE_XS;
+export const CAVE_ROAD_Y = CAVE_WARE_Y;
 export const CAVE_DWELLER_X = 0x78;
 export const CAVE_DWELLER_Y = 0x80;
 /** Standing fires flanking the dweller. */
@@ -100,19 +103,30 @@ export function createCaveTileGrid() {
 
 /**
  * Visible ware slots for the cave scene.
+ * Unique goods Link already owns are treated as gone (shelf empty).
  * @param {object} cave
  * @param {Set<string>} taken
+ * @param {object | null} [inv]
+ * @param {number | null} [roomId] OW screen for room-flag caves (take-any)
  */
-export function caveWareSlots(cave, taken) {
+export function caveWareSlots(cave, taken, inv = null, roomId = null) {
+  const takeAnyGone =
+    cave.kind === 'take_any' && taken.has(caveTakenKey(cave, 'any', roomId));
   return activeSlots(cave)
     .filter((s) => s.item !== ITEM.NOTHING)
-    .map((s) => ({
-      ...s,
-      x: CAVE_WARE_XS[s.index] ?? 0x78,
-      y: CAVE_WARE_Y,
-      key: `${cave.caveId}:${s.index}`,
-      gone: taken.has(`${cave.caveId}:${s.index}`),
-    }));
+    .map((s) => {
+      const key = caveTakenKey(cave, s.index, roomId);
+      return {
+        ...s,
+        x: CAVE_WARE_XS[s.index] ?? 0x78,
+        y: CAVE_WARE_Y,
+        key,
+        gone:
+          takeAnyGone
+          || taken.has(key)
+          || alreadyOwnsShopItem(inv, s.item),
+      };
+    });
 }
 
 /**
@@ -132,6 +146,37 @@ export function wareUnderLink(link, slots) {
     }
   }
   return null;
+}
+
+/**
+ * Which take-any-road staircase Link is standing on, or -1.
+ * @param {{ x: number, y: number }} link
+ */
+export function roadStairUnderLink(link) {
+  if (Math.abs(link.y - CAVE_ROAD_Y) > 18) return -1;
+  for (let i = 0; i < CAVE_ROAD_XS.length; i += 1) {
+    if (Math.abs(link.x - CAVE_ROAD_XS[i]) < 16) return i;
+  }
+  return -1;
+}
+
+/**
+ * Bottom-of-cave control hint for the Mode-B interior.
+ * @param {string} kind CaveKind
+ */
+export function caveHintLine(kind) {
+  switch (kind) {
+    case 'road':
+      return 'WALK TO STAIRS  SOUTH TO LEAVE';
+    case 'give':
+    case 'take_any':
+    case 'letter':
+    case 'shop':
+    case 'potion':
+      return 'WALK TO ITEM  SOUTH TO LEAVE';
+    default:
+      return 'SOUTH TO LEAVE';
+  }
 }
 
 /**

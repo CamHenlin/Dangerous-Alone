@@ -8,6 +8,7 @@ import {
   POND_EDGE_Y,
   POND_POST_FILL_TIMER,
   applyNesHeartsToInv,
+  findPondFairy,
   linkAtPondEdge,
   nesHeartsFromInv,
   stepPondFairy,
@@ -124,4 +125,34 @@ test('orbit hearts appear while halted', () => {
     }
   }
   assert.equal(sawHeart, true);
+});
+
+test('findPondFairy ignores streamed neighbor fountain rooms', () => {
+  const home = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
+  const neighbor = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d + 176 });
+  assert.ok(home && neighbor);
+  home.homeRoomId = 0x39;
+  neighbor.homeRoomId = 0x43;
+  assert.equal(findPondFairy([neighbor, home], 0x39), home);
+  assert.equal(findPondFairy([neighbor, home], 0x43), neighbor);
+  assert.equal(findPondFairy([neighbor], 0x39), null);
+});
+
+test('neighbor fairy does not burn when Link walks Y=$AD in another room', () => {
+  const fairy = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
+  assert.ok(fairy);
+  fairy.homeRoomId = 0x39;
+  const inv = createInventory();
+  inv.maxHalfHearts = 10;
+  inv.halfHearts = 2;
+  // Same edge Y/X on a different OW screen (continuous camera).
+  const link = { x: 0x78, y: POND_EDGE_Y };
+  const r = stepPondFairy(fairy, inv, link, { roomId: 0x38 });
+  assert.equal(r.haltLink, false);
+  assert.equal(fairy.pondState, 0);
+  assert.equal(inv.halfHearts, 2);
+  // Same edge in the fairy's home room still starts the heal.
+  const r2 = stepPondFairy(fairy, inv, link, { roomId: 0x39 });
+  assert.equal(r2.haltLink, true);
+  assert.equal(fairy.pondState, 1);
 });

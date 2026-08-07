@@ -17,6 +17,7 @@ import {
   stepBoss,
 } from './bosses.js';
 import { gleeokHeadPos, initGleeok, stepGleeok } from './gleeok.js';
+import { consumeQSpeedPixels } from './objQSpeed.js';
 import { onTileBoundary, wandererDecideFacing } from './wandererAi.js';
 
 const DIRS8 = Object.freeze([
@@ -47,6 +48,21 @@ export const DODONGO_STATE = Object.freeze({
   STUNNED: 2,
 });
 
+/** DodongoBloatedWaitTimes — substates 0 / 1 / 2. */
+const DODONGO_BLOATED_WAIT = Object.freeze([0x20, 0x40, 0x40]);
+
+/**
+ * Bloated substates (Dodongo_ObjBloatedSubstate):
+ * 0 walk-wait, 1 swell sprites, 2 fade-wait (lethal only), 3 die, 4 end→move.
+ */
+export const DODONGO_BLOATED_SUB = Object.freeze({
+  WAIT0: 0,
+  SWELL: 1,
+  FADE: 2,
+  DIE: 3,
+  END: 4,
+});
+
 /**
  * Initialize boss-specific fields on create.
  * @param {import('./enemies.js').Enemy} e
@@ -63,9 +79,13 @@ export function initBossAi(e) {
   } else if (isDodongo(t)) {
     e.bossState = DODONGO_STATE.MOVE;
     e.bombsEaten = 0;
-    // InitDodongo: random left/right; room setup q-speed $20 → ~0.5 px/frame.
+    e.bloatedSubstate = 0;
+    // InitDodongo: random left/right; room-default ObjQSpeedFrac $20.
     e.dir = (e.id & 1) === 0 ? DIR.RIGHT : DIR.LEFT;
-    e.qSpeed = 1;
+    e.qSpeedFrac = 0x20;
+    e.walkQSpeedFrac = 0x20;
+    e.posFrac = 0;
+    e.qSpeed = 0;
     e.turnRate = 0x20;
     e.turnTimer = 0;
     e.gridOffset = 0;
@@ -321,19 +341,13 @@ function stepGohma(e, bounds) {
 function stepDodongo(e, bounds, opts = {}) {
   const st = e.bossState ?? DODONGO_STATE.MOVE;
   if (st === DODONGO_STATE.BLOATED) {
-    if (e.timer <= 0) {
-      e.bossState = DODONGO_STATE.MOVE;
-      e.timer = 40;
-      if ((e.bombsEaten ?? 0) >= 2) {
-        e.alive = false;
-        e.hp = 0;
-      }
-    }
+    stepDodongoBloated(e);
     return;
   }
   if (st === DODONGO_STATE.STUNNED) {
     if (e.timer <= 0) {
       e.bossState = DODONGO_STATE.MOVE;
+      e.bloatedSubstate = 0;
       e.timer = 30;
     }
     return;
@@ -349,18 +363,20 @@ function stepDodongo(e, bounds, opts = {}) {
     wandererDecideFacing(e, opts.chase ?? null, rnd);
   }
 
-  // q-speed $20 → one pixel every other frame.
-  if ((e.anim & 1) === 0) {
+  // ObjQSpeedFrac $20 via MoveObject (0.5 px/frame average).
+  e.qSpeedFrac = e.qSpeedFrac ?? 0x20;
+  const pixels = consumeQSpeedPixels(e);
+  if (pixels > 0) {
     if (typeof opts.moveEnemy === 'function') {
-      opts.moveEnemy(1);
+      opts.moveEnemy(pixels);
     } else {
-      if (e.dir & DIR.LEFT) e.x -= 1;
-      if (e.dir & DIR.RIGHT) e.x += 1;
-      if (e.dir & DIR.UP) e.y -= 1;
-      if (e.dir & DIR.DOWN) e.y += 1;
+      if (e.dir & DIR.LEFT) e.x -= pixels;
+      if (e.dir & DIR.RIGHT) e.x += pixels;
+      if (e.dir & DIR.UP) e.y -= pixels;
+      if (e.dir & DIR.DOWN) e.y += pixels;
       e.x = Math.max(bounds.minX, Math.min(bounds.maxX - 16, e.x));
       e.y = Math.max(bounds.minY, Math.min(bounds.maxY - 16, e.y));
-      e.gridOffset = ((e.gridOffset ?? 0) + 1) & 0xff;
+      e.gridOffset = ((e.gridOffset ?? 0) + pixels) & 0xff;
     }
   }
 
@@ -374,6 +390,65 @@ function stepDodongo(e, bounds, opts = {}) {
   }
   e.x = Math.max(bounds.minX, Math.min(bounds.maxX - 16, e.x));
   e.y = Math.max(bounds.minY, Math.min(bounds.maxY - 16, e.y));
+}
+
+/**
+ * UpdateDodongoState1_Bloated — wait → swell → (fade+die | resume).
+ * @param {import('./enemies.js').Enemy} e
+ */
+function stepDodongoBloated(e) {
+  const sub = e.bloatedSubstate ?? 0;
+  if (sub === DODONGO_BLOATED_SUB.DIE) {
+    e.alive = false;
+    e.hp = 0;
+    return;
+  }
+  if (sub === DODONGO_BLOATED_SUB.END) {
+    e.bossState = DODONGO_STATE.MOVE;
+    e.bloatedSubstate = 0;
+    e.timer = 40;
+    return;
+  }
+  if (e.timer > 0) return;
+
+  // Timer expired: advance substate (DodongoBloatedWaitTimes pacing).
+  let next = sub + 1;
+  if (next >= DODONGO_BLOATED_SUB.FADE && (e.bombsEaten ?? 0) < 2) {
+    // Non-lethal swallow: skip fade/die and return to walking.
+    next = DODONGO_BLOATED_SUB.END;
+  }
+  e.bloatedSubstate = next;
+  if (next === DODONGO_BLOATED_SUB.DIE || next === DODONGO_BLOATED_SUB.END) {
+    // Act on the next frame (die / resume).
+    e.timer = 0;
+    return;
+  }
+  e.timer = DODONGO_BLOATED_WAIT[next] ?? 0x40;
+}
+
+/**
+ * Dodongo draw gate for bloated fade (substates 2–3): skip every other pair of frames.
+ * Collisions still run — same idea as ganonIsVisible.
+ * @param {import('./enemies.js').Enemy} e
+ */
+export function dodongoIsVisible(e) {
+  if (!isDodongo(e.objType)) return true;
+  if ((e.bossState ?? 0) !== DODONGO_STATE.BLOATED) return true;
+  const sub = e.bloatedSubstate ?? 0;
+  if (sub !== DODONGO_BLOATED_SUB.FADE && sub !== DODONGO_BLOATED_SUB.DIE) return true;
+  return ((e.anim ?? 0) & 2) !== 0;
+}
+
+/**
+ * True while Dodongo should use bloated (swell) CHR instead of walk frames.
+ * @param {import('./enemies.js').Enemy} e
+ */
+export function dodongoIsSwelling(e) {
+  return (
+    isDodongo(e.objType)
+    && (e.bossState ?? 0) === DODONGO_STATE.BLOATED
+    && (e.bloatedSubstate ?? 0) === DODONGO_BLOATED_SUB.SWELL
+  );
 }
 
 function stepDigdogger(e, bounds, opts) {
@@ -521,7 +596,8 @@ export function tryDodongoEatBomb(e, bomb) {
   bomb.timer = 0;
   e.bombsEaten = (e.bombsEaten ?? 0) + 1;
   e.bossState = DODONGO_STATE.BLOATED;
-  e.timer = 0x40;
+  e.bloatedSubstate = DODONGO_BLOATED_SUB.WAIT0;
+  e.timer = DODONGO_BLOATED_WAIT[0];
   return true;
 }
 

@@ -35,9 +35,9 @@ test('dodongo ignores sword; eats bombs', () => {
   const e = createEnemy({ objType: BOSS.DODONGO, x: 0x80, y: 0x80 });
   const sword = createSwordState();
   sword.phase = SWORD_PHASE.HIT;
-  sword.timer = 8;
+  sword.timer = 3; // mid-arc faces forward
   sword.dir = DIR.RIGHT;
-  assert.equal(trySwordHitEnemy(e, sword, e.x - 20, e.y, SWORD.WOOD), false);
+  assert.equal(trySwordHitEnemy(e, sword, e.x - 20, e.y, SWORD.WOOD), 'parry');
   const bomb = { x: e.x, y: e.y, phase: 'fuse' };
   assert.equal(tryDodongoEatBomb(e, bomb), true);
   assert.equal(e.bossState, DODONGO_STATE.BLOATED);
@@ -58,8 +58,11 @@ test('dodongo dies after two swallowed bombs', () => {
   const e = createEnemy({ objType: BOSS.DODONGO, x: 0x80, y: 0x80 });
   e.bombsEaten = 2;
   e.bossState = DODONGO_STATE.BLOATED;
+  e.bloatedSubstate = 2; // fade complete → die next
   e.timer = 0;
-  stepBossAi(e, { minX: 0x20, maxX: 0xd0, minY: 0x40, maxY: 0xd0 });
+  const bounds = { minX: 0x20, maxX: 0xd0, minY: 0x40, maxY: 0xd0 };
+  stepBossAi(e, bounds); // → DIE
+  stepBossAi(e, bounds); // → dead
   assert.equal(e.alive, false);
 });
 
@@ -68,14 +71,15 @@ test('gohma ignores sword; arrow only when eye open', () => {
   e.eyeState = GOHMA_EYE.CLOSED;
   const sword = createSwordState();
   sword.phase = SWORD_PHASE.HIT;
-  sword.timer = 8;
+  sword.timer = 3; // mid-arc faces forward
   sword.dir = DIR.RIGHT;
+  // bossNeedsArrow short-circuits before the contact parry path.
   assert.equal(trySwordHitEnemy(e, sword, e.x - 20, e.y, SWORD.WOOD), false);
   const arrowClosed = shootArrow(e.x, e.y + 20, DIR.UP, 1);
   arrowClosed.x = e.x + 4;
   arrowClosed.y = e.y + 4;
   assert.equal(gohmaEyeVulnerable(e, arrowClosed), false);
-  assert.equal(tryArrowHitEnemy(e, arrowClosed), false);
+  assert.equal(tryArrowHitEnemy(e, arrowClosed), 'parry');
 
   e.eyeState = GOHMA_EYE.OPEN;
   e.invuln = 0;
@@ -92,12 +96,13 @@ test('ganon blue→brown on sword KO; silver only in brown', () => {
   e.ganonPhase = GANON_PHASE.BLUE;
   const sword = createSwordState();
   sword.phase = SWORD_PHASE.HIT;
-  sword.timer = 8;
+  sword.timer = 3; // mid-arc faces forward
   sword.dir = DIR.RIGHT;
   assert.equal(trySwordHitEnemy(e, sword, e.x - 20, e.y, SWORD.MAGIC), true);
   assert.equal(e.alive, true);
   assert.equal(e.ganonPhase, GANON_PHASE.BROWN);
 
+  // Still in sword invuln frames — miss rather than a brown-phase parry.
   const wood = shootArrow(e.x, e.y, DIR.RIGHT, 1);
   wood.x = e.x + 4;
   wood.y = e.y + 4;
@@ -131,9 +136,9 @@ test('digdogger ignores sword until flute split', () => {
   const e = createEnemy({ objType: BOSS.DIGDOGGER, x: 0x80, y: 0x80 });
   const sword = createSwordState();
   sword.phase = SWORD_PHASE.HIT;
-  sword.timer = 8;
+  sword.timer = 3; // mid-arc faces forward
   sword.dir = DIR.RIGHT;
-  assert.equal(trySwordHitEnemy(e, sword, e.x - 20, e.y, SWORD.WOOD), false);
+  assert.equal(trySwordHitEnemy(e, sword, e.x - 20, e.y, SWORD.WOOD), 'parry');
 
   /** @type {import('./enemies.js').Enemy[]} */
   const kids = [];

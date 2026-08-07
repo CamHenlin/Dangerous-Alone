@@ -44,3 +44,8 @@ test('money-or-life uses fixed selector', () => {
     'OR MONEY',
   ]);
 });
+
+test('Grumble uses PersonText selector $24', () => {
+  assert.equal(textIdForUnderworldPerson(7, 0x36), 0x24);
+  assert.deepEqual(linesForUnderworldPerson(textLines, 7, 0x36), ['GRUMBLE!GRUMBLE']);
+});

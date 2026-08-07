@@ -1,8 +1,14 @@
 /**
  * Hungry Goriya / Grumble ($36) — blocks until bait is fed (Z_01).
+ *
+ * Northward motion while he lives is gated by `personBlocking.js`
+ * (CheckPersonBlocking). Dialogue uses PersonText selector `$24`.
  */
 
 export const GRUMBLE = 0x36;
+
+/** InitGrumble_Full → PersonTextSelector. */
+export const GRUMBLE_TEXT_SEL = 0x24;
 
 export function isGrumble(objType) {
   return objType === GRUMBLE;

@@ -55,6 +55,30 @@ test('trySpawnZora places Zora on water and not twice', () => {
   assert.equal(again, null);
 });
 
+test('neighbor Zora does not block CheckZora in the current room', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x95));
+  const neighbor = {
+    alive: true,
+    objType: OBJ.ZORA,
+    homeRoomId: 0x55,
+    x: 0x50,
+    y: 0x6d,
+  };
+  const zora = trySpawnZora({ zora: true }, grid, [neighbor], {
+    rngByte: () => 0x56,
+    roomId: 0x56,
+  });
+  assert.ok(zora, 'streamed neighbor Zora must not suppress this room');
+  assert.equal(zora.objType, OBJ.ZORA);
+
+  zora.homeRoomId = 0x56;
+  const blocked = trySpawnZora({ zora: true }, grid, [neighbor, zora], {
+    rngByte: () => 0x56,
+    roomId: 0x56,
+  });
+  assert.equal(blocked, null);
+});
+
 test('OW $56 attrs.zora is true and has water for CheckZora', {
   skip: !fs.existsSync(path.join(ROOT, 'assets/extracted/play/screens/56.json')),
 }, () => {

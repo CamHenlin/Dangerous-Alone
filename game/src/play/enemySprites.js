@@ -15,6 +15,7 @@ import {
   enemyFrameIndex,
   enemyFrameTile,
   sheetForPpuTile,
+  wallmasterRightTile,
 } from '@shared/enemyAnim.js';
 import {
   DIGDOGGER_BIG_PARTS,
@@ -22,6 +23,7 @@ import {
   GLEEOK_BODY_OFFSETS,
   GOHMA_PARTS,
   MANHANDLA_PARTS,
+  dodongoBloatedDraw,
   dodongoWalkDraw,
   enemyHalfSprite,
   hasBossComposer,
@@ -36,7 +38,7 @@ import {
   GLEEOK_NECK_TILE,
 } from '@shared/gleeok.js';
 import { BOSS } from '@shared/bosses.js';
-import { ganonIsVisible } from '@shared/bossAi.js';
+import { dodongoIsSwelling, ganonIsVisible } from '@shared/bossAi.js';
 import { PROJ } from '@shared/projectiles.js';
 
 const TILE = 8;
@@ -221,6 +223,56 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   }
 
   /**
+   * Two independent 8×16 columns (Wallmaster closed-hand patch, etc.).
+   * @param {number} leftPpu
+   * @param {number} rightPpu
+   * @param {'overworld' | 'dungeon'} mode
+   * @param {{ flipH?: boolean, flipV?: boolean, spritePal?: number }} [flags]
+   */
+  function textureFromPpuPair(leftPpu, rightPpu, mode, flags = {}) {
+    const level = mode === 'dungeon' ? dungeonLevel : 1;
+    const spritePal = flags.spritePal ?? 0;
+    const flipH = Boolean(flags.flipH);
+    const flipV = Boolean(flags.flipV);
+    const L = sheetForPpuTile(leftPpu, mode, level);
+    const R = sheetForPpuTile(rightPpu, mode, level);
+    const key = `pair:${L.sheet}:${L.index}:${R.sheet}:${R.index}:${flipH ? 1 : 0}:${flipV ? 1 : 0}:p${spritePal}`;
+    let tex = cache.get(key);
+    if (tex) return tex;
+
+    const base = document.createElement('canvas');
+    base.width = 16;
+    base.height = 16;
+    const bctx = base.getContext('2d');
+    if (!bctx) throw new Error('2d context unavailable');
+    bctx.imageSmoothingEnabled = false;
+    drawTile(bctx, L.sheet, L.index, 0, 0);
+    drawTile(bctx, L.sheet, L.index + 1, 0, 8);
+    drawTile(bctx, R.sheet, R.index, 8, 0);
+    drawTile(bctx, R.sheet, R.index + 1, 8, 8);
+
+    let src = base;
+    if (flipH || flipV) {
+      const out = document.createElement('canvas');
+      out.width = 16;
+      out.height = 16;
+      const octx = out.getContext('2d');
+      if (!octx) throw new Error('2d context unavailable');
+      octx.imageSmoothingEnabled = false;
+      octx.translate(flipH ? 16 : 0, flipV ? 16 : 0);
+      octx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+      octx.drawImage(base, 0, 0);
+      src = out;
+    }
+
+    applySpritePalette(src, spritePal);
+    tex = Texture.from(src);
+    tex.source.scaleMode = 'nearest';
+    cache.set(key, tex);
+    return tex;
+  }
+
+  /**
    * @param {import('@shared/enemies.js').Enemy} e
    * @param {'overworld' | 'dungeon'} mode
    */
@@ -234,14 +286,24 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     if (hasBossComposer(e.objType)) {
       return bossComposerTexture(e, spritePal);
     }
-    const frame = enemyFrameIndex(e.objType, e.dir, e.anim, {
+    let frame = enemyFrameIndex(e.objType, e.dir, e.anim, {
       leeverPhase: e.leeverPhase,
       timer: e.timer,
       wormHead: e.wormHead,
     });
+    // Captured Link: force closed hand (NES ObjAnimFrame = 1).
+    if (e.objType === OBJ.WALLMASTER && e.wallmasterGrab) frame = 1;
+    const flags = enemyDrawFlags(e.objType, e.dir, frame);
+    // Wallmaster: left always $AC; right $AE (open) or patched $9E (closed).
+    if (e.objType === OBJ.WALLMASTER) {
+      return textureFromPpuPair(0xac, wallmasterRightTile(frame), mode, {
+        flipH: flags.flipH,
+        flipV: flags.flipV,
+        spritePal,
+      });
+    }
     const ppu = enemyFrameTile(e.objType, frame);
     if (ppu == null) return colorStubTexture(e);
-    const flags = enemyDrawFlags(e.objType, e.dir, frame);
     const half = enemyHalfSprite(e.objType);
     return textureFromPpu(ppu, mode, { ...flags, half, spritePal });
   }
@@ -387,10 +449,11 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   }
 
   function dodongoTexture(e, spritePal) {
-    // Dodongo_Draw: every 8 frames switch walk halves; LEFT swaps + HFlip.
+    // Dodongo_Draw: walk halves every 8 frames; bloated substate 1 uses swell tiles.
+    const swell = dodongoIsSwelling(e);
     const anim = (e.anim >> 3) & 1;
-    const draw = dodongoWalkDraw(e.dir, anim);
-    const key = `dodo:${draw.leftTile.toString(16)}:${draw.rightTile?.toString(16) ?? '-'}:${draw.flipH ? 1 : 0}:p${spritePal}:L${dungeonLevel}`;
+    const draw = swell ? dodongoBloatedDraw(e.dir) : dodongoWalkDraw(e.dir, anim);
+    const key = `dodo:${swell ? 'b' : 'w'}:${draw.leftTile.toString(16)}:${draw.rightTile?.toString(16) ?? '-'}:${draw.flipH ? 1 : 0}:p${spritePal}:L${dungeonLevel}`;
     let tex = cache.get(key);
     if (tex) return tex;
     const canvas = document.createElement('canvas');

@@ -119,6 +119,7 @@ export function applyQuest2AttrsToPack(pack) {
       table1: a,
       exitX: (a >> 4) & 0x0f,
       zora: Boolean(a & 0x08),
+      /** LevelBlockAttrsA bit $04 — ROM sea/shore ambient (`PlayEffect $20`). */
       wave: Boolean(a & 0x04),
       outerPalette: a & 0x03,
     };

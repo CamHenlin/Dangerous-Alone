@@ -85,6 +85,27 @@ test('random cancel uses DropItemRates', () => {
   );
 });
 
+test('forceDrop bypasses rate cancel and no-drop types', () => {
+  const c = createDropCounters();
+  assert.ok(
+    resolveDroppedItem({
+      objType: 0x07,
+      counters: c,
+      randomByte: () => 0xff,
+      forceDrop: true,
+    }),
+  );
+  assert.equal(
+    resolveDroppedItem({
+      objType: 0x5d,
+      counters: createDropCounters(),
+      randomByte: () => 0,
+      forceDrop: true,
+    }),
+    DROP_ITEM.HEART,
+  );
+});
+
 test('help drop at 10 kills forces 5 rupees or bomb', () => {
   const c = createDropCounters();
   for (let i = 0; i < 10; i += 1) noteMonsterDied(c, 0);

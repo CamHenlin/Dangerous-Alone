@@ -59,9 +59,10 @@ test('take-any is one choice; door repair is one-shot', () => {
     ],
   };
   const taken = new Set();
-  const a = tryBuyCaveSlot(inv, cave, 0, { taken });
+  const roomId = 0x2f;
+  const a = tryBuyCaveSlot(inv, cave, 0, { taken, roomId });
   assert.equal(a.ok, true);
-  const b = tryBuyCaveSlot(inv, cave, 2, { taken });
+  const b = tryBuyCaveSlot(inv, cave, 2, { taken, roomId });
   assert.equal(b.ok, false);
 
   const door = {
@@ -70,6 +71,6 @@ test('take-any is one choice; door repair is one-shot', () => {
     slots: [{ item: 0, price: 20 }, { item: 0, price: 0 }, { item: 0, price: 0 }],
   };
   const dTaken = new Set();
-  assert.equal(tryDoorRepair(inv, door, { taken: dTaken }).ok, true);
-  assert.equal(tryDoorRepair(inv, door, { taken: dTaken }).ok, false);
+  assert.equal(tryDoorRepair(inv, door, { taken: dTaken, roomId: 0x01 }).ok, true);
+  assert.equal(tryDoorRepair(inv, door, { taken: dTaken, roomId: 0x01 }).ok, false);
 });

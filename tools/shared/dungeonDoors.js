@@ -1,5 +1,6 @@
-import { DIR } from './collision.js';
+import { DIR, HUD_HEIGHT } from './collision.js';
 import { bombHits } from './bomb.js';
+import { PLAY_H, PLAY_W } from './continuousCamera.js';
 import { SCREEN_EDGE } from './world.js';
 
 /** @typedef {{ open: Set<string> }} DoorState */
@@ -43,15 +44,16 @@ export const DOORWAY_EW_AXIS_SLACK = 0x10;
 export const DOORWAY_EXIT_AXIS_SLACK = 8;
 
 /**
- * NES overflow doorway depth (`DoorwayBoundsMinOver` / `MaxOver`).
- * Max is exclusive (`BCC`). West stops at `$21` — the first floor statue in
- * rooms like L4 `$71` sits at X=`$30` and must keep tile collision.
+ * NES overflow doorway depth (`DoorwayBoundsMinOver` / `MaxOver`), extended so
+ * passable doors can be walked through to the geometric room seam (Phase-18
+ * continuous UW). Max is exclusive. West still stops short of floor statues
+ * at X=`$30` on the room-interior side; negative X is allowed past the lip.
  */
 export const DOORWAY_DEPTH = Object.freeze({
-  north: Object.freeze({ min: 0x3d, max: 0x5e }),
-  south: Object.freeze({ min: 0xbd, max: 0xde }),
-  west: Object.freeze({ min: 0x00, max: 0x21 }),
-  east: Object.freeze({ min: 0xcf, max: 0xf1 }),
+  north: Object.freeze({ min: HUD_HEIGHT - PLAY_H, max: 0x5e }),
+  south: Object.freeze({ min: 0xbd, max: HUD_HEIGHT + PLAY_H + 1 }),
+  west: Object.freeze({ min: -PLAY_W, max: 0x21 }),
+  east: Object.freeze({ min: 0xcf, max: PLAY_W + 1 }),
 });
 
 /**
@@ -143,23 +145,145 @@ export function nearDoorway(link, side) {
 }
 
 /**
- * NES skips tile collision while DoorwayDir ≠ 0. Mirror that for any non-wall
- * doorway Link is currently inside (plus the latched entry side).
+ * NES skips tile collision while DoorwayDir ≠ 0. Continuous-camera QoL: only
+ * passable doors (open / already unlocked) are corridors. Locked key, shutter,
+ * and bombable faces stay under normal tile collision so they act as blocks.
+ * The latched entry side still skips collision while Link finishes walking in.
+ *
  * @param {{ x: number, y: number }} link
- * @param {{ doors?: Record<string, { type?: string }> } | null | undefined} room
- * @param {{ doorwayBlockSide?: string | null }} [opts]
+ * @param {{ roomId?: number, doors?: Record<string, { type?: string }> } | null | undefined} room
+ * @param {{ doorwayBlockSide?: string | null, doorState?: DoorState | null }} [opts]
  */
 export function linkInDoorwayCorridor(link, room, opts = {}) {
   const block = opts.doorwayBlockSide ?? null;
   if (block && nearDoorway(link, block)) return true;
   if (!room?.doors) return false;
+  const state = opts.doorState ?? null;
+  const roomId = room.roomId ?? 0;
   for (const side of ['north', 'south', 'west', 'east']) {
     if (!nearDoorway(link, side)) continue;
-    const t = room.doors[side]?.type;
+    const door = room.doors[side];
+    const t = door?.type;
     if (!t || t === 'wall') continue;
-    return true;
+    if (t === 'open' || t === 'passage' || t === 'wall_or_pass') return true;
+    if (state && doorPassable(door, state, roomId, side)) return true;
   }
   return false;
+}
+
+/**
+ * Legacy lip snap after soft-enter. Kept for tests; live UW door crosses keep
+ * rebased seam coords so the path stays world-continuous (no 16px skip).
+ * @param {{ x: number, y: number }} link
+ * @param {string | null | undefined} entrySide
+ */
+export function clampDoorwayOvershoot(link, entrySide) {
+  if (!entrySide) return;
+  if (entrySide === 'south' && link.y > SCREEN_EDGE.down) link.y = SCREEN_EDGE.down;
+  if (entrySide === 'north' && link.y < SCREEN_EDGE.up) link.y = SCREEN_EDGE.up;
+  if (entrySide === 'east' && link.x > SCREEN_EDGE.right) link.x = SCREEN_EDGE.right;
+  if (entrySide === 'west' && link.x < SCREEN_EDGE.left) link.x = SCREEN_EDGE.left;
+}
+
+/**
+ * True when `side` is a passable door into a real neighbor room.
+ * @param {{ roomId?: number, doors?: Record<string, { type?: string }> } | null | undefined} room
+ * @param {DoorState | null | undefined} state
+ * @param {string} side
+ * @param {Set<number> | null | undefined} roomIds
+ */
+export function doorSideAllowsCross(room, state, side, roomIds = null) {
+  if (!room?.doors) return false;
+  const door = room.doors[side];
+  if (!doorPassable(door, state ?? createDoorState(), room.roomId ?? 0, side)) {
+    return false;
+  }
+  const next = dungeonNeighbor(room.roomId ?? 0, dirForSide(side));
+  if (next == null) return false;
+  if (roomIds && !roomIds.has(next)) return false;
+  return true;
+}
+
+/**
+ * Doorway motion clamp: NES lips stay closed on locked/missing sides; passable
+ * doors open through to the geometric seam so Link can walk into the next room.
+ * @param {{ x: number, y: number }} link
+ * @param {{ roomId?: number, doors?: Record<string, { type?: string }> } | null | undefined} room
+ * @param {{ doorState?: DoorState | null, roomIds?: Set<number> | null }} [opts]
+ */
+export function clampUwDoorwayPath(link, room, opts = {}) {
+  const state = opts.doorState ?? null;
+  const roomIds = opts.roomIds ?? null;
+  const onNs = Math.abs(link.x - DOORWAY_CENTER_X) <= DOORWAY_NS_AXIS_SLACK;
+  const onEw = Math.abs(link.y - DOORWAY_CENTER_Y) <= DOORWAY_EW_AXIS_SLACK;
+
+  let minX = SCREEN_EDGE.left;
+  let maxX = SCREEN_EDGE.right;
+  let minY = SCREEN_EDGE.up;
+  let maxY = SCREEN_EDGE.down;
+
+  if (onNs && doorSideAllowsCross(room, state, 'north', roomIds)) {
+    minY = HUD_HEIGHT - PLAY_H;
+  }
+  if (onNs && doorSideAllowsCross(room, state, 'south', roomIds)) {
+    maxY = HUD_HEIGHT + PLAY_H;
+  }
+  if (onEw && doorSideAllowsCross(room, state, 'west', roomIds)) {
+    minX = -PLAY_W;
+  }
+  if (onEw && doorSideAllowsCross(room, state, 'east', roomIds)) {
+    maxX = PLAY_W;
+  }
+
+  link.x = Math.max(minX, Math.min(maxX, link.x));
+  link.y = Math.max(minY, Math.min(maxY, link.y));
+}
+
+/**
+ * Floor-lip through cavity: bumping a locked key door here with a key unlocks it.
+ * @param {{ x: number, y: number }} link
+ * @param {string} side
+ */
+export function inKeyDoorBumpZone(link, side) {
+  if (side === 'north') {
+    if (Math.abs(link.x - DOORWAY_CENTER_X) > DOORWAY_NS_AXIS_SLACK) return false;
+    // Door cavity through BoundByRoom lip ($5E) — not the whole northern floor.
+    return link.y >= DOORWAY_DEPTH.north.min && link.y < 0x68;
+  }
+  if (side === 'south') {
+    if (Math.abs(link.x - DOORWAY_CENTER_X) > DOORWAY_NS_AXIS_SLACK) return false;
+    return link.y >= 0xb8 && link.y < DOORWAY_DEPTH.south.max;
+  }
+  if (side === 'west') {
+    if (Math.abs(link.y - DOORWAY_CENTER_Y) > DOORWAY_EW_AXIS_SLACK) return false;
+    return link.x >= DOORWAY_DEPTH.west.min && link.x < 0x28;
+  }
+  if (side === 'east') {
+    if (Math.abs(link.y - DOORWAY_CENTER_Y) > DOORWAY_EW_AXIS_SLACK) return false;
+    // Locked key faces + ObjectRoomBoundsUW freeze at X≥$D0, so Link never
+    // reaches the old $D8 lip. Count the BoundByRoom edge as a bump.
+    return link.x >= 0xd0 && link.x < DOORWAY_DEPTH.east.max;
+  }
+  return false;
+}
+
+/**
+ * If Link is facing a locked key door in bump range and has a key, unlock it.
+ * @param {{ x: number, y: number, dir: number }} link
+ * @param {{ roomId: number, doors?: Record<string, { type?: string }> } | null | undefined} room
+ * @param {DoorState} state
+ * @param {{ keys?: number, magicKey?: number }} inv
+ * @returns {string | null} unlocked side, or null
+ */
+export function tryUnlockFacingKeyDoor(link, room, state, inv) {
+  if (!room?.doors || !link) return null;
+  const side = doorKeyForDir(link.dir);
+  if (!side || !inKeyDoorBumpZone(link, side)) return null;
+  const door = room.doors[side];
+  if (door?.type !== 'key') return null;
+  if (doorPassable(door, state, room.roomId, side)) return null;
+  if (!tryUnlockKeyDoor(door, state, room.roomId, side, inv)) return null;
+  return side;
 }
 
 /**
@@ -434,6 +558,9 @@ export function atUwScreenEdge(link, side) {
  * edge (`CheckScreenEdge`) while still in that doorway corridor. While
  * `gridOffset ≠ 0` (entry walk / mid-stride), exit is suppressed.
  *
+ * Live play uses {@link detectUwDoorCross} (geometric seam) instead so unlocked
+ * doors feel like a continuous path; this remains for tests / NES comparisons.
+ *
  * @returns {{ nextRoomId: number, dir: number, unlocked?: boolean, side: string } | null}
  */
 export function checkDungeonRoomExit(link, room, _origin, _roomSize, ctx = {}) {
@@ -476,4 +603,57 @@ export function checkDungeonRoomExit(link, room, _origin, _roomSize, ctx = {}) {
     return { nextRoomId: next, dir: c.dir, unlocked, side: c.side };
   }
   return null;
+}
+
+/**
+ * OW-style seam cross through a passable UW door. No Y snap — world position
+ * stays continuous across the 256×176 room tiling.
+ *
+ * @param {{ x: number, y: number, dir?: number, gridOffset?: number }} link
+ * @param {{ roomId: number, doors?: Record<string, { type?: string }> } | null | undefined} room
+ * @param {{ doorState?: DoorState | null, rooms?: { roomId: number }[], roomIds?: Set<number> }} [ctx]
+ * @returns {{ nextRoomId: number, dir: number, side: string, x: number, y: number } | null}
+ */
+export function detectUwDoorCross(link, room, ctx = {}) {
+  if (!room?.doors) return null;
+  if ((link.gridOffset ?? 0) !== 0) return null;
+
+  /** @type {Set<number> | null} */
+  const roomIds =
+    ctx.roomIds instanceof Set
+      ? ctx.roomIds
+      : Array.isArray(ctx.rooms)
+        ? new Set(ctx.rooms.map((r) => r.roomId))
+        : null;
+  const state = ctx.doorState ?? null;
+
+  const playY = link.y - HUD_HEIGHT;
+  /** @type {{ dir: number, side: string, nextRoomId: number, x: number, y: number } | null} */
+  let cross = null;
+  if (link.x < 0) {
+    const next = dungeonNeighbor(room.roomId, DIR.LEFT);
+    if (next != null) {
+      cross = { dir: DIR.LEFT, side: 'west', nextRoomId: next, x: link.x + PLAY_W, y: link.y };
+    }
+  } else if (link.x >= PLAY_W) {
+    const next = dungeonNeighbor(room.roomId, DIR.RIGHT);
+    if (next != null) {
+      cross = { dir: DIR.RIGHT, side: 'east', nextRoomId: next, x: link.x - PLAY_W, y: link.y };
+    }
+  } else if (playY < 0) {
+    const next = dungeonNeighbor(room.roomId, DIR.UP);
+    if (next != null) {
+      cross = { dir: DIR.UP, side: 'north', nextRoomId: next, x: link.x, y: link.y + PLAY_H };
+    }
+  } else if (playY >= PLAY_H) {
+    const next = dungeonNeighbor(room.roomId, DIR.DOWN);
+    if (next != null) {
+      cross = { dir: DIR.DOWN, side: 'south', nextRoomId: next, x: link.x, y: link.y - PLAY_H };
+    }
+  }
+  if (!cross) return null;
+  if (!doorSideAllowsCross(room, state, cross.side, roomIds)) return null;
+  // Still in the door corridor (axis + extended depth) at the seam.
+  if (!nearDoorway(link, cross.side)) return null;
+  return cross;
 }

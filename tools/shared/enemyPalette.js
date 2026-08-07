@@ -1,4 +1,5 @@
 import { OBJ } from './enemies.js';
+import { itemFlashPalette } from './itemDrawPalette.js';
 
 /**
  * NES sprite palette slot (0–3) per object type.
@@ -47,6 +48,8 @@ const SPRITE_PAL = Object.freeze({
   [OBJ.BUBBLE_RED]: 2,
   // Anim_SetSpriteDescriptorRedPaletteRow → SP2.
   [OBJ.POND_FAIRY]: 2,
+  // 1-rupee flash SP1↔SP2 (DrawItemBySlot slot $16).
+  [OBJ.RUPEE_STASH]: 1,
   [OBJ.GIBDO]: 1,
   [OBJ.TRAP]: 1,
   [OBJ.TRAP2]: 1,
@@ -98,6 +101,7 @@ export const BAKED_SPRITE_PALETTE_RGB = Object.freeze([
  */
 export function enemySpritePalette(objType, anim = 0) {
   if (objType === OBJ.BUBBLE) return anim & 3;
+  if (objType === OBJ.RUPEE_STASH) return itemFlashPalette(anim);
   return SPRITE_PAL[objType] ?? 0;
 }
 

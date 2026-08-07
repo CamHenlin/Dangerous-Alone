@@ -101,16 +101,44 @@ test('can walk onto start-screen sword cave and trigger entry', () => {
   assert.deepEqual(entered, { kind: 'cave', id: 0x10 });
 });
 
+test('OW $0F secret cave enters from both mouth columns', () => {
+  const packPath = path.join(ROOT, 'assets', 'extracted', 'play', 'screens', '0f.json');
+  if (!fs.existsSync(packPath)) return;
+  const scr = JSON.parse(fs.readFileSync(packPath, 'utf8'));
+  assert.equal(scr.attrs.caveId, 34);
+  // The mouth is the 16px square at cols $10/$11 → X $80 and $88. X=$78 is
+  // *not* a mouth column: Link's left half would stand on the mountain tile
+  // $A5, and the mid-cell standing test correctly snaps him back to $85.
+  for (const x of [0x80, 0x88]) {
+    const link = createLinkState(x, 0x95, DIR.UP);
+    let entered = null;
+    for (let i = 0; i < 120; i += 1) {
+      stepLink(link, scr.tileGrid, DIR.UP, undefined, 0x0f);
+      entered = checkCaveEntry(link, scr.tileGrid, scr.attrs, 0x0f);
+      if (entered) break;
+    }
+    assert.deepEqual(
+      entered,
+      { kind: 'cave', id: 34 },
+      `expected cave entry from x=$${x.toString(16)}, ended at $${link.x.toString(16)},$${link.y.toString(16)}`,
+    );
+  }
+});
+
 test('raft arrival Y=$CD can walk into Level 4 mouth on $45', () => {
   const packPath = path.join(ROOT, 'assets', 'extracted', 'play', 'screens', '45.json');
   if (!fs.existsSync(packPath)) return;
   const scr = JSON.parse(fs.readFileSync(packPath, 'utf8'));
   assert.equal(scr.attrs.caveId, 4);
-  // Bad raft spawn $D0 leaves Link on mouth at Y=$80 (no entry).
+  // Off-grid Y on the mouth (stair QSpeed / soft-cross) must still enter.
   const bad = createLinkState(0x80, 0xd0, DIR.UP);
-  for (let i = 0; i < 100; i += 1) stepLink(bad, scr.tileGrid, DIR.UP, undefined, 0x45);
-  assert.equal(checkCaveEntry(bad, scr.tileGrid, scr.attrs), null);
-  assert.equal(bad.y & 0x0f, 0);
+  let badEntered = null;
+  for (let i = 0; i < 100; i += 1) {
+    stepLink(bad, scr.tileGrid, DIR.UP, undefined, 0x45);
+    badEntered = checkCaveEntry(bad, scr.tileGrid, scr.attrs);
+    if (badEntered) break;
+  }
+  assert.deepEqual(badEntered, { kind: 'level', id: 4 });
 
   const link = createLinkState(0x80, 0xcd, DIR.UP);
   let entered = null;
@@ -121,6 +149,23 @@ test('raft arrival Y=$CD can walk into Level 4 mouth on $45', () => {
   }
   assert.deepEqual(entered, { kind: 'level', id: 4 });
   assert.equal(link.y, 0x7d);
+});
+
+test('Level 1 mouth enters when Y is off the NES $?D walk grid', () => {
+  const packPath = path.join(ROOT, 'assets', 'extracted', 'play', 'screens', '37.json');
+  if (!fs.existsSync(packPath)) return;
+  const scr = JSON.parse(fs.readFileSync(packPath, 'utf8'));
+  assert.equal(scr.attrs.caveId, 1);
+  // Repro: continuous climb parks Link on $24 at Y=$84 with solid look-ahead.
+  for (const y of [0x80, 0x84]) {
+    const link = createLinkState(0x70, y, DIR.UP);
+    assert.equal(standingTile(scr.tileGrid, link.x, link.y), 0x24);
+    assert.deepEqual(
+      checkCaveEntry(link, scr.tileGrid, scr.attrs, 0x37),
+      { kind: 'level', id: 1 },
+      `expected entry at y=$${y.toString(16)}`,
+    );
+  }
 });
 
 test('Level 1 overworld exit spawn', () => {
