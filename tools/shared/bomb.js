@@ -13,6 +13,7 @@ export const BOMB_RADIUS = 0x18;
  * @property {number} timer
  * @property {'fuse' | 'explode' | 'done'} phase
  * @property {boolean} damaged
+ * @property {number} dir  Link facing when placed (Darknut blast face-parry)
  */
 
 /**
@@ -29,7 +30,7 @@ export function placeBomb(linkX, linkY, dir) {
   if (dir & DIR.DOWN) y += 16;
   if (dir & DIR.LEFT) x -= 16;
   if (dir & DIR.RIGHT) x += 16;
-  return { x, y, timer: BOMB_FUSE, phase: 'fuse', damaged: false };
+  return { x, y, timer: BOMB_FUSE, phase: 'fuse', damaged: false, dir: dir & 0x0f };
 }
 
 /**

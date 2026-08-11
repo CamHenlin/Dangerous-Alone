@@ -6,6 +6,7 @@ Cross-phase checklist of behaviors that must match the original game (or are int
 |----|------|------|--------|--------|
 | OW-01 | Overworld | Screen edges at `$3D/$DD/$00/$F0`; neighbor Δ ±`$10`/±1 | Phase 6 | implemented |
 | OW-02 | Overworld | Warp tiles `$24/$88/$70–$73` while `Y&$0F===$0D` and still | Phase 6 | implemented |
+| OW-03 | Overworld | Room `$5F` dock heart `$1A` at (`$C0`,`$90`) via `@MakeHeartContainerOW` | Phase 10 | implemented |
 | LNK-01 | Link | Walk QSpeed `$60` → 1.5 px/frame average | Phase 5 | implemented |
 | LNK-02 | Link | New game: no sword; 3 hearts as 6 half-hearts | Phase 7 | implemented |
 | ATK-01 | Sword | Swing 16f (5+8+1+1+1); damage only in 8f HIT | Phase 7 | implemented |
@@ -113,6 +114,7 @@ Cross-phase checklist of behaviors that must match the original game (or are int
 | DROP-06 | Drops | Item takers: Link / sword / boom / arrow only | Phase 14 | implemented |
 | ENM-16 | AI | Wanderer turn rates + tile-boundary facing (`wandererAi.js`) | Phase 14 | implemented |
 | ENM-45 | AI | ObjQSpeedFrac MoveObject ×4/frame (`objQSpeed.js`: darknut/octorok/bubble/rope/trap/leever/…) | QoL audit | implemented |
+| ENM-46 | AI | Zol/Gel `UpdateNormalZolOrGel`: turn `$20`, QSpeed `$18`/`$40`, `ZolGelDelays` edge pauses; Gel split shove (`zolGelAi.js`) | Gel stuck fix | implemented |
 | ENM-20 | AI | Bait 3×`$FF` phases; chase-set excludes Lynel | Phase 14 | implemented |
 | ENM-22 | AI | Keese flyer state machine | Phase 14 | implemented |
 | ENM-36 | AI | Gibdo/Stalfos turn rate `$80` via wanderer | Phase 14 | implemented |

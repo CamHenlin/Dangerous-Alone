@@ -1,5 +1,7 @@
 import { OBJ } from './enemies.js';
 import { itemFlashPalette } from './itemDrawPalette.js';
+import { expandRowRgb } from './masterPalette.js';
+import { scale } from './gfxScale.js';
 
 /**
  * NES sprite palette slot (0–3) per object type.
@@ -114,18 +116,33 @@ export function levelInfoRowForSpritePal(spritePal) {
 }
 
 /**
- * Remap pixels drawn with `srcRgb` (4 NES colors) to `dstRgb`.
- * Color 0 / alpha 0 stays transparent.
+ * Remap pixels drawn with `srcRgb` to `dstRgb`. Color 0 / alpha 0 stays
+ * transparent.
+ *
+ * Callers pass rows of 4 NES colors, as they always have. When the enhanced
+ * graphics set is active the sheets are drawn from 16-colour shaded ramps
+ * instead, so both rows are expanded here — at the one point that actually
+ * touches pixels — rather than making every caller aware of which art set is
+ * loaded. Slot N's ramp maps onto slot N's ramp, so a swap that turned green
+ * into red before now turns the whole green ramp into the whole red ramp, and
+ * every existing recolor (dungeon levels, tunic by ring, death fade, the
+ * triforce flash) keeps working unchanged.
  *
  * @param {Uint8ClampedArray} rgba
- * @param {readonly (readonly number[])[]} srcRgb
- * @param {readonly (readonly number[])[]} dstRgb
+ * @param {readonly (readonly number[])[]} srcRgb 4 or 16 RGB triples
+ * @param {readonly (readonly number[])[]} dstRgb 4 or 16 RGB triples
  */
 export function remapPaletteRgba(rgba, srcRgb, dstRgb) {
+  const enhanced = scale() === 2;
+  const src = enhanced && srcRgb.length === 4 ? expandRowRgb(srcRgb) : srcRgb;
+  const dst = enhanced && dstRgb.length === 4 ? expandRowRgb(dstRgb) : dstRgb;
   const lut = new Map();
-  for (let i = 1; i < 4; i += 1) {
-    const [sr, sg, sb] = srcRgb[i];
-    lut.set(`${sr},${sg},${sb}`, dstRgb[i]);
+  // Slot 0 is transparent on sprites. In an expanded row it occupies the first
+  // shade-ramp's worth of entries, whatever the ramp length happens to be.
+  const firstOpaque = src.length > 4 ? src.length / 4 : 1;
+  for (let i = firstOpaque; i < src.length; i += 1) {
+    const [sr, sg, sb] = src[i];
+    lut.set(`${sr},${sg},${sb}`, dst[i]);
   }
   for (let i = 0; i < rgba.length; i += 4) {
     if (rgba[i + 3] === 0) continue;

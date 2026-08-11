@@ -26,7 +26,8 @@ export const SECRET_STAIRS_TILES = Object.freeze([0x70, 0x71, 0x72, 0x73]);
 
 /**
  * Opened bomb-wall secret — secondary square $0C (MakeCave).
- * UL/LL/UR/LR = $F3,$24,$F3,$24.
+ * UL/LL/UR/LR = $F3,$24,$F3,$24 (both blank; $F3 lives on common_misc so
+ * runtime BG patches must underlay opaque black — see `patchOwBgSquare`).
  */
 export const SECRET_CAVE_TILES = Object.freeze([0xf3, 0x24, 0xf3, 0x24]);
 

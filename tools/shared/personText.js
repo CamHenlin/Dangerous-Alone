@@ -67,3 +67,62 @@ export function linesForUnderworldPerson(textLines, level, objType) {
   const lines = textLines[textId] ?? textLines[String(textId)];
   return Array.isArray(lines) ? lines.filter(Boolean) : [];
 }
+
+/** Level-9 entrance gatekeeper (InitUnderworldPersonC person `$4B`). */
+export const L9_GATE_PERSON = 0x4b;
+
+/**
+ * NES InitUnderworldPersonC: with InvTriforce = $FF, destroy person `$4B`
+ * and set ShutterTrigger so the entrance shutters open.
+ * @param {number} level
+ * @param {{ triforce?: number } | null | undefined} inv
+ * @param {number} objType
+ */
+export function isLevel9EntranceGate(level, inv, objType) {
+  if ((level | 0) !== 9 || (objType & 0xff) !== L9_GATE_PERSON) return false;
+  return ((inv?.triforce ?? 0) & 0xff) === 0xff;
+}
+
+/**
+ * Drop L9 gate persons from a spawn list when the Triforce is complete.
+ * @template {{ objType?: number }} T
+ * @param {T[]} spawned
+ * @param {number} level
+ * @param {{ triforce?: number } | null | undefined} inv
+ * @returns {{ remaining: T[], openShutters: boolean }}
+ */
+export function filterLevel9EntranceGate(spawned, level, inv) {
+  if ((level | 0) !== 9 || ((inv?.triforce ?? 0) & 0xff) !== 0xff) {
+    return { remaining: spawned, openShutters: false };
+  }
+  /** @type {T[]} */
+  const remaining = [];
+  let openShutters = false;
+  for (const e of spawned) {
+    if ((e?.objType & 0xff) === L9_GATE_PERSON) {
+      openShutters = true;
+      continue;
+    }
+    remaining.push(e);
+  }
+  return { remaining, openShutters };
+}
+
+/**
+ * Live-room version: dismiss an already-spawned L9 gate person.
+ * @param {{ alive?: boolean, objType?: number, hp?: number }[]} enemies
+ * @param {number} level
+ * @param {{ triforce?: number } | null | undefined} inv
+ * @returns {boolean} true when a person was removed (shutters should open)
+ */
+export function dismissLevel9EntranceGate(enemies, level, inv) {
+  if ((level | 0) !== 9 || ((inv?.triforce ?? 0) & 0xff) !== 0xff) return false;
+  let dismissed = false;
+  for (const e of enemies) {
+    if (!e?.alive || (e.objType & 0xff) !== L9_GATE_PERSON) continue;
+    e.alive = false;
+    e.hp = 0;
+    dismissed = true;
+  }
+  return dismissed;
+}

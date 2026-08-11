@@ -9,7 +9,9 @@
     "test": "node --test tools/**/*.test.js",
     "dev": "vite --config game/vite.config.js",
     "build": "vite build --config game/vite.config.js",
-    "preview": "vite preview --config game/vite.config.js"
+    "preview": "vite preview --config game/vite.config.js",
+    "enhance": "node tools/enhance/cli.js",
+    "enhance:ai": "node tools/enhance/cli.js --ai"
   },
   "engines": {
     "node": ">=18"

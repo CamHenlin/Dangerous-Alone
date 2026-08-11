@@ -203,6 +203,48 @@ export function doorIsOpenForFace(door, markedOpen) {
 }
 
 /**
+ * Play-area pixel rect covering a door face (both halves), origin at (0,0)
+ * of the 256×176 play field — not including HUD.
+ * @param {'north'|'south'|'east'|'west'} side
+ * @returns {{ x: number, y: number, w: number, h: number } | null}
+ */
+export function doorFacePlayRect(side) {
+  if (!DOOR_DST_OFFSET[side]) return null;
+  const cols = DOOR_COL_COUNT[side];
+  const rows = DOOR_ROW_COUNT[side];
+  const horizontal = side === 'east' || side === 'west';
+  let minCol = PLAY_COLS;
+  let maxCol = -1;
+  let minRow = PLAY_ROWS;
+  let maxRow = -1;
+
+  for (let half = 0; half < 2; half += 1) {
+    let dst = half === 0 ? DOOR_DST_OFFSET[side] : DOOR_DST_OFFSET[side] + DOOR_SECOND_HALF[side];
+    for (let c = 0; c < cols; c += 1) {
+      for (let x = rows - 1; x >= 0; x -= 1) {
+        const col = Math.floor(dst / PLAY_ROWS);
+        const row = dst % PLAY_ROWS;
+        if (col < minCol) minCol = col;
+        if (col > maxCol) maxCol = col;
+        if (row < minRow) minRow = row;
+        if (row > maxRow) maxRow = row;
+        // NextDoorTileOffsets: [$14, $01, $01] indexed by X.
+        dst += x === 0 ? 0x14 : 0x01;
+        if (x === 0 && horizontal) dst += 1;
+      }
+    }
+  }
+
+  if (maxCol < 0) return null;
+  return {
+    x: minCol * 8,
+    y: minRow * 8,
+    w: (maxCol - minCol + 1) * 8,
+    h: (maxRow - minRow + 1) * 8,
+  };
+}
+
+/**
  * Lay one door face into column-major play area.
  * @param {Uint8Array} cm
  * @param {'north'|'south'|'east'|'west'} side
@@ -313,6 +355,8 @@ export function openSidesForRoom(room, doorState) {
  * Cells that should draw above Link in a doorway: wall mass / lintel above the
  * opening, plus the solid seam columns between paired E/W door faces. Walk-height
  * jambs beside `$24` cavities are omitted so they do not clip him in the opening.
+ * E/W door-face lintels (row 9 over the cavity) stay under Link — same idea as the
+ * south inner lip — so only the wall seam between rooms cuts him off.
  * @param {number} row
  * @param {number} col
  */
@@ -323,17 +367,18 @@ export function isDoorOcclusionCell(row, col) {
   // Link once he walks north into the room — overlaying it left a bar over
   // his head after leaving the door.
   if (col >= 14 && col <= 17 && row >= 20) return true;
-  // West door band (cols 0–3): everything above the cavity, plus the seam/outer
+  // West door band (cols 0–3): wall mass above the door face, plus seam/outer
   // jamb columns (0–1) through the passage so the wall middle fully hides Link.
-  // Inner jamb (col 3) at walk height stays clear so the opening does not clip.
+  // Door-face lintel over the cavity (row 9, cols 2–3) and inner jamb at walk
+  // height stay clear so the green frame does not clip his head.
   if (col >= 0 && col <= 3) {
-    if (row <= 9) return true;
-    if (col <= 1 && row >= 10 && row <= 12) return true;
+    if (row <= 8) return true;
+    if (col <= 1 && row >= 9 && row <= 12) return true;
   }
   // East door band (cols 28–31): mirror (outer jamb col 30 + seam col 31).
   if (col >= 28 && col <= 31) {
-    if (row <= 9) return true;
-    if (col >= 30 && row >= 10 && row <= 12) return true;
+    if (row <= 8) return true;
+    if (col >= 30 && row >= 9 && row <= 12) return true;
   }
   return false;
 }

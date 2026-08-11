@@ -2,8 +2,14 @@
  * Battery-backed save slots (localStorage). Pure serialize/hydrate for tests.
  */
 
-import { createInventory, triforceCount } from './inventory.js';
+import { DIR } from './collision.js';
 import { CONTINUE_HALF_HEARTS } from './continueMenu.js';
+import {
+  doorSlotKey,
+  dungeonNeighbor,
+  oppositeSide,
+} from './dungeonDoors.js';
+import { createInventory, triforceCount } from './inventory.js';
 
 export const SAVE_VERSION = 1;
 export const SLOT_COUNT = 3;
@@ -234,6 +240,8 @@ export function serializeGameState(state) {
     },
     owSecretsRevealed: toSortedArray(state.owSecretsRevealed ?? []),
     caveTaken: toSortedArray(state.caveTaken ?? []),
+    /** OW room-item flag (NES `$067F+`); currently the `$5F` dock heart. */
+    owItemsTaken: toSortedArray(state.owItemsTaken ?? []),
     /** Phase 19: OW (`roomId:condition`) and UW (`d:level:roomId:condition`) tip marks. */
     hintMarks: toSortedArray(state.hintMarks ?? []),
     dungeons: serializeDungeonProgress(state.dungeonProgress),
@@ -332,6 +340,7 @@ export function createSaveStore(storage = globalThis.localStorage) {
  * @param {object} target.inv
  * @param {Set<string>} target.owSecretsRevealed
  * @param {Set<string>} target.caveTaken
+ * @param {Set<number>} [target.owItemsTaken]
  * @param {Map<number, object>} target.dungeonProgress
  */
 export function applyLoadedSave(payload, target) {
@@ -340,6 +349,11 @@ export function applyLoadedSave(payload, target) {
   for (const k of payload.owSecretsRevealed ?? []) target.owSecretsRevealed.add(k);
   target.caveTaken.clear();
   for (const k of payload.caveTaken ?? []) target.caveTaken.add(k);
+  // Pre-OW-heart saves omit this; empty set = heart still on the dock.
+  target.owItemsTaken?.clear();
+  for (const id of payload.owItemsTaken ?? []) {
+    target.owItemsTaken?.add(Number(id) & 0xff);
+  }
   // Saves written before Phase 19 have no marks; the radar just starts clean.
   target.hintMarks?.clear();
   for (const k of payload.hintMarks ?? []) target.hintMarks?.add(k);
@@ -360,6 +374,164 @@ export function applyLoadedSave(payload, target) {
       dungeon: null,
     },
   };
+}
+
+/** Quest-scoped L9 anchors for Ganon / Zelda (after `finalizeLevelMeta`). */
+const L9_ENCOUNTER = Object.freeze({
+  1: { bossRoom: 0x42, zeldaRoom: 0x32 },
+  2: { bossRoom: 0x17, zeldaRoom: 0x07 },
+});
+
+/**
+ * Drop door slots on the Zelda side of Ganon's room (not the fight entrance).
+ * @param {Iterable<string> | undefined} doors
+ * @param {number} bossRoom
+ * @param {number} zeldaRoom
+ * @returns {string[]}
+ */
+export function closeBossApproachDoors(doors, bossRoom, zeldaRoom) {
+  const boss = bossRoom & 0xff;
+  const zelda = zeldaRoom & 0xff;
+  const blocked = new Set();
+  for (const [side, dir] of [
+    ['north', DIR.UP],
+    ['south', DIR.DOWN],
+    ['west', DIR.LEFT],
+    ['east', DIR.RIGHT],
+  ]) {
+    const next = dungeonNeighbor(boss, dir);
+    if (next !== zelda) continue;
+    blocked.add(doorSlotKey(boss, side));
+    blocked.add(doorSlotKey(next, oppositeSide(side)));
+  }
+  return [...(doors ?? [])].filter((k) => !blocked.has(String(k))).sort();
+}
+
+/**
+ * Rewind a save so Ganon can be fought again and Zelda rescued again.
+ * Clears Triforce of Power, L9 lastBoss, boss-room clear/taken, and approach
+ * shutters. Does not touch other dungeon progress. Mutates `payload`.
+ *
+ * @param {object} payload serializeGameState-shaped save
+ * @param {{ bossRoom?: number, zeldaRoom?: number, parkSouthOfBoss?: boolean }} [opts]
+ * @returns {{ changed: boolean, bossRoom: number, zeldaRoom: number }}
+ */
+export function resetGanonEncounter(payload, opts = {}) {
+  if (!payload?.inv || !payload.dungeons) {
+    return { changed: false, bossRoom: 0, zeldaRoom: 0 };
+  }
+  const quest = payload.inv.quest === 2 ? 2 : 1;
+  const anchors = L9_ENCOUNTER[quest];
+  const bossRoom = (opts.bossRoom ?? anchors.bossRoom) & 0xff;
+  const zeldaRoom = (opts.zeldaRoom ?? anchors.zeldaRoom) & 0xff;
+  const key = dungeonProgressKey(quest, 9);
+  const d9 = payload.dungeons[key];
+  if (!d9 && !payload.inv.triforceOfPower) {
+    return { changed: false, bossRoom, zeldaRoom };
+  }
+  const progress = d9 ?? {
+    cleared: [],
+    taken: [],
+    visited: [],
+    pushed: [],
+    doors: [],
+    lastBoss: false,
+    map: 0,
+    compass: 0,
+  };
+  payload.dungeons[key] = progress;
+
+  const rewindRooms = new Set([bossRoom, zeldaRoom]);
+  const hadTop = Boolean(payload.inv.triforceOfPower);
+  const hadBoss = Boolean(progress.lastBoss);
+  const hadCleared = (progress.cleared ?? []).some((x) =>
+    rewindRooms.has(Number(x)),
+  );
+  const hadTaken = (progress.taken ?? []).some((x) => rewindRooms.has(Number(x)));
+
+  payload.inv.triforceOfPower = 0;
+  progress.lastBoss = false;
+  // Un-clear Ganon and Zelda rooms so both re-spawn after the fight.
+  progress.cleared = [...(progress.cleared ?? [])]
+    .filter((x) => !rewindRooms.has(Number(x)))
+    .map(String)
+    .sort();
+  progress.taken = [...(progress.taken ?? [])]
+    .filter((x) => !rewindRooms.has(Number(x)))
+    .map(String)
+    .sort();
+  const doorsBefore = [...(progress.doors ?? [])].map(String).sort().join(',');
+  progress.doors = closeBossApproachDoors(progress.doors, bossRoom, zeldaRoom);
+  const doorsAfter = progress.doors.join(',');
+
+  // Park south of Ganon (Q1) / west approach (Q2) facing the boss room so a
+  // Continue drops you ready to re-enter — never inside Zelda's cell.
+  if (opts.parkSouthOfBoss !== false && payload.position?.dungeon?.level === 9) {
+    const south = dungeonNeighbor(bossRoom, DIR.DOWN);
+    const west = dungeonNeighbor(bossRoom, DIR.LEFT);
+    const park = south ?? west;
+    if (park != null) {
+      payload.position.mode = 'dungeon';
+      payload.position.roomId = park;
+      payload.position.x = 0x78;
+      payload.position.y = 0x8d;
+      payload.position.dir = south != null ? DIR.UP : DIR.RIGHT;
+      payload.position.dungeon = {
+        level: 9,
+        fromRoomId: Number(payload.position.dungeon.fromRoomId ?? 0),
+        roomId: park,
+      };
+    }
+  }
+
+  payload.savedAt = Date.now();
+  const changed =
+    hadTop
+    || hadBoss
+    || hadCleared
+    || hadTaken
+    || doorsBefore !== doorsAfter;
+  return { changed, bossRoom, zeldaRoom };
+}
+
+/**
+ * Apply {@link resetGanonEncounter} to every occupied file slot (+ practice).
+ * @param {Storage | { getItem(k:string): string|null, setItem(k:string,v:string): void }} [storage]
+ * @returns {{ slots: number[], practice: boolean }}
+ */
+export function resetGanonEncounterInStorage(storage = globalThis.localStorage) {
+  /** @type {number[]} */
+  const slots = [];
+  for (let slot = 0; slot < SLOT_COUNT; slot += 1) {
+    const key = slotStorageKey(slot);
+    const raw = storage.getItem(key);
+    if (!raw) continue;
+    try {
+      const payload = JSON.parse(raw);
+      if (payload?.version !== SAVE_VERSION) continue;
+      const { changed } = resetGanonEncounter(payload);
+      if (!changed) continue;
+      storage.setItem(key, JSON.stringify(payload));
+      slots.push(slot);
+    } catch {
+      // skip corrupt slot
+    }
+  }
+  let practice = false;
+  try {
+    const raw = storage.getItem('zelda_practice');
+    if (raw) {
+      const payload = JSON.parse(raw);
+      const { changed } = resetGanonEncounter(payload);
+      if (changed) {
+        storage.setItem('zelda_practice', JSON.stringify(payload));
+        practice = true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { slots, practice };
 }
 
 /**

@@ -1,5 +1,7 @@
 import { Container, Sprite, Texture } from 'pixi.js';
 import { nesCharTile } from '@shared/nesCharset.js';
+import { px, tilePx } from '@shared/gfxScale.js';
+import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 
 /**
  * NES Zelda BG charset (common_background).
@@ -23,16 +25,11 @@ function tileTexture(img, tile, rgb) {
   const key = `${tile}:${rgb.toString(16)}`;
   let tex = cache.get(key);
   if (tex) return tex;
-  const canvas = document.createElement('canvas');
-  canvas.width = TILE;
-  canvas.height = TILE;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return Texture.EMPTY;
-  ctx.imageSmoothingEnabled = false;
-  const sx = (tile % 16) * TILE;
-  const sy = Math.floor(tile / 16) * TILE;
-  ctx.drawImage(img, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
-  const image = ctx.getImageData(0, 0, TILE, TILE);
+  const { canvas, ctx } = createTileCanvas(TILE, TILE);
+  const sx = (tile % 16) * tilePx();
+  const sy = Math.floor(tile / 16) * tilePx();
+  ctx.drawImage(img, sx, sy, tilePx(), tilePx(), 0, 0, TILE, TILE);
+  const image = ctx.getImageData(0, 0, px(TILE), px(TILE));
   const d = image.data;
   const r = (rgb >> 16) & 0xff;
   const g = (rgb >> 8) & 0xff;
@@ -50,8 +47,7 @@ function tileTexture(img, tile, rgb) {
     }
   }
   ctx.putImageData(image, 0, 0);
-  tex = Texture.from(canvas);
-  tex.source.scaleMode = 'nearest';
+  tex = textureFromCanvas(canvas);
   cache.set(key, tex);
   return tex;
 }
@@ -79,18 +75,18 @@ export function statusCounterIconTexture(kind, bgImg, miscImg) {
   let mid = [0xfc, 0x98, 0x38];
   if (kind === 'rupee') {
     img = miscImg;
-    sx = (0xf7 - 0xf2) * TILE; // misc row index 5
+    sx = (0xf7 - 0xf2) * tilePx(); // misc row index 5
     sy = 0;
   } else if (kind === 'key') {
     img = miscImg;
-    sx = (0xf9 - 0xf2) * TILE; // misc row index 7
+    sx = (0xf9 - 0xf2) * tilePx(); // misc row index 7
     sy = 0;
     hi = [0xfc, 0xfc, 0xfc];
     mid = [0xd8, 0xd0, 0x80];
   } else {
     img = bgImg;
-    sx = (0x61 % 16) * TILE;
-    sy = Math.floor(0x61 / 16) * TILE;
+    sx = (0x61 % 16) * tilePx();
+    sy = Math.floor(0x61 / 16) * tilePx();
     // Tile $61 stores the specular glint as the *dimmer* plane in the grey
     // extract — invert so body is blue and top-left highlight is light blue.
     hi = [0x3c, 0x3c, 0xfc];
@@ -98,14 +94,9 @@ export function statusCounterIconTexture(kind, bgImg, miscImg) {
   }
   if (!img) return Texture.EMPTY;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = TILE;
-  canvas.height = TILE;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return Texture.EMPTY;
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
-  const image = ctx.getImageData(0, 0, TILE, TILE);
+  const { canvas, ctx } = createTileCanvas(TILE, TILE);
+  ctx.drawImage(img, sx, sy, tilePx(), tilePx(), 0, 0, TILE, TILE);
+  const image = ctx.getImageData(0, 0, px(TILE), px(TILE));
   const d = image.data;
   for (let i = 0; i < d.length; i += 4) {
     if (d[i + 3] < 16 || (d[i] < 8 && d[i + 1] < 8 && d[i + 2] < 8)) {
@@ -124,8 +115,7 @@ export function statusCounterIconTexture(kind, bgImg, miscImg) {
     d[i + 2] = c[2];
   }
   ctx.putImageData(image, 0, 0);
-  tex = Texture.from(canvas);
-  tex.source.scaleMode = 'nearest';
+  tex = textureFromCanvas(canvas);
   cache.set(key, tex);
   return tex;
 }
@@ -142,21 +132,16 @@ export function heartTileTexture(bgImg, miscImg, tile, kind) {
   const key = `heart:${tile}:${kind}`;
   let tex = cache.get(key);
   if (tex) return tex;
-  const canvas = document.createElement('canvas');
-  canvas.width = TILE;
-  canvas.height = TILE;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return Texture.EMPTY;
-  ctx.imageSmoothingEnabled = false;
+  const { canvas, ctx } = createTileCanvas(TILE, TILE);
   if (tile >= 0xf2 && miscImg) {
     const idx = tile - 0xf2;
-    ctx.drawImage(miscImg, idx * TILE, 0, TILE, TILE, 0, 0, TILE, TILE);
+    ctx.drawImage(miscImg, idx * tilePx(), 0, tilePx(), tilePx(), 0, 0, TILE, TILE);
   } else {
-    const sx = (tile % 16) * TILE;
-    const sy = Math.floor(tile / 16) * TILE;
-    ctx.drawImage(bgImg, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
+    const sx = (tile % 16) * tilePx();
+    const sy = Math.floor(tile / 16) * tilePx();
+    ctx.drawImage(bgImg, sx, sy, tilePx(), tilePx(), 0, 0, TILE, TILE);
   }
-  const image = ctx.getImageData(0, 0, TILE, TILE);
+  const image = ctx.getImageData(0, 0, px(TILE), px(TILE));
   const d = image.data;
   const RED = [0xb8, 0x28, 0x00];
   const WHITE = [0xfc, 0xfc, 0xfc];
@@ -186,8 +171,7 @@ export function heartTileTexture(bgImg, miscImg, tile, kind) {
     }
   }
   ctx.putImageData(image, 0, 0);
-  tex = Texture.from(canvas);
-  tex.source.scaleMode = 'nearest';
+  tex = textureFromCanvas(canvas);
   cache.set(key, tex);
   return tex;
 }

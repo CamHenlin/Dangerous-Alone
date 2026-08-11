@@ -1,5 +1,7 @@
 import { Texture } from 'pixi.js';
 import { ENEMY_COLOR, OBJ } from '@shared/enemies.js';
+import { tilePx } from '@shared/gfxScale.js';
+import { blitCanvas, createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 import {
   BAKED_SPRITE_PALETTE_RGB,
   enemySpritePalette,
@@ -38,7 +40,8 @@ import {
   GLEEOK_NECK_TILE,
 } from '@shared/gleeok.js';
 import { BOSS } from '@shared/bosses.js';
-import { dodongoIsSwelling, ganonIsVisible } from '@shared/bossAi.js';
+import { GANON_PHASE, dodongoIsSwelling, ganonIsVisible } from '@shared/bossAi.js';
+import { ganonPaletteRgb } from '@shared/ganonPalette.js';
 import { PROJ } from '@shared/projectiles.js';
 
 const TILE = 8;
@@ -101,19 +104,22 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   }
 
   function drawTile(ctx, sheetId, tileIndex, dx, dy) {
-    const sx = (tileIndex % SHEET_COLS) * TILE;
-    const sy = Math.floor(tileIndex / SHEET_COLS) * TILE;
-    ctx.drawImage(sheetImage(sheetId), sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+    // Source rect indexes the sheet, so it scales with the art set. The
+    // destination stays in NES pixels because the context is pre-scaled.
+    const src = tilePx();
+    const sx = (tileIndex % SHEET_COLS) * src;
+    const sy = Math.floor(tileIndex / SHEET_COLS) * src;
+    ctx.drawImage(sheetImage(sheetId), sx, sy, src, src, dx, dy, TILE, TILE);
   }
 
   /**
-   * Remap baked SP0 colors on a canvas to the target sprite palette.
+   * Remap baked SP0 colors on a canvas to an explicit RGB palette row.
    * @param {HTMLCanvasElement} canvas
-   * @param {number} spritePal 0–3
+   * @param {readonly (readonly number[])[]} dstRgb
    */
-  function applySpritePalette(canvas, spritePal) {
+  function applyRgbPalette(canvas, dstRgb) {
     const src = BAKED_SPRITE_PALETTE_RGB;
-    const dst = spriteRows[spritePal & 3] ?? src;
+    const dst = dstRgb ?? src;
     let same = true;
     for (let i = 1; i < 4; i += 1) {
       if (dst[i][0] !== src[i][0] || dst[i][1] !== src[i][1] || dst[i][2] !== src[i][2]) {
@@ -130,6 +136,15 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   }
 
   /**
+   * Remap baked SP0 colors on a canvas to the target sprite palette.
+   * @param {HTMLCanvasElement} canvas
+   * @param {number} spritePal 0–3
+   */
+  function applySpritePalette(canvas, spritePal) {
+    applyRgbPalette(canvas, spriteRows[spritePal & 3] ?? BAKED_SPRITE_PALETTE_RGB);
+  }
+
+  /**
    * Build 16×16 from NES 8×16 sprite pairs.
    * @param {string} sheetId
    * @param {number} localTile
@@ -142,12 +157,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     let tex = cache.get(key);
     if (tex) return tex;
 
-    const base = document.createElement('canvas');
-    base.width = 16;
-    base.height = 16;
-    const bctx = base.getContext('2d');
-    if (!bctx) throw new Error('2d context unavailable');
-    bctx.imageSmoothingEnabled = false;
+    const { canvas: base, ctx: bctx } = createTileCanvas(16, 16);
 
     drawTile(bctx, sheetId, localTile, 0, 0);
     drawTile(bctx, sheetId, localTile + 1, 0, 8);
@@ -166,21 +176,15 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
 
     let src = base;
     if (flipH || flipV) {
-      const out = document.createElement('canvas');
-      out.width = 16;
-      out.height = 16;
-      const octx = out.getContext('2d');
-      if (!octx) throw new Error('2d context unavailable');
-      octx.imageSmoothingEnabled = false;
+      const { canvas: out, ctx: octx } = createTileCanvas(16, 16);
       octx.translate(flipH ? 16 : 0, flipV ? 16 : 0);
       octx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-      octx.drawImage(base, 0, 0);
+      blitCanvas(octx, base, 0, 0, 16, 16);
       src = out;
     }
 
     applySpritePalette(src, spritePal);
-    tex = Texture.from(src);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(src);
     cache.set(key, tex);
     return tex;
   }
@@ -194,17 +198,11 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const key = `8x16:${sheetId}:${localTile}:p${spritePal}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = 8;
-    canvas.height = 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(8, 16);
     drawTile(ctx, sheetId, localTile, 0, 0);
     drawTile(ctx, sheetId, localTile + 1, 0, 8);
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -240,12 +238,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     let tex = cache.get(key);
     if (tex) return tex;
 
-    const base = document.createElement('canvas');
-    base.width = 16;
-    base.height = 16;
-    const bctx = base.getContext('2d');
-    if (!bctx) throw new Error('2d context unavailable');
-    bctx.imageSmoothingEnabled = false;
+    const { canvas: base, ctx: bctx } = createTileCanvas(16, 16);
     drawTile(bctx, L.sheet, L.index, 0, 0);
     drawTile(bctx, L.sheet, L.index + 1, 0, 8);
     drawTile(bctx, R.sheet, R.index, 8, 0);
@@ -253,21 +246,15 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
 
     let src = base;
     if (flipH || flipV) {
-      const out = document.createElement('canvas');
-      out.width = 16;
-      out.height = 16;
-      const octx = out.getContext('2d');
-      if (!octx) throw new Error('2d context unavailable');
-      octx.imageSmoothingEnabled = false;
+      const { canvas: out, ctx: octx } = createTileCanvas(16, 16);
       octx.translate(flipH ? 16 : 0, flipV ? 16 : 0);
       octx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-      octx.drawImage(base, 0, 0);
+      blitCanvas(octx, base, 0, 0, 16, 16);
       src = out;
     }
 
     applySpritePalette(src, spritePal);
-    tex = Texture.from(src);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(src);
     cache.set(key, tex);
     return tex;
   }
@@ -319,12 +306,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   function blitPpu16(ctx, ppuTile, dx, dy, flags = {}) {
     const { sheet, index } = sheetForPpuTile(ppuTile, 'dungeon', dungeonLevel);
     const { flipH = false, flipV = false, mirror = false } = flags;
-    const tmp = document.createElement('canvas');
-    tmp.width = 16;
-    tmp.height = 16;
-    const tctx = tmp.getContext('2d');
-    if (!tctx) return;
-    tctx.imageSmoothingEnabled = false;
+    const { canvas: tmp, ctx: tctx } = createTileCanvas(16, 16);
     drawTile(tctx, sheet, index, 0, 0);
     drawTile(tctx, sheet, index + 1, 0, 8);
     if (mirror) {
@@ -339,19 +321,14 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       drawTile(tctx, sheet, index + 3, 8, 8);
     }
     if (flipH || flipV) {
-      const out = document.createElement('canvas');
-      out.width = 16;
-      out.height = 16;
-      const octx = out.getContext('2d');
-      if (!octx) return;
-      octx.imageSmoothingEnabled = false;
+      const { canvas: out, ctx: octx } = createTileCanvas(16, 16);
       octx.translate(flipH ? 16 : 0, flipV ? 16 : 0);
       octx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
-      octx.drawImage(tmp, 0, 0);
-      ctx.drawImage(out, dx, dy);
+      blitCanvas(octx, tmp, 0, 0, 16, 16);
+      blitCanvas(ctx, out, dx, dy, 16, 16);
       return;
     }
-    ctx.drawImage(tmp, dx, dy);
+    blitCanvas(ctx, tmp, dx, dy, 16, 16);
   }
 
   /**
@@ -367,7 +344,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     if (t === BOSS.GLEEOK_2 || t === BOSS.GLEEOK_3 || t === BOSS.GLEEOK_4) {
       return gleeokTexture(e, spritePal);
     }
-    if (t === BOSS.GANON) return ganonTexture(spritePal, ganonIsVisible(e));
+    if (t === BOSS.GANON) return ganonTexture(e, ganonIsVisible(e));
     return colorStubTexture(e);
   }
 
@@ -378,12 +355,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const key = `manh:${mouthBits}:${anim}:p${spritePal}:L${dungeonLevel}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = 48;
-    canvas.height = 48;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(48, 48);
     for (const part of MANHANDLA_PARTS) {
       if (part.mouth >= 0 && !(mouths[part.mouth] > 0)) continue;
       let tile = part.tile;
@@ -397,8 +369,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       });
     }
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -407,18 +378,12 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const key = `digdog:p${spritePal}:L${dungeonLevel}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(32, 32);
     for (const part of DIGDOGGER_BIG_PARTS) {
       blitPpu16(ctx, part.tile, part.x, part.y, { mirror: true, flipH: part.flipH, flipV: part.flipV });
     }
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -431,19 +396,13 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const key = `gohma:${eyeTile.toString(16)}:${legTile.toString(16)}:p${spritePal}:L${dungeonLevel}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = 48;
-    canvas.height = 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(48, 16);
     for (const part of GOHMA_PARTS) {
       const tile = part.key === 'eye' ? eyeTile : legTile;
       blitPpu16(ctx, tile, part.x, part.y, { mirror: part.mirror, flipH: part.flipH });
     }
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -456,12 +415,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const key = `dodo:${swell ? 'b' : 'w'}:${draw.leftTile.toString(16)}:${draw.rightTile?.toString(16) ?? '-'}:${draw.flipH ? 1 : 0}:p${spritePal}:L${dungeonLevel}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = draw.side ? 32 : 16;
-    canvas.height = 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(draw.side ? 32 : 16, 16);
     if (draw.side && draw.rightTile != null) {
       blitPpu16(ctx, draw.leftTile, 0, 0, { mirror: false, flipH: draw.flipH });
       blitPpu16(ctx, draw.rightTile, 16, 0, { mirror: false, flipH: draw.flipH });
@@ -469,8 +423,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       blitPpu16(ctx, draw.leftTile, 0, 0, { mirror: Boolean(draw.mirror) });
     }
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -485,17 +438,13 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    */
   function gleeokTexture(e, spritePal) {
     if (!gleeokScratch.canvas) {
-      gleeokScratch.canvas = document.createElement('canvas');
-      gleeokScratch.canvas.width = GLEEOK_CANVAS_W;
-      gleeokScratch.canvas.height = GLEEOK_CANVAS_H;
-      gleeokScratch.ctx = gleeokScratch.canvas.getContext('2d');
-      if (!gleeokScratch.ctx) throw new Error('2d context unavailable');
-      gleeokScratch.ctx.imageSmoothingEnabled = false;
-      gleeokScratch.tex = Texture.from(gleeokScratch.canvas);
-      gleeokScratch.tex.source.scaleMode = 'nearest';
+      const made = createTileCanvas(GLEEOK_CANVAS_W, GLEEOK_CANVAS_H);
+      gleeokScratch.canvas = made.canvas;
+      gleeokScratch.ctx = made.ctx;
+      gleeokScratch.tex = textureFromCanvas(made.canvas);
     }
     const { canvas, ctx, tex } = gleeokScratch;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, GLEEOK_CANVAS_W, GLEEOK_CANVAS_H);
 
     const tiles = GLEEOK_BODY_FRAMES[(e.bodyAnimFrame ?? 0) & 3];
     const bodyDx = e.x - GLEEOK_CANVAS_OX;
@@ -529,28 +478,24 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
 
   /**
    * Ganon_ScenePhase2 / Ganon_UpdateBrownState draw him only some frames, so the
-   * invisible frames resolve to a transparent texture.
-   * @param {number} spritePal
+   * invisible frames resolve to a transparent texture. Palette follows
+   * `Ganon_AppendPaletteRowTransferRecord_Blue` / `_Brown`.
+   * @param {import('@shared/enemies.js').Enemy} e
    * @param {boolean} visible
    */
-  function ganonTexture(spritePal, visible) {
-    const key = `ganon:p${spritePal}:L${dungeonLevel}:${visible ? 'on' : 'off'}`;
+  function ganonTexture(e, visible) {
+    const phase = e.ganonPhase === GANON_PHASE.BROWN ? 'brown' : 'blue';
+    const key = `ganon:${phase}:L${dungeonLevel}:${visible ? 'on' : 'off'}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(32, 32);
     if (visible) {
       for (const part of GANON_CORNERS) {
         blitPpu16(ctx, part.tile, part.x, part.y, { mirror: false, flipH: part.flipH });
       }
-      applySpritePalette(canvas, spritePal);
+      applyRgbPalette(canvas, ganonPaletteRgb(e.ganonPhase));
     }
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -562,16 +507,11 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     if (tex) return tex;
     const w = e.objType === OBJ.GEL || e.objType === OBJ.GEL2 ? 8 : 32;
     const h = e.objType === 0x37 /* Zelda */ ? 16 : 32;
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
+    const { canvas, ctx } = createTileCanvas(w, h);
     const color = (ENEMY_COLOR[e.objType] ?? 0xff00ff) >>> 0;
     ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
     ctx.fillRect(0, 0, w, h);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -588,12 +528,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     if (tex) return tex;
     const tiles = AQUAMENTUS_FRAMES[walk].slice();
     if (mouth) tiles[0] = 0xc0; // open mouth
-    const canvas = document.createElement('canvas');
-    canvas.width = 24;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas: canvas, ctx: ctx } = createTileCanvas(24, 32);
     for (let i = 0; i < 6; i += 1) {
       const { sheet, index } = sheetForPpuTile(tiles[i], 'dungeon', dungeonLevel);
       const off = AQUAMENTUS_OFFSETS[i];
@@ -601,8 +536,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       drawTile(ctx, sheet, index + 1, off.x, off.y + 8);
     }
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }

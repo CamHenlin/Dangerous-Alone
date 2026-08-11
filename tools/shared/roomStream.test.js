@@ -17,6 +17,7 @@ import {
   shiftPositions,
   spawnPointKey,
   tagEnemyHomeRoom,
+  uwEnemyBoundsForRoom,
 } from './roomStream.js';
 
 test('tagEnemyHomeRoom', () => {
@@ -256,6 +257,20 @@ test('chaseBoundsForCamera expands past one screen', () => {
   const b = chaseBoundsForCamera(0, 0);
   assert.ok(b.maxX > PLAY_W);
   assert.ok(b.minX < 0);
+});
+
+test('uwEnemyBoundsForRoom is BoundByRoom at the home origin', () => {
+  const b = uwEnemyBoundsForRoom(0x6e, 0x6e);
+  assert.equal(b.minX, 0x21);
+  assert.equal(b.minY, 0x5e);
+  assert.equal(b.maxX, 0xd0 + 16);
+  assert.equal(b.maxY, 0xbd + 16);
+});
+
+test('uwEnemyBoundsForRoom offsets when home ≠ anchor', () => {
+  const b = uwEnemyBoundsForRoom(0x6f, 0x6e); // east neighbor
+  assert.equal(b.minX, 0x21 + PLAY_W);
+  assert.equal(b.minY, 0x5e);
 });
 
 test('enemiesInRoom scopes room rules to one room', () => {

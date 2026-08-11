@@ -40,6 +40,7 @@ test('bItemIcon reflects owned gear and tiers', () => {
   inv.magicBoomerang = 1;
   assert.deepEqual(bItemIcon(inv, B_ITEM.BOOMERANG), { tile: 0x36, pal: 2 });
   inv.bow = 1;
+  assert.equal(bItemIcon(inv, B_ITEM.BOW), null); // need arrows for B icon
   inv.arrow = 2;
   assert.deepEqual(bItemIcon(inv, B_ITEM.BOW), { tile: 0x28, pal: 2 });
   inv.letter = 1;

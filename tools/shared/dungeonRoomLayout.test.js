@@ -10,10 +10,18 @@ import {
   UW_FILL_TILE,
   composeDungeonRoomTiles,
   doorFaceIndex,
+  doorFacePlayRect,
   fillWalls,
   layoutDoorFace,
 } from './dungeonRoomLayout.js';
 import { ROOT } from './paths.js';
+
+test('doorFacePlayRect covers both door-face halves', () => {
+  assert.deepEqual(doorFacePlayRect('north'), { x: 112, y: 8, w: 32, h: 24 });
+  assert.deepEqual(doorFacePlayRect('south'), { x: 112, y: 144, w: 32, h: 24 });
+  assert.deepEqual(doorFacePlayRect('west'), { x: 8, y: 72, w: 24, h: 32 });
+  assert.deepEqual(doorFacePlayRect('east'), { x: 224, y: 72, w: 24, h: 32 });
+});
 
 test('doorFaceIndex: open / key / shutter / bomb', () => {
   assert.equal(doorFaceIndex(0, true), 0); // open face

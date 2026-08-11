@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  ARROW,
   B_ITEM,
   CANDLE_TIER,
   SWORD,
@@ -146,6 +147,27 @@ test('trySpendArrowShot costs 1 rupee (NES WieldArrow)', () => {
   assert.equal(inv.rupees, 2);
   assert.deepEqual(trySpendArrowShot(inv), { ok: true });
   assert.equal(inv.rupees, 1);
+});
+
+test('bow pickup does not soft-grant arrows; shop arrows unlock B-slot', () => {
+  const inv = createInventory();
+  assert.equal(grantRoomItem(inv, 0x0a), 'Bow');
+  assert.equal(inv.bow, 1);
+  assert.equal(inv.arrow, ARROW.NONE);
+  assert.equal(inv.selectedB, B_ITEM.NONE);
+  assert.deepEqual(trySpendArrowShot(inv), { ok: false, reason: 'gear' });
+  inv.bombs = 1;
+  cycleBItem(inv);
+  assert.notEqual(inv.selectedB, B_ITEM.BOW);
+
+  assert.equal(grantRoomItem(inv, 0x08), 'Arrows');
+  assert.equal(inv.arrow, ARROW.WOOD);
+  // Already holding bombs — do not steal B; bow becomes cycleable.
+  assert.equal(inv.selectedB, B_ITEM.BOMB);
+  cycleBItem(inv);
+  assert.equal(inv.selectedB, B_ITEM.BOW);
+  inv.rupees = 1;
+  assert.deepEqual(trySpendArrowShot(inv), { ok: true });
 });
 
 // Cave TakeItem arms itemLiftTimer ($80); if stepLinkStatus is never called

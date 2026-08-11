@@ -8,6 +8,7 @@ import {
   MONEY_GAME_LOSS,
   MONEY_GAME_PERM_ENDS,
   MONEY_GAME_PERMUTATIONS,
+  MONEY_GAME_STAKE,
   MONEY_GAME_WIN,
   activeSlots,
   buildCaveTable,
@@ -15,8 +16,11 @@ import {
   getCave,
   alreadyOwnsShopItem,
   clearShopVisitTaken,
+  formatMoneyGameAmount,
   grantCaveItem,
   heartRequirement,
+  moneyGameResultLabels,
+  moneyGameStakeLabels,
   priceRowIndex,
   rollMoneyGameAmounts,
   caveTakenKey,
@@ -45,6 +49,9 @@ test('shop price rows are offset by 4', () => {
   assert.equal(priceRowIndex(0x1e, 'shop'), 10);
   assert.equal(priceRowIndex(0x1a, 'potion'), 6);
   assert.equal(priceRowIndex(0x10, 'give'), 0);
+  assert.equal(priceRowIndex(0x21, 'moblin'), 13);
+  assert.equal(priceRowIndex(0x22, 'moblin'), 14);
+  assert.equal(priceRowIndex(0x23, 'moblin'), 15);
 });
 
 test('G7 shop sells blue candle for 60', () => {
@@ -102,6 +109,16 @@ test('grantCaveItem sets candle and ring', () => {
   assert.equal(inv.candle, 1);
   grantCaveItem(inv, ITEM.BLUE_RING);
   assert.equal(inv.ring, 1);
+});
+
+test('cave bow grant does not soft-grant arrows', () => {
+  const inv = createInventory();
+  assert.equal(grantCaveItem(inv, ITEM.BOW), 'Bow');
+  assert.equal(inv.bow, 1);
+  assert.equal(inv.arrow, 0);
+  assert.equal(grantCaveItem(inv, ITEM.WOOD_ARROW), 'Arrows');
+  assert.equal(inv.arrow, 1);
+  assert.equal(inv.selectedB, 'bow');
 });
 
 test('clearShopVisitTaken restocks shop shelves between visits', () => {
@@ -175,6 +192,12 @@ test('classifyCave covers shops', () => {
   assert.equal(classifyCave(0x14, 0x04, {}), 'road');
 });
 
+test('classifyCave: $16 is money-making game; $1B/$1C are pay-hint', () => {
+  assert.equal(classifyCave(0x16, 0x48, { flagsH: true }), 'gamble');
+  assert.equal(classifyCave(0x1b, 0xd2, { flagsT: true }), 'clue');
+  assert.equal(classifyCave(0x1c, 0xd2, { flagsT: true }), 'clue');
+});
+
 test('take-any / door / moblin taken flags are per OW room', () => {
   const inv = createInventory();
   const takeAny = {
@@ -201,26 +224,62 @@ test('take-any / door / moblin taken flags are per OW room', () => {
     true,
   );
 
+  // ROM list prices are 5/10/20 — charge the largest (20), not find()>0 → 5.
   const door = {
     caveId: 0x17,
     kind: 'door',
-    slots: [{ item: 0, price: 20 }, { item: 0, price: 0 }, { item: 0, price: 0 }],
+    slots: [
+      { item: 63, price: 5 },
+      { item: 63, price: 10 },
+      { item: 63, price: 20 },
+    ],
   };
   inv.rupees = 100;
   const dTaken = new Set();
-  assert.equal(tryDoorRepair(inv, door, { taken: dTaken, roomId: 0x01 }).ok, true);
+  const paid = tryDoorRepair(inv, door, { taken: dTaken, roomId: 0x01 });
+  assert.equal(paid.ok, true);
+  assert.equal(paid.price, 20);
+  assert.equal(inv.rupees, 80);
   assert.equal(tryDoorRepair(inv, door, { taken: dTaken, roomId: 0x01 }).ok, false);
   assert.equal(tryDoorRepair(inv, door, { taken: dTaken, roomId: 0x03 }).ok, true);
+  // Broke: drain whatever remains (NES never refuses).
+  inv.rupees = 7;
+  const short = tryDoorRepair(inv, door, { taken: new Set(), roomId: 0x05 });
+  assert.equal(short.ok, true);
+  assert.equal(short.price, 7);
+  assert.equal(inv.rupees, 0);
 
   const moblin = {
     caveId: 0x21,
     kind: 'moblin',
-    slots: [{ item: 0, price: 30 }, { item: 0, price: 0 }, { item: 0, price: 0 }],
+    slots: [
+      { item: 63, price: 0 },
+      { item: 24, price: 30 },
+      { item: 63, price: 0 },
+    ],
   };
   const mTaken = new Set();
-  assert.equal(tryMoblinGift(inv, moblin, { taken: mTaken, roomId: 0x13 }).ok, true);
+  inv.rupees = 0;
+  const gift = tryMoblinGift(inv, moblin, { taken: mTaken, roomId: 0x13 });
+  assert.equal(gift.ok, true);
+  assert.equal(gift.amount, 30);
+  assert.equal(inv.rupees, 30);
   assert.equal(tryMoblinGift(inv, moblin, { taken: mTaken, roomId: 0x13 }).ok, false);
   assert.equal(tryMoblinGift(inv, moblin, { taken: mTaken, roomId: 0x28 }).ok, true);
+  assert.ok(mTaken.has('19:33:gift'));
+  assert.ok(mTaken.has('19:33:1'), 'middle ware marked taken so the sprite clears');
+});
+
+test('moblin secret amounts are 30 / 100 / 10 from shifted price rows', () => {
+  const table = loadFromRom();
+  assert.equal(getCave(table, 0x21).slots[1].price, 30);
+  assert.equal(getCave(table, 0x22).slots[1].price, 100);
+  assert.equal(getCave(table, 0x23).slots[1].price, 10);
+  const inv = createInventory();
+  inv.rupees = 0;
+  const taken = new Set();
+  assert.equal(tryMoblinGift(inv, getCave(table, 0x22), { taken, roomId: 1 }).amount, 100);
+  assert.equal(inv.rupees, 100);
 });
 
 test('takeAnyRoadDest advances +1/+2/+3 along the loop', () => {
@@ -260,4 +319,25 @@ test('tryGamble consumes a pre-rolled slot', () => {
   assert.equal(result.ok, true);
   assert.equal(result.delta, 20);
   assert.equal(inv.rupees, 70);
+});
+
+test('money-game labels match ROM stake then signed reveal', () => {
+  assert.equal(MONEY_GAME_STAKE, 10);
+  assert.deepEqual(moneyGameStakeLabels(), ['-10', '-10', '-10']);
+  assert.equal(formatMoneyGameAmount(50), '+50');
+  assert.equal(formatMoneyGameAmount(-40), '-40');
+  assert.deepEqual(moneyGameResultLabels([-10, -40, 20]), ['-10', '-40', '+20']);
+});
+
+test('tryGamble requires stake of 10, not the chosen loss', () => {
+  const poor = createInventory();
+  poor.rupees = 5;
+  assert.equal(tryGamble(poor, { kind: 'gamble' }, 0, [-10, -40, 20]).ok, false);
+
+  const justEnough = createInventory();
+  justEnough.rupees = 10;
+  const loss = tryGamble(justEnough, { kind: 'gamble' }, 1, [-10, -40, 20]);
+  assert.equal(loss.ok, true);
+  assert.equal(loss.delta, -40);
+  assert.equal(justEnough.rupees, 0);
 });

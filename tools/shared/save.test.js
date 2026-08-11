@@ -5,8 +5,11 @@ import {
   SAVE_VERSION,
   applyInventorySnapshot,
   applyLoadedSave,
+  closeBossApproachDoors,
   createSaveStore,
   hydrateDungeonProgress,
+  resetGanonEncounter,
+  resetGanonEncounterInStorage,
   resolveZeroHeartContinue,
   serializeDungeonProgress,
   serializeGameState,
@@ -78,6 +81,7 @@ test('createSaveStore persists three slots', () => {
     dir: 1,
     owSecretsRevealed: new Set(['77:5:6']),
     caveTaken: new Set(['10:0']),
+    owItemsTaken: new Set([0x5f]),
     dungeonProgress: new Map(),
   });
   const slots = store.listSlots();
@@ -87,16 +91,19 @@ test('createSaveStore persists three slots', () => {
 
   const loaded = store.load(0);
   assert.equal(loaded.version, SAVE_VERSION);
+  assert.deepEqual(loaded.owItemsTaken, ['95']);
   const inv2 = createInventory();
   const bags = {
     inv: inv2,
     owSecretsRevealed: new Set(),
     caveTaken: new Set(),
+    owItemsTaken: new Set(),
     dungeonProgress: new Map(),
   };
   const meta = applyLoadedSave(loaded, bags);
   assert.equal(inv2.sword, SWORD.WOOD);
   assert.ok(bags.owSecretsRevealed.has('77:5:6'));
+  assert.ok(bags.owItemsTaken.has(0x5f));
   assert.equal(meta.position.roomId, 0x77);
 
   store.rename(0, 'zelda');
@@ -185,4 +192,97 @@ test('resolveZeroHeartContinue is a no-op when hearts remain', () => {
   assert.equal(out.healed, false);
   assert.equal(out.position, pos);
   assert.equal(inv.halfHearts, 3);
+});
+
+test('resetGanonEncounter clears TOP, lastBoss, boss room, and shutters', () => {
+  const inv = createInventory();
+  inv.triforceOfPower = 1;
+  inv.triforce = 0xff;
+  const payload = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'dungeon',
+    roomId: 0x52,
+    x: 0x78,
+    y: 0xb0,
+    dir: 4,
+    dungeon: { level: 9, fromRoomId: 5, roomId: 0x52 },
+    dungeonProgress: new Map([
+      [
+        '1:9',
+        {
+          cleared: new Set([0x42, 0x52, 0x32]),
+          taken: new Set([0x42, 0x11]),
+          visited: new Set([0x42]),
+          pushed: new Set(),
+          doors: new Set(['66:north', '66:south', '50:south', '82:north', '1:east']),
+          lastBoss: true,
+          map: 1,
+          compass: 1,
+        },
+      ],
+    ]),
+  });
+  const { changed, bossRoom } = resetGanonEncounter(payload);
+  assert.equal(changed, true);
+  assert.equal(bossRoom, 0x42);
+  assert.equal(payload.inv.triforceOfPower, 0);
+  const d9 = payload.dungeons['1:9'];
+  assert.equal(d9.lastBoss, false);
+  assert.equal(d9.cleared.includes('66'), false);
+  assert.equal(d9.cleared.includes('50'), false); // Zelda room $32
+  assert.equal(d9.cleared.includes('82'), true); // approach room kept
+  assert.equal(d9.taken.includes('66'), false);
+  assert.equal(d9.taken.includes('17'), true);
+  // Zelda-side sealed; south approach into Ganon stays open for re-entry.
+  assert.equal(d9.doors.includes('66:north'), false);
+  assert.equal(d9.doors.includes('50:south'), false);
+  assert.equal(d9.doors.includes('66:south'), true);
+  assert.equal(d9.doors.includes('82:north'), true);
+  assert.equal(d9.doors.includes('1:east'), true);
+  assert.equal(payload.position.roomId, 0x52);
+  assert.equal(payload.position.dir, 8);
+});
+
+test('closeBossApproachDoors seals only the Zelda-side shutter pair', () => {
+  const out = closeBossApproachDoors(
+    ['66:north', '50:south', '66:south', '82:north', '3:west'],
+    0x42,
+    0x32,
+  );
+  assert.deepEqual(out, ['3:west', '66:south', '82:north']);
+});
+
+test('resetGanonEncounterInStorage rewrites matching slots', () => {
+  const storage = memoryStorage();
+  const store = createSaveStore(storage);
+  const inv = createInventory();
+  inv.triforceOfPower = 1;
+  store.save(0, {
+    name: 'LINK',
+    inv,
+    mode: 'dungeon',
+    roomId: 0x52,
+    dungeon: { level: 9, fromRoomId: 5, roomId: 0x52 },
+    dungeonProgress: new Map([
+      [
+        '1:9',
+        {
+          cleared: new Set([0x42]),
+          taken: new Set([0x42]),
+          visited: new Set(),
+          pushed: new Set(),
+          doors: new Set(['66:north']),
+          lastBoss: true,
+          map: 0,
+          compass: 0,
+        },
+      ],
+    ]),
+  });
+  const result = resetGanonEncounterInStorage(storage);
+  assert.deepEqual(result.slots, [0]);
+  const loaded = store.load(0);
+  assert.equal(loaded.inv.triforceOfPower, 0);
+  assert.equal(loaded.dungeons['1:9'].lastBoss, false);
 });

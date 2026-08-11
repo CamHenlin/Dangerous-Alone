@@ -1,4 +1,6 @@
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { tilePx } from '@shared/gfxScale.js';
+import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 
 import {
   FINAL_ITEM_ID_BASE,
@@ -134,20 +136,14 @@ export function createDemoUi(deps = {}) {
     if (tex) return tex;
     const sheetIndex = top - spriteBase;
     if (sheetIndex < 0) return Texture.EMPTY;
-    const canvas = document.createElement('canvas');
-    canvas.width = TILE;
-    canvas.height = TILE * 2;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return Texture.EMPTY;
-    ctx.imageSmoothingEnabled = false;
+    const { canvas, ctx } = createTileCanvas(TILE, TILE * 2);
     for (let part = 0; part < 2; part += 1) {
       const idx = sheetIndex + part;
-      const sx = (idx % SHEET_COLS) * TILE;
-      const sy = Math.floor(idx / SHEET_COLS) * TILE;
-      ctx.drawImage(spriteImg, sx, sy, TILE, TILE, 0, part * TILE, TILE, TILE);
+      const sx = (idx % SHEET_COLS) * tilePx();
+      const sy = Math.floor(idx / SHEET_COLS) * tilePx();
+      ctx.drawImage(spriteImg, sx, sy, tilePx(), tilePx(), 0, part * TILE, TILE, TILE);
     }
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     spriteTileCache.set(key, tex);
     return tex;
   }

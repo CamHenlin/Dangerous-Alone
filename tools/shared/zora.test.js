@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { OBJ } from './enemies.js';
+import { OBJ, createEnemy, stepEnemy } from './enemies.js';
 import { ROOT } from './paths.js';
 import {
   isOwWaterTile,
   trySpawnZora,
   zoraCandidateFromRandomByte,
 } from './zora.js';
+
+const ZORA_BOUNDS = { minX: 0x18, maxX: 0xd8, minY: 0x4d, maxY: 0xcd };
 
 test('isOwWaterTile matches CheckZora $8D–$98', () => {
   assert.equal(isOwWaterTile(0x8c), false);
@@ -99,5 +101,32 @@ test('OW $56 attrs.zora is true and has water for CheckZora', {
   assert.ok(zora, 'CheckZora should find water on $56');
   assert.equal(zora.objType, OBJ.ZORA);
   assert.equal(zora.x, 0x30);
+  assert.equal(zora.y, 0x6d);
+});
+
+test('stepZora stays put (no land walk) and despawns after burrow cycle', () => {
+  const e = createEnemy({ objType: OBJ.ZORA, x: 0x50, y: 0x9d });
+  const x0 = e.x;
+  const y0 = e.y;
+  // Drive through states 0→1→2→3→4→5→0 (UpdateZora DestroyWhenDone).
+  for (let i = 0; i < 400 && e.alive; i += 1) {
+    stepEnemy(e, ZORA_BOUNDS, null);
+  }
+  assert.equal(e.x, x0, 'Zora must not leave its water spawn tile');
+  assert.equal(e.y, y0, 'Zora must not leave its water spawn tile');
+  assert.equal(e.alive, false, 'cycle wrap to state 0 destroys for CheckZora respawn');
+});
+
+test('dead Zora frees CheckZora slot for a new water spawn', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x95));
+  const dead = createEnemy({ objType: OBJ.ZORA, x: 0x50, y: 0x6d });
+  dead.alive = false;
+  dead.homeRoomId = 0x56;
+  const zora = trySpawnZora({ zora: true }, grid, [dead], {
+    rngByte: () => 0x56,
+    roomId: 0x56,
+  });
+  assert.ok(zora, 'despawned Zora must not block CheckZora');
+  assert.equal(zora.x, 0x50);
   assert.equal(zora.y, 0x6d);
 });

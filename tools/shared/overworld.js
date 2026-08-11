@@ -1,10 +1,20 @@
 import { parseOffset } from './ranges.js';
-import { collectScreenSecrets } from './owSecrets.js';
+import { collectScreenSecrets, secretAction } from './owSecrets.js';
+import { expandRowRgb } from './masterPalette.js';
 
 export const SQUARES_W = 16;
 export const SQUARES_H = 11;
 export const MAP_W = 16;
 export const MAP_H = 8;
+
+/**
+ * OW LevelInfo BG rows used for forest canopy. Row 2 is green trees; row 3 is
+ * the orange/brown twin (same cream + blue accents, different foliage).
+ */
+export const OW_TREE_PALETTE = Object.freeze({
+  GREEN: 2,
+  ORANGE: 3,
+});
 
 /**
  * @param {Buffer} prg
@@ -258,4 +268,97 @@ export function paletteRowForSquare(row, col, outerPalette, innerPalette) {
   const onEdge =
     row === 0 || row === SQUARES_H - 1 || col === 0 || col === SQUARES_W - 1;
   return onEdge ? outerPalette : innerPalette;
+}
+
+/**
+ * Flip green ↔ orange forest rows so a burnable tree stands out from its
+ * neighbors. Other palette rows are left alone.
+ * @param {number} paletteRow
+ */
+export function contrastingTreePaletteRow(paletteRow) {
+  const row = paletteRow & 3;
+  if (row === OW_TREE_PALETTE.GREEN) return OW_TREE_PALETTE.ORANGE;
+  if (row === OW_TREE_PALETTE.ORANGE) return OW_TREE_PALETTE.GREEN;
+  return row;
+}
+
+/**
+ * Palette row for a square, with unopened candle-burn trees tinted opposite
+ * the local forest colour (green canopy → orange secret, and vice versa).
+ * @param {number} row
+ * @param {number} col
+ * @param {number} outerPalette
+ * @param {number} innerPalette
+ * @param {readonly { row: number, col: number, marker?: number, action?: string }[]} [secrets]
+ */
+export function paletteRowForSquareWithBurnHint(
+  row,
+  col,
+  outerPalette,
+  innerPalette,
+  secrets = [],
+) {
+  const base = paletteRowForSquare(row, col, outerPalette, innerPalette);
+  for (const secret of secrets) {
+    if (secret.row !== row || secret.col !== col) continue;
+    if (secretAction(secret) !== 'burn') continue;
+    return contrastingTreePaletteRow(base);
+  }
+  return base;
+}
+
+/**
+ * Remap foliage (palette slot 1) inside one 16×16 NES square of a baked screen.
+ * Shared cream/blue accents stay put; only the green↔orange canopy colour moves.
+ * Returns false when the source foliage is already absent (hint was baked in).
+ *
+ * @param {Uint8ClampedArray | Uint8Array} rgba
+ * @param {number} width full image width in pixels
+ * @param {number} squareCol
+ * @param {number} squareRow
+ * @param {readonly (readonly number[])[]} srcRowRgb 4 NES RGB triples
+ * @param {readonly (readonly number[])[]} dstRowRgb
+ * @param {{ enhanced?: boolean, nesPxScale?: number }} [opts]
+ */
+export function recolorBurnTreeSquareRgba(
+  rgba,
+  width,
+  squareCol,
+  squareRow,
+  srcRowRgb,
+  dstRowRgb,
+  opts = {},
+) {
+  const enhanced = opts.enhanced === true;
+  const nesPxScale = opts.nesPxScale ?? 1;
+  const src = enhanced && srcRowRgb.length === 4 ? expandRowRgb(srcRowRgb) : srcRowRgb;
+  const dst = enhanced && dstRowRgb.length === 4 ? expandRowRgb(dstRowRgb) : dstRowRgb;
+  const ramp = src.length > 4 ? Math.floor(src.length / 4) : 1;
+  /** @type {Map<string, readonly number[]>} */
+  const lut = new Map();
+  for (let i = 0; i < ramp; i += 1) {
+    const s = src[ramp + i];
+    const d = dst[ramp + i];
+    if (!s || !d) continue;
+    if (s[0] === d[0] && s[1] === d[1] && s[2] === d[2]) continue;
+    lut.set(`${s[0]},${s[1]},${s[2]}`, d);
+  }
+  if (lut.size === 0) return false;
+
+  const side = 16 * nesPxScale;
+  const x0 = squareCol * side;
+  const y0 = squareRow * side;
+  let changed = false;
+  for (let y = 0; y < side; y += 1) {
+    for (let x = 0; x < side; x += 1) {
+      const px = ((y0 + y) * width + (x0 + x)) * 4;
+      const next = lut.get(`${rgba[px]},${rgba[px + 1]},${rgba[px + 2]}`);
+      if (!next) continue;
+      rgba[px] = next[0];
+      rgba[px + 1] = next[1];
+      rgba[px + 2] = next[2];
+      changed = true;
+    }
+  }
+  return changed;
 }

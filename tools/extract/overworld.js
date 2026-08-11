@@ -9,7 +9,7 @@ import {
   decodeAllScreens,
   decodeScreen,
   loadOverworldTables,
-  paletteRowForSquare,
+  paletteRowForSquareWithBurnHint,
   screenToTileGrid,
   screenSecrets,
   squareToTiles,
@@ -66,8 +66,9 @@ function loadOverworldPalettes() {
   return ow;
 }
 
-function renderScreenRgba(screen, tables, patternBins, paletteSet) {
+function renderScreenRgba(screen, tables, patternBins, paletteSet, quest = 1) {
   const tileGrid = screenToTileGrid(screen, tables);
+  const secrets = screen.secrets ?? screenSecrets(screen, tables, quest);
   const width = SQUARES_W * 2 * 8;
   const height = SQUARES_H * 2 * 8;
   const rgba = new Uint8Array(width * height * 4);
@@ -76,11 +77,12 @@ function renderScreenRgba(screen, tables, patternBins, paletteSet) {
     for (let tc = 0; tc < SQUARES_W * 2; tc += 1) {
       const squareRow = Math.floor(tr / 2);
       const squareCol = Math.floor(tc / 2);
-      const palRow = paletteRowForSquare(
+      const palRow = paletteRowForSquareWithBurnHint(
         squareRow,
         squareCol,
         screen.attrs.outerPalette,
         screen.attrs.innerPalette,
+        secrets,
       );
       const colors = rgbaFromNesIndices(paletteSet.rows[palRow]);
       const [br, bg, bb] = nesColor(paletteSet.rows[palRow][0]);
@@ -357,7 +359,13 @@ function writeQuest2PlayOverlays({ tables, patternBins, paletteSet }) {
 
     // Render a simple PNG for the play view (same path as Q1 screen art).
     try {
-      const { width, height, rgba } = renderScreenRgba(screen, q2Tables, patternBins, paletteSet);
+      const { width, height, rgba } = renderScreenRgba(
+        screen,
+        q2Tables,
+        patternBins,
+        paletteSet,
+        2,
+      );
       fs.writeFileSync(path.join(q2Dir, `screen_${idHex}.png`), encodePngRgba(width, height, rgba));
     } catch (err) {
       console.warn(`  Q2 screen $${idHex} PNG skipped: ${err.message}`);

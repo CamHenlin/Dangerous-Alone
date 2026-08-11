@@ -89,6 +89,7 @@ or `enterLevel` has to settle.
 | 2026-08-07 | Story prose lives in a top-level `story/` folder of plain ES modules, not JSON or an extracted pack | The ask was "editable files"; ES modules take comments, need no fetch, and are importable by both Vite and `node --test` |
 | 2026-08-07 | Every lookup falls back to the ROM string | Deleting an entry has to be safe, and untranslated selectors should still say something |
 | 2026-08-07 | The box is modal — the world holds still while it is open | "Pressing the button should close the box and return to the game" only reads as modal, and it stops a page turn from also swinging the sword |
+| 2026-08-10 | Cave Mode B keeps stepping under an open box (`mode !== 'cave'` gate) | OW cave text is nametable crawl on NES; freezing shops on enter read as a hard hang |
 | 2026-08-07 | Death outranks dialogue in the step loop (`textBox.active && !inv.dead`) | An open box halting mode `$11` would strand the death sequence |
 | 2026-08-07 | Missed-treasure warnings are derived from `levelData.floorItem` vs `takenItems`, not authored per level | Stays correct for cellars, quest 2, and any future re-extract |
 | 2026-08-07 | Dungeon entrances are derived from `caveId` + the quest's `ignoreSecret` flag; `world_index.json` now carries those flags | Hardcoding the nine screens would rot; the flag is the ROM's own answer to "is this entrance real in this quest" |

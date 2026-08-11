@@ -29,14 +29,15 @@ const PANEL = Object.freeze({
 const PANEL_H = PANEL.padY * 2 + BOX_ROWS * PANEL.lineHeight;
 
 const COLORS = Object.freeze({
-  fill: 0x000820,
-  border: 0xd8d8f0,
+  // Mid navy — must read on Mode-B cave black; 0x000820 vanished into the void.
+  fill: 0x1a2848,
+  border: 0xe8e8fc,
   text: 0xfcfcfc,
   cue: 0xfcd870,
 });
 
 /** Alpha of the panel body — low enough to read the world through it. */
-const FILL_ALPHA = 0.62;
+const FILL_ALPHA = 0.82;
 /** Frames per blink of the "press to continue" cue. */
 const CUE_BLINK = 24;
 /** Blip the letter SFX every N revealed glyphs. */

@@ -1,4 +1,6 @@
 import { Texture } from 'pixi.js';
+import { px, tilePx } from '@shared/gfxScale.js';
+import { blitCanvas, createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 import { DIR } from '@shared/collision.js';
 import {
   BAKED_SPRITE_PALETTE_RGB,
@@ -98,14 +100,14 @@ export function createItemSprites(sheetTexture, opts = {}) {
 
   function tileXY(tileIndex) {
     return {
-      sx: (tileIndex % SHEET_COLS) * TILE,
-      sy: Math.floor(tileIndex / SHEET_COLS) * TILE,
+      sx: (tileIndex % SHEET_COLS) * tilePx(),
+      sy: Math.floor(tileIndex / SHEET_COLS) * tilePx(),
     };
   }
 
   function drawSheetTile(ctx, tileIndex, dx, dy) {
     const { sx, sy } = tileXY(tileIndex);
-    ctx.drawImage(sheetImage, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+    ctx.drawImage(sheetImage, sx, sy, tilePx(), tilePx(), dx, dy, TILE, TILE);
   }
 
   function drawMiscTile(ctx, ppuTile, dx, dy) {
@@ -114,19 +116,15 @@ export function createItemSprites(sheetTexture, opts = {}) {
     if (idx < 0 || idx >= 14) return;
     // Older extracts marked common_misc as background (opaque black color 0).
     // Punch near-black to transparent so hearts etc. composite over terrain.
-    const tmp = document.createElement('canvas');
-    tmp.width = TILE;
-    tmp.height = TILE;
-    const tctx = tmp.getContext('2d');
-    if (!tctx) return;
-    tctx.drawImage(miscImage, idx * TILE, 0, TILE, TILE, 0, 0, TILE, TILE);
-    const img = tctx.getImageData(0, 0, TILE, TILE);
+    const { canvas: tmp, ctx: tctx } = createTileCanvas(TILE, TILE);
+    tctx.drawImage(miscImage, idx * tilePx(), 0, tilePx(), tilePx(), 0, 0, TILE, TILE);
+    const img = tctx.getImageData(0, 0, px(TILE), px(TILE));
     const d = img.data;
     for (let i = 0; i < d.length; i += 4) {
       if (d[i] < 8 && d[i + 1] < 8 && d[i + 2] < 8) d[i + 3] = 0;
     }
     tctx.putImageData(img, 0, 0);
-    ctx.drawImage(tmp, dx, dy);
+    blitCanvas(ctx, tmp, dx, dy, TILE, TILE);
   }
 
   /** Demo / high PPU bank tile (stepladder $76, etc.). */
@@ -135,7 +133,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     const idx = (ppuTile & 0xff) - highBase;
     if (idx < 0) return;
     const { sx, sy } = tileXY(idx);
-    ctx.drawImage(highImage, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+    ctx.drawImage(highImage, sx, sy, tilePx(), tilePx(), dx, dy, TILE, TILE);
   }
 
   function isHighTile(top) {
@@ -182,12 +180,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     let tex = cache.get(key);
     if (tex) return tex;
 
-    const src = document.createElement('canvas');
-    src.width = 8;
-    src.height = 16;
-    const sctx = src.getContext('2d');
-    if (!sctx) throw new Error('2d context unavailable');
-    sctx.imageSmoothingEnabled = false;
+    const { canvas: src, ctx: sctx } = createTileCanvas(8, 16);
     if (fromMisc) {
       drawMiscTile(sctx, top, 0, 0);
       drawMiscTile(sctx, top + 1, 0, 8);
@@ -201,21 +194,19 @@ export function createItemSprites(sheetTexture, opts = {}) {
     applySpritePalette(src, spritePal);
 
     const horizontal = Boolean(drawOpts.rotate90Cw || drawOpts.rotate90Ccw);
-    const canvas = document.createElement('canvas');
-    canvas.width = horizontal ? 16 : 8;
-    canvas.height = horizontal ? 8 : 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
-    ctx.translate(canvas.width / 2, canvas.height / 2);
+    // Widths stay in NES units: the context is pre-scaled, so reading them off
+    // canvas.width (device pixels) would rotate about the wrong centre.
+    const outW = horizontal ? 16 : 8;
+    const outH = horizontal ? 8 : 16;
+    const { canvas, ctx } = createTileCanvas(outW, outH);
+    ctx.translate(outW / 2, outH / 2);
     if (drawOpts.rotate90Cw) ctx.rotate(Math.PI / 2);
     if (drawOpts.rotate90Ccw) ctx.rotate(-Math.PI / 2);
     if (drawOpts.flipH) ctx.scale(-1, 1);
     if (drawOpts.flipV) ctx.scale(1, -1);
-    ctx.drawImage(src, -4, -8);
+    blitCanvas(ctx, src, -4, -8, 8, 16);
 
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -273,12 +264,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     let tex = cache.get(key);
     if (tex) return tex;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = gap + 8;
-    canvas.height = 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas, ctx } = createTileCanvas(gap + 8, 16);
     if (flipV) {
       ctx.translate(0, 16);
       ctx.scale(1, -1);
@@ -297,8 +283,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     blit(0, false);
     blit(gap, true);
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -319,12 +304,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     let tex = cache.get(key);
     if (tex) return tex;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = gap + 8;
-    canvas.height = 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas, ctx } = createTileCanvas(gap + 8, 16);
     const blit = (tile, dx, flip) => {
       ctx.save();
       if (flip) {
@@ -344,8 +324,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
       blit(right, gap, false);
     }
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }
@@ -417,12 +396,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     const key = `wide:${top}:${layout.gap}:p${spritePal}`;
     let tex = cache.get(key);
     if (!tex) {
-      const canvas = document.createElement('canvas');
-      canvas.width = layout.gap + 8;
-      canvas.height = 16;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('2d context unavailable');
-      ctx.imageSmoothingEnabled = false;
+      const { canvas, ctx } = createTileCanvas(layout.gap + 8, 16);
       const fromMisc = top >= MISC_BASE;
       const fromHigh = !fromMisc && isHighTile(top);
       const blit = (dx, flip) => {
@@ -447,8 +421,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
       blit(0, false);
       blit(layout.gap, true);
       applySpritePalette(canvas, spritePal);
-      tex = Texture.from(canvas);
-      tex.source.scaleMode = 'nearest';
+      tex = textureFromCanvas(canvas);
       cache.set(key, tex);
     }
     return { texture: tex, ...layout };
@@ -465,17 +438,11 @@ export function createItemSprites(sheetTexture, opts = {}) {
     const key = `8x8:${top}:p${spritePal}`;
     let tex = cache.get(key);
     if (tex) return tex;
-    const canvas = document.createElement('canvas');
-    canvas.width = TILE;
-    canvas.height = TILE;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2d context unavailable');
-    ctx.imageSmoothingEnabled = false;
+    const { canvas, ctx } = createTileCanvas(TILE, TILE);
     if (fromMisc) drawMiscTile(ctx, top, 0, 0);
     else drawSheetTile(ctx, top, 0, 0);
     applySpritePalette(canvas, spritePal);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     cache.set(key, tex);
     return tex;
   }

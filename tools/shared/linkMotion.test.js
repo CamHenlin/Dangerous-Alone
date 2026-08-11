@@ -122,11 +122,56 @@ test('can turn left after hitting OW top room bound', { skip: !fs.existsSync(rom
   assert.ok(link.x < x0, `expected left after top bound, x0=${x0} x=${link.x}`);
 });
 
-test('walk sprite bases match ObjAnimFrameHeap', () => {
-  assert.deepEqual(linkWalkSprite(DIR.UP, 0), { baseTile: 0x0c, flipH: false });
-  assert.deepEqual(linkWalkSprite(DIR.DOWN, 1), { baseTile: 0x08, flipH: true });
-  assert.deepEqual(linkWalkSprite(DIR.LEFT, 0), { baseTile: 0x00, flipH: true });
-  assert.deepEqual(linkWalkSprite(DIR.RIGHT, 1), { baseTile: 0x04, flipH: false });
+test('walk sprite bases match ObjAnimFrameHeap (+ down wood-shield patch)', () => {
+  assert.deepEqual(linkWalkSprite(DIR.UP, 0), {
+    leftTile: 0x0c,
+    rightTile: 0x0e,
+    flipLeft: false,
+    flipRight: false,
+    baseTile: 0x0c,
+    flipH: false,
+  });
+  // Facing down: NES adds `$50` to the left OAM tile after the walk flip swap.
+  assert.deepEqual(linkWalkSprite(DIR.DOWN, 0), {
+    leftTile: 0x58,
+    rightTile: 0x0a,
+    flipLeft: false,
+    flipRight: false,
+    baseTile: 0x58,
+    flipH: false,
+  });
+  assert.deepEqual(linkWalkSprite(DIR.DOWN, 1), {
+    leftTile: 0x5a,
+    rightTile: 0x08,
+    flipLeft: false,
+    flipRight: true,
+    baseTile: 0x5a,
+    flipH: true,
+  });
+  assert.deepEqual(linkWalkSprite(DIR.DOWN, 0, { magicShield: true }), {
+    leftTile: 0x60,
+    rightTile: 0x0a,
+    flipLeft: false,
+    flipRight: false,
+    baseTile: 0x60,
+    flipH: false,
+  });
+  assert.deepEqual(linkWalkSprite(DIR.LEFT, 0), {
+    leftTile: 0x02,
+    rightTile: 0x00,
+    flipLeft: true,
+    flipRight: true,
+    baseTile: 0x00,
+    flipH: true,
+  });
+  assert.deepEqual(linkWalkSprite(DIR.RIGHT, 1), {
+    leftTile: 0x04,
+    rightTile: 0x06,
+    flipLeft: false,
+    flipRight: false,
+    baseTile: 0x04,
+    flipH: false,
+  });
 });
 
 test('shove stops at solid tiles and clears remaining pixels', () => {
@@ -429,4 +474,14 @@ test('L4 $71: BoundByRoom lip does not snap-loop — can enter N/S/W doorways', 
   const north = walkToExit({ x: DOORWAY_CENTER_X, y: 0x6d }, DIR.UP);
   assert.ok(north.exit, `north exit from $${north.link.x.toString(16)},$${north.link.y.toString(16)}`);
   assert.equal(north.exit.side, 'north');
+});
+
+test('UW east BoundByRoom lip: hold right turns facing for locked key bump', () => {
+  // Regression: filterInputByRoomBounds cleared RIGHT at X=$D0, so Link stuck
+  // facing south/north at the east lip could never turn into a locked key door.
+  const grid = openGrid();
+  const link = createLinkState(0xd0, DOORWAY_CENTER_Y, DIR.DOWN);
+  stepLink(link, grid, DIR.RIGHT, LINK_QSPEED, UW_ROOM_BOUNDS);
+  assert.equal(link.dir, DIR.RIGHT, 'must face the east lip when holding right');
+  assert.equal(link.x, 0xd0, 'must stay on BoundByRoom lip');
 });

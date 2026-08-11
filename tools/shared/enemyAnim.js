@@ -315,6 +315,38 @@ function isGhini(objType) {
   return objType === T.GHINI || objType === T.FLYING_GHINI;
 }
 
+/**
+ * Side-view CHR facing polarity (before any runtime H-flip).
+ *
+ * Most Zelda side frames face RIGHT (sword/spear/snout on the right), so we
+ * H-flip when the object faces LEFT — same as Link. A few sheets store the
+ * opposite: flip when facing RIGHT instead.
+ *
+ * Audited against extracted CHR (nozzle/weapon/face landmarks), 2026-08-10.
+ * Keep `facingPolarity.test.js` in sync when changing this set.
+ */
+const SIDE_CHR_FACES_LEFT = new Set([
+  T.RED_OCTOROK_SLOW,
+  T.RED_OCTOROK_FAST,
+  T.BLUE_OCTOROK_SLOW,
+  T.BLUE_OCTOROK_FAST,
+  T.ARMOS,
+  T.GHINI,
+  T.FLYING_GHINI,
+]);
+
+/**
+ * H-flip for a horizontal-facing side sprite.
+ * @param {number} objType
+ * @param {number} dir
+ */
+export function sideFacingFlipH(objType, dir) {
+  if (SIDE_CHR_FACES_LEFT.has(objType)) {
+    return Boolean(dir & DIR.RIGHT);
+  }
+  return Boolean(dir & DIR.LEFT);
+}
+
 function isBubble(objType) {
   return objType === T.BUBBLE || objType === T.BUBBLE_BLUE || objType === T.BUBBLE_RED;
 }
@@ -458,7 +490,7 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
   }
 
   if (objType === T.ROPE) {
-    return { mirror: false, flipH: Boolean(dir & DIR.LEFT), flipV: false };
+    return { mirror: false, flipH: sideFacingFlipH(objType, dir), flipV: false };
   }
 
   if (isTrap(objType)) {
@@ -497,36 +529,33 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
     if (dir & DIR.UP) {
       return { mirror: true, flipH: false, flipV: false };
     }
-    return { mirror: false, flipH: Boolean(dir & DIR.RIGHT), flipV: false };
+    return { mirror: false, flipH: sideFacingFlipH(objType, dir), flipV: false };
   }
 
   if (isDarknut(objType)) {
+    // Side CHR faces right; UP walk-frame ≥3 also H-flips (NES Darknut strip).
     const flipH =
-      Boolean(dir & DIR.LEFT)
+      sideFacingFlipH(objType, dir)
       || (Boolean(dir & DIR.UP) && Boolean(frameIndex >= 3));
     return { mirror: false, flipH, flipV: false };
   }
 
-  // Goriya side CHR is the same UW strip as Darknut ($B8/$BC) — faces right,
-  // so H-flip on LEFT. Lynel/Moblin OW side CHR faces left (flip on RIGHT).
-  if (objType === T.RED_GORIYA || objType === T.BLUE_GORIYA) {
+  // Goriya / Lynel / Moblin — side CHR faces right (flip on LEFT).
+  if (objType === T.RED_GORIYA || objType === T.BLUE_GORIYA || isWalker(objType)) {
     return {
       mirror: false,
-      flipH: Boolean(dir & DIR.LEFT),
+      flipH: sideFacingFlipH(objType, dir),
       flipV: false,
     };
   }
 
-  if (objType === T.ARMOS || isWalker(objType)) {
+  // Armos / Ghini — side CHR faces left (flip on RIGHT).
+  if (objType === T.ARMOS || isGhini(objType)) {
     return {
       mirror: false,
-      flipH: Boolean(dir & DIR.RIGHT),
+      flipH: sideFacingFlipH(objType, dir),
       flipV: false,
     };
-  }
-
-  if (isGhini(objType)) {
-    return { mirror: false, flipH: Boolean(dir & DIR.RIGHT), flipV: false };
   }
 
   // Boulder: DrawObjectNotMirrored — no H-mirror pair.
@@ -540,7 +569,7 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
   if (objType === T.WALLMASTER) {
     return {
       mirror: false,
-      flipH: Boolean(dir & DIR.LEFT),
+      flipH: sideFacingFlipH(objType, dir),
       flipV: false,
     };
   }
@@ -567,11 +596,7 @@ export function enemyDrawFlags(objType, dir, frameIndex) {
     mirror = vertical;
   }
 
-  const flipH =
-    !mirror
-    && Boolean(dir & DIR.RIGHT)
-    && isOctorok(objType);
-
+  const flipH = !mirror && isOctorok(objType) && sideFacingFlipH(objType, dir);
   const flipV = isOctorok(objType) && frameIndex % 3 === 1;
 
   return { mirror, flipH, flipV };

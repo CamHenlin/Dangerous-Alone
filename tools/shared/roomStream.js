@@ -2,12 +2,13 @@
  * Multi-room enemy / visit lifecycle for continuous camera (Phase 18).
  */
 
-import { DIR } from './collision.js';
+import { DIR, UW_BOUNDS } from './collision.js';
 import {
   PLAY_H,
   PLAY_W,
   foggedRooms,
   rectFullyOffCamera,
+  roomPlayOrigin,
   roomsForCamera,
 } from './continuousCamera.js';
 import { roomFullyOffCamera } from './multiRoomTiles.js';
@@ -348,6 +349,26 @@ export function chaseBoundsForCamera(camLocalX, camLocalY) {
     maxX: camLocalX + PLAY_W + pad,
     minY: camLocalY + 0x40 - pad,
     maxY: camLocalY + 0x40 + PLAY_H + pad,
+  };
+}
+
+/**
+ * UW BoundByRoom for a foe's home room, expressed in the current anchor's
+ * local coordinates (so offset neighbors stay correct under streaming).
+ * `max*` is exclusive of a 16px sprite (same form as OW/UW_ENEMY_BOUNDS).
+ * @param {number} homeRoomId
+ * @param {number} anchorRoomId
+ */
+export function uwEnemyBoundsForRoom(homeRoomId, anchorRoomId) {
+  const home = roomPlayOrigin(homeRoomId);
+  const anchor = roomPlayOrigin(anchorRoomId);
+  const dx = home.ox - anchor.ox;
+  const dy = home.oy - anchor.oy;
+  return {
+    minX: UW_BOUNDS.left + dx,
+    maxX: UW_BOUNDS.right + 16 + dx,
+    minY: UW_BOUNDS.top + dy,
+    maxY: UW_BOUNDS.bottom + 16 + dy,
   };
 }
 

@@ -174,7 +174,19 @@ test('dock lip soft-aligns $7E but not landing $7F or sand $85', () => {
   );
 });
 
-test('DOWN landing at $7F does not immediately restart UP', () => {
+test('failed dock trigger does not pin Link to dock X', () => {
+  // Regression: tryStartRaftRide used to assign link.x=dockX before the Y
+  // check, so every frame on `$55` within ±4px of `$80` snapped him back —
+  // only UD worked until he left the dock room.
+  const ride = createRaftRide();
+  const link = { x: 0x81, y: 0x9d, dir: DIR.RIGHT, gridOffset: 0, posFrac: 0 };
+  assert.equal(tryStartRaftRide(link, 0x55, { raft: 1 }, ride), false);
+  assert.equal(link.x, 0x81);
+  assert.equal(link.y, 0x9d);
+  assert.equal(ride.active, false);
+});
+
+test('DOWN landing finishes onto sand at $85 and does not restart UP', () => {
   const ride = createRaftRide();
   const link = { x: 0x80, y: 0x3d, dir: DIR.DOWN };
   assert.equal(tryStartRaftRide(link, 0x55, { raft: 1 }, ride), true);
@@ -184,9 +196,10 @@ test('DOWN landing at $7F does not immediately restart UP', () => {
     if (r?.landed) landed = true;
   }
   assert.ok(landed);
-  assert.equal(link.y, 0x7f);
+  // Completed NES southbound cell ($7D+8): pier opens, LR free, no re-board.
+  assert.equal(link.y, 0x85);
   assert.equal(link.gridOffset, 0);
-  // Landing spot and one step south (old gridOffset stride) stay idle.
+  assert.equal(link.dir, DIR.DOWN);
   assert.equal(tryStartRaftRide(link, 0x55, { raft: 1 }, ride), false);
   link.y = 0x81;
   assert.equal(tryStartRaftRide(link, 0x55, { raft: 1 }, ride), false);
@@ -205,4 +218,30 @@ test('$2F south lip plans entry into dock room $3F', () => {
   assert.ok(plan);
   assert.equal(plan.nextRoomId, 0x3f);
   assert.equal(plan.x, 0x60);
+});
+
+test('south-from-$45 plan targets dock mid-water so UpdateDock DOWN can start', () => {
+  // Integration note (main.js): soft-entering this plan before room `$55` is
+  // streamed used to null `screen` and freeze the ticker mid-black-playfield.
+  // The play client must defer the cross until the dock room is ready, then
+  // start the DOWN ride below.
+  const plan = planRaftNorthApproach(
+    { x: 0x80, y: OW_BOUNDS.bottom, dir: DIR.DOWN },
+    0x45,
+    { raft: 1 },
+  );
+  assert.ok(plan);
+  assert.equal(plan.nextRoomId, 0x55);
+  assert.equal(plan.y, 0x3d);
+  const ride = createRaftRide();
+  const link = { x: plan.x, y: plan.y, dir: plan.dir, gridOffset: 0, posFrac: 0, moving: false };
+  assert.equal(tryStartRaftRide(link, plan.nextRoomId, { raft: 1 }, ride), true);
+  assert.equal(ride.state, 1); // DOWN
+  let landed = false;
+  for (let i = 0; i < 80 && ride.active; i += 1) {
+    if (stepRaftRide(link, ride, 0x55)?.landed) landed = true;
+  }
+  assert.ok(landed);
+  assert.equal(link.y, 0x85);
+  assert.equal(link.gridOffset, 0);
 });

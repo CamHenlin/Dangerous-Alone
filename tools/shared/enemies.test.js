@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DIR } from './collision.js';
+import { DIR, UW_FIRST_UNWALKABLE } from './collision.js';
 import {
   OBJ,
   LEEVER_PHASE,
@@ -12,6 +12,7 @@ import {
   enemyIgnoresTiles,
   enemyIsHidden,
   enemyIsHostile,
+  enemyNeedsWalkableGround,
   enemyTouchesLink,
   hpForType,
   isEnemyStandingSolid,
@@ -103,9 +104,30 @@ test('blue darknut walks slower than the old 2 px/frame approx', () => {
   assert.ok(moved >= 36 && moved <= 44, `moved ${moved} px in 64 frames`);
 });
 
-test('keese ignore tiles; octoroks do not', () => {
+test('keese and tektites ignore tiles; octoroks do not', () => {
   assert.equal(enemyIgnoresTiles(OBJ.BLUE_KEESE), true);
+  assert.equal(enemyIgnoresTiles(OBJ.BLUE_TEKTITE), true);
+  assert.equal(enemyIgnoresTiles(OBJ.RED_TEKTITE), true);
   assert.equal(enemyIgnoresTiles(OBJ.RED_OCTOROK_SLOW), false);
+});
+
+test('ejectEnemyFromSolid leaves tektites on rocks and water', () => {
+  const rockGrid = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  const waterGrid = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  for (let r = 0; r < 22; r += 1) {
+    for (let c = 0; c < 16; c += 1) {
+      rockGrid[r][c] = 0xd8;
+      waterGrid[r][c] = 0x95;
+    }
+  }
+  const onRock = createEnemy({ objType: OBJ.RED_TEKTITE, x: 0x30, y: 0x6d });
+  const onWater = createEnemy({ objType: OBJ.BLUE_TEKTITE, x: 0x30, y: 0x6d });
+  assert.equal(isEnemyStandingSolid(rockGrid, onRock.x, onRock.y), true);
+  assert.equal(isEnemyStandingSolid(waterGrid, onWater.x, onWater.y), true);
+  assert.equal(ejectEnemyFromSolid(onRock, rockGrid).ejected, false);
+  assert.equal(ejectEnemyFromSolid(onWater, waterGrid).ejected, false);
+  assert.equal(onRock.x, 0x30);
+  assert.equal(onWater.x, 0x30);
 });
 
 test('octorok turns instead of walking into solid tiles', () => {
@@ -211,6 +233,53 @@ test('ejectEnemyFromSolid leaves Zora on water', () => {
   const r = ejectEnemyFromSolid(e, grid);
   assert.equal(r.ejected, false);
   assert.equal(e.x, 0x30);
+});
+
+test('ejectEnemyFromSolid leaves Wizzrobes / Pols Voice on UW blocks', () => {
+  // Blue Wizzrobes fade through $B0; Pols Voice hops them. Ejecting either
+  // mid-phase wedges them against the block edge (foes=2 diamond rooms).
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  for (let r = 11; r <= 12; r += 1) {
+    for (let c = 16; c <= 17; c += 1) grid[r][c] = 0xb0;
+  }
+  const tileOpts = { firstUnwalkable: UW_FIRST_UNWALKABLE, walkableRemap: [] };
+  const blue = createEnemy({ objType: OBJ.BLUE_WIZZROBE, x: 0x80, y: 0x8d });
+  const red = createEnemy({ objType: OBJ.RED_WIZZROBE, x: 0x80, y: 0x8d });
+  const pols = createEnemy({ objType: OBJ.POLS_VOICE, x: 0x80, y: 0x8d });
+  assert.equal(enemyNeedsWalkableGround(blue), false);
+  assert.equal(enemyNeedsWalkableGround(red), false);
+  assert.equal(enemyNeedsWalkableGround(pols), false);
+  for (const e of [blue, red, pols]) {
+    const r = ejectEnemyFromSolid(e, grid, { tileOpts });
+    assert.equal(r.ejected, false, `objType $${e.objType.toString(16)}`);
+    assert.equal(e.x, 0x80);
+    assert.equal(e.y, 0x8d);
+  }
+});
+
+test('blue Wizzrobe finishes fading through a block without eject wedging', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  // One $B0 square at (0x80, $8D); walk in from the left.
+  for (let r = 11; r <= 12; r += 1) {
+    for (let c = 16; c <= 17; c += 1) grid[r][c] = 0xb0;
+  }
+  const tileOpts = { firstUnwalkable: UW_FIRST_UNWALKABLE, walkableRemap: [] };
+  const bounds = { minX: 0x20, maxX: 0xd0, minY: 0x5d, maxY: 0xbd };
+  const e = createEnemy({ objType: OBJ.BLUE_WIZZROBE, x: 0x60, y: 0x8d });
+  e.dir = DIR.RIGHT;
+  e.wizzTimer = 0xff;
+
+  let sawFade = false;
+  let maxX = e.x;
+  for (let i = 0; i < 200; i += 1) {
+    stepEnemy(e, bounds, grid, { ...tileOpts, link: null });
+    ejectEnemyFromSolid(e, grid, { tileOpts });
+    if ((e.wizzRemDistance ?? 0) > 0) sawFade = true;
+    if (e.x > maxX) maxX = e.x;
+  }
+  assert.equal(sawFade, true, 'should begin fading through the block');
+  assert.ok(maxX > 0x90, `should clear past the block (maxX=$${maxX.toString(16)})`);
+  assert.equal(e.wizzRemDistance ?? 0, 0, 'fade should finish');
 });
 
 test('OW $48 red leevers spawn buried', () => {

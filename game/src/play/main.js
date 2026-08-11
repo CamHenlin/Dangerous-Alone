@@ -59,6 +59,7 @@ import {
   roomsNeedingSpawn,
   shiftPositions,
   tagEnemyHomeRoom,
+  uwEnemyBoundsForRoom,
 } from '@shared/roomStream.js';
 import {
   clearClockFreeze,
@@ -81,8 +82,17 @@ import {
   stepScreenScroll,
 } from '@shared/screenScroll.js';
 import { createStreamView } from './streamView.js';
+import {
+  loadBombCrackTexture,
+  syncBombCrackSprites,
+} from './bombCrackOverlay.js';
+import {
+  owBombCrackPlacements,
+  uwBombCrackPlacements,
+} from '@shared/bombCrack.js';
 import { checkMaze, createMazeState } from '@shared/mazes.js';
 import { nesColor } from '@shared/nesPalette.js';
+import { graphicsUrl, markScaled, px, scale, setGraphicsMode, tilePx } from '@shared/gfxScale.js';
 import {
   createRupeeRoll,
   resetRupeeRoll,
@@ -120,6 +130,8 @@ import {
   clearShopVisitTaken,
   describeCave,
   getCave,
+  moneyGameResultLabels,
+  moneyGameStakeLabels,
   rollMoneyGameAmounts,
   takeAnyRoadDest,
   tryBuyCaveSlot,
@@ -136,10 +148,17 @@ import { chrTileForItemId } from '@shared/itemFrame.js';
 import {
   SECRET_STAIRS_TILES,
   revealSecretTiles,
+  secretAction,
   tilesForSecretMarker,
   tryPushGraveSecret,
   tryRevealSecrets,
 } from '@shared/owSecrets.js';
+import {
+  contrastingTreePaletteRow,
+  paletteRowForSquare,
+  recolorBurnTreeSquareRgba,
+} from '@shared/overworld.js';
+import { createOwHeartContainer } from '@shared/owHeartContainer.js';
 import { owBgTileSourceRect } from '@shared/owBgTiles.js';
 import { trySpawnPassiveTileObject } from '@shared/passiveTileObjects.js';
 import {
@@ -224,7 +243,14 @@ import {
   stepRaftRide,
   tryStartRaftRide,
 } from '@shared/raft.js';
-import { bossRoarSfx, isBossType, isGanon, isGleeok, isZelda } from '@shared/bosses.js';
+import {
+  bossRoarSfx,
+  enemyUsesUwRoomBounds,
+  isBossType,
+  isGanon,
+  isGleeok,
+  isZelda,
+} from '@shared/bosses.js';
 import { sfxNamesForWeaponHit } from '@shared/combatSfx.js';
 import {
   BOOM_PHASE,
@@ -272,6 +298,10 @@ import {
   roomHasPersonBlocker,
 } from '@shared/personBlocking.js';
 import {
+  dismissLevel9EntranceGate,
+  filterLevel9EntranceGate,
+} from '@shared/personText.js';
+import {
   TELEPORT_YS,
   canSummonWhirlwind,
   createWhirlwind,
@@ -302,6 +332,7 @@ import {
   nearDoorway,
   openRoomShutters,
   restoreClearedShutters,
+  sealLastBossShutters,
   tryBombDoors,
   tryUnlockFacingKeyDoor,
 } from '@shared/dungeonPlay.js';
@@ -369,6 +400,7 @@ import {
   dungeonProgressKey,
   incrementDeathCount,
   nameUnlocksSecondQuest,
+  resetGanonEncounterInStorage,
   resetProfileToSecondQuest,
   resolveZeroHeartContinue,
 } from '@shared/save.js';
@@ -396,6 +428,7 @@ import { createDebugUi } from './debugUi.js';
 import {
   applyOneHitKill,
   createDebugCheats,
+  killLink,
   refillBombs,
   refillHearts,
   refillRupees,
@@ -450,15 +483,25 @@ function screenUrlQ2(mapIndex) {
 }
 
 function bgUrl(mapIndex, quest = 1) {
+  // Enhanced screens are baked alongside the originals under a `2x` sibling
+  // directory, same filenames, so only the folder name changes here.
+  const dir = scale() === 2 ? 'screens2x' : 'screens';
+  const id = mapIndex.toString(16).padStart(2, '0');
   // Q2 layout rooms may ship an overlay PNG; fall back to Q1 art if missing.
   if (quest === 2 && quest2NeedsLayoutOverlay(mapIndex)) {
-    return `/play/q2/screens/screen_${mapIndex.toString(16).padStart(2, '0')}.png`;
+    return `/play/q2/${dir}/screen_${id}.png`;
   }
-  return `/overworld/screens/screen_${mapIndex.toString(16).padStart(2, '0')}.png`;
+  return `/overworld/${dir}/screen_${id}.png`;
 }
 
 async function main() {
   const worldIndex = await fetchJson('/play/world_index.json');
+
+  let options = loadOptions();
+  // Must happen before the renderer is created and before any sheet URL is
+  // built: the whole graphics pipeline reads the active scale rather than
+  // being passed it, and the renderer resolution is fixed at init.
+  setGraphicsMode(options.graphics);
 
   const app = new Application();
   await app.init({
@@ -466,14 +509,13 @@ async function main() {
     height: INTERNAL_H,
     background: '#000000',
     antialias: false,
-    resolution: 1,
+    resolution: scale(),
     autoDensity: false,
     preference: 'webgl',
   });
   app.canvas.style.imageRendering = 'pixelated';
   stageEl.appendChild(app.canvas);
 
-  let options = loadOptions();
   function applyDisplayOptions() {
     const filter = options.filter === 'smooth' ? 'auto' : 'pixelated';
     app.canvas.style.imageRendering = filter;
@@ -501,21 +543,21 @@ async function main() {
   window.addEventListener('resize', resizeCanvas);
 
   const sheetUrls = {
-    common: '/graphics/common_sprites.png',
-    misc: '/graphics/common_misc.png',
-    commonBg: '/graphics/common_background.png',
-    overworld: '/graphics/overworld_sprites.png',
-    overworldBg: '/graphics/overworld_bg.png',
-    uwCommon: '/graphics/underworld_sprites_common.png',
+    common: graphicsUrl('common_sprites.png'),
+    misc: graphicsUrl('common_misc.png'),
+    commonBg: graphicsUrl('common_background.png'),
+    overworld: graphicsUrl('overworld_sprites.png'),
+    overworldBg: graphicsUrl('overworld_bg.png'),
+    uwCommon: graphicsUrl('underworld_sprites_common.png'),
     // LevelPatternBlockSrcAddrs / BossPatternBlockSrcAddrs sets.
-    uw127: '/graphics/underworld_sprites_127.png',
-    uw358: '/graphics/underworld_sprites_358.png',
-    uw469: '/graphics/underworld_sprites_469.png',
-    boss1257: '/graphics/boss_sprites_1257.png',
-    boss3468: '/graphics/boss_sprites_3468.png',
-    boss9: '/graphics/boss_sprites_9.png',
-    demoBg: '/graphics/demo_background.png',
-    demoSprites: '/graphics/demo_sprites.png',
+    uw127: graphicsUrl('underworld_sprites_127.png'),
+    uw358: graphicsUrl('underworld_sprites_358.png'),
+    uw469: graphicsUrl('underworld_sprites_469.png'),
+    boss1257: graphicsUrl('boss_sprites_1257.png'),
+    boss3468: graphicsUrl('boss_sprites_3468.png'),
+    boss9: graphicsUrl('boss_sprites_9.png'),
+    demoBg: graphicsUrl('demo_background.png'),
+    demoSprites: graphicsUrl('demo_sprites.png'),
   };
   /** @type {Record<string, import('pixi.js').Texture>} */
   const sheetTextures = {};
@@ -523,6 +565,13 @@ async function main() {
     const tex = await Assets.load(url);
     tex.source.scaleMode = 'nearest';
     sheetTextures[id] = tex;
+  }
+  /** Transparent 16×16 crack overlay for bombable OW/UW walls. */
+  let bombCrackTex = /** @type {import('pixi.js').Texture | null} */ (null);
+  try {
+    bombCrackTex = await loadBombCrackTexture();
+  } catch (err) {
+    console.warn('bomb_crack.png missing — bombable walls have no crack hint', err);
   }
   /** @type {{ paletteSets?: { id: string, rowsRgb: number[][][] }[] }} */
   let paletteDoc = { paletteSets: [] };
@@ -547,12 +596,13 @@ async function main() {
   /** UW CHR bins for runtime room composition (walls/doors). */
   /** @type {Map<string, Uint8Array>} */
   const uwPatternBins = new Map();
+  const uwPatternExt = scale() === 2 ? '4bpp' : 'bin';
   for (const id of ['common_background', 'underworld_bg', 'common_misc']) {
     try {
-      const buf = await (await fetch(`/graphics/${id}.bin`)).arrayBuffer();
+      const buf = await (await fetch(graphicsUrl(`${id}.${uwPatternExt}`))).arrayBuffer();
       uwPatternBins.set(id, new Uint8Array(buf));
     } catch {
-      console.warn(`Missing ${id}.bin — dungeon walls need: npm run extract -- graphics`);
+      console.warn(`Missing ${id}.${uwPatternExt} — dungeon walls need: npm run extract -- graphics`);
     }
   }
 
@@ -604,9 +654,7 @@ async function main() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-    const tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
-    return tex;
+    return markScaled(Texture.from(canvas));
   }
 
   /**
@@ -668,9 +716,36 @@ async function main() {
       fogged: false,
     });
     setUwDoorFrame(dungeon.room.roomId, painted.frameTex, false);
+    syncUwBombCracks(entry, dungeon.room, false);
     roomSprite = entry.sprite;
     dungeonTileGrid = painted.tileGrid;
     applyPushBlockRoomArt();
+  }
+
+  /**
+   * Overlay crack sprites on unopened bombable walls for a streamed room.
+   * @param {import('./streamView.js').StreamRoom | null | undefined} entry
+   * @param {object | null | undefined} room
+   * @param {boolean} [fogged]
+   */
+  function syncUwBombCracks(entry, room, fogged = false) {
+    if (!entry || !room) return;
+    const placements = fogged
+      ? []
+      : uwBombCrackPlacements(room, dungeon?.doorState ?? null);
+    syncBombCrackSprites(entry, bombCrackTex, placements, { visible: !fogged });
+  }
+
+  /**
+   * Overlay crack sprites on unopened OW bomb secrets.
+   * @param {import('./streamView.js').StreamRoom | null | undefined} entry
+   * @param {number} mapIndex
+   */
+  function syncOwBombCracks(entry, mapIndex) {
+    if (!entry) return;
+    const secrets = entry.pack?.secrets ?? [];
+    const placements = owBombCrackPlacements(secrets, owSecretsRevealed, mapIndex);
+    syncBombCrackSprites(entry, bombCrackTex, placements);
   }
 
   /**
@@ -687,12 +762,13 @@ async function main() {
     if (!neighbor || !uwStream.get(nextId)) return;
     const painted = paintDungeonRoom(neighbor);
     if (!painted) return;
-    uwStream.upsert(nextId, painted.tex, {
+    const entry = uwStream.upsert(nextId, painted.tex, {
       tileGrid: painted.tileGrid,
       pack: neighbor,
       fogged: false,
     });
     setUwDoorFrame(nextId, painted.frameTex, false);
+    syncUwBombCracks(entry, neighbor, false);
   }
 
   /** Build a 16×16 push-block texture from UW BG CHR ($B0). */
@@ -714,18 +790,19 @@ async function main() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-    pushBlockTex = Texture.from(canvas);
-    pushBlockTex.source.scaleMode = 'nearest';
+    pushBlockTex = markScaled(Texture.from(canvas));
     return pushBlockTex;
   }
 
   /**
    * Patch a 16×16 UW square into the live room texture (play-area coords).
-   * @param {number} px screen X
-   * @param {number} py screen Y (includes HUD)
+   * Dest coords are NES screen units; the backing canvas is in sheet pixels
+   * (`px()`), matching `patchOwBgSquare` / enhanced 2× textures.
+   * @param {number} nesX screen X
+   * @param {number} nesY screen Y (includes HUD)
    * @param {number} primary CHR base
    */
-  function patchRoomSquareAt(px, py, primary) {
+  function patchRoomSquareAt(nesX, nesY, primary) {
     // The anchor room's own sprite — `roomSprite` is only an alias for it.
     const spr = uwStream.get(roomId)?.sprite ?? roomSprite;
     if (!spr || !dungeon) return;
@@ -744,10 +821,11 @@ async function main() {
       paletteRow: inner,
     });
     // Stream sprites sit at (0,0) in the room root; play Y includes HUD.
+    // Do not name the NES args `px` — that shadows gfxScale.px().
     ctx.putImageData(
       new ImageData(new Uint8ClampedArray(rgba), width, height),
-      px,
-      py - HUD_HEIGHT,
+      px(nesX),
+      px(nesY - HUD_HEIGHT),
     );
     spr.texture.source.update?.();
   }
@@ -873,30 +951,44 @@ async function main() {
     console.warn('demo.json missing — run: npm run extract -- demo');
   }
 
+  // Link frames are needed by file select / register before world play begins.
+  const frames = createLinkFrames(spriteTex, {
+    paletteSet: owPaletteSet,
+    // DrawLinkLiftingItem tile $78 — same high bank as the stepladder.
+    highSpriteTexture: sheetTextures.demoSprites ?? null,
+  });
+  const titleLinkTexture = () => frames.textureFor(DIR.DOWN, 0);
+
   const nameEntryUi = createNameEntryUi({
     commonBg: sheetTextures.commonBg,
     misc: sheetTextures.misc,
     items,
+    linkTexture: titleLinkTexture,
     playSfx: (name) => audio?.playSfx(name),
   });
-  app.stage.addChild(nameEntryUi.root);
 
-  const titleUi = createTitleUi({ nameEntry: nameEntryUi });
+  const titleUi = createTitleUi({
+    nameEntry: nameEntryUi,
+    commonBg: sheetTextures.commonBg,
+    misc: sheetTextures.misc,
+    items,
+    linkTexture: titleLinkTexture,
+  });
+  // Name entry above file select so a missed hide() cannot cover mode $E.
   app.stage.addChild(titleUi.root);
+  app.stage.addChild(nameEntryUi.root);
 
   /** @type {import('pixi.js').Texture | null} */
   let titleBgTex = null;
   /** @type {import('pixi.js').Texture | null} */
   let storyBgTex = null;
   try {
-    titleBgTex = await Assets.load('/play/title.png');
-    titleBgTex.source.scaleMode = 'nearest';
+    titleBgTex = markScaled(await Assets.load(scale() === 2 ? '/play/title2x.png' : '/play/title.png'));
   } catch {
     console.warn('play/title.png missing — run: npm run extract -- demo');
   }
   try {
-    storyBgTex = await Assets.load('/play/story.png');
-    storyBgTex.source.scaleMode = 'nearest';
+    storyBgTex = markScaled(await Assets.load(scale() === 2 ? '/play/story2x.png' : '/play/story.png'));
   } catch {
     console.warn('play/story.png missing — run: npm run extract -- demo');
   }
@@ -989,6 +1081,9 @@ async function main() {
   const caveTaken = new Set();
   /** @type {Set<string>} */
   const owSecretsRevealed = new Set();
+  /** OW room-item taken flags (NES `$067F+` item bit); `$5F` dock heart. */
+  /** @type {Set<number>} */
+  const owItemsTaken = new Set();
   /**
    * Phase 19: places an NPC has actually pointed at, as `roomId:clearCondition`
    * keys. They persist with the save and retire themselves once collected.
@@ -1079,6 +1174,8 @@ async function main() {
   /** Pre-rolled money-game amounts for the open cave (null when not gambling). */
   /** @type {number[] | null} */
   let gambleAmounts = null;
+  /** True after one money-game pick this visit (ROM advances to idle state 8). */
+  let gambleResolved = false;
 
   /** @type {Sprite | null} */
   let bg = null;
@@ -1138,12 +1235,6 @@ async function main() {
   let worldCamY = 0;
   /** Monotonic token so overlapping stream fetches ignore stale results. */
   let streamFetchGen = 0;
-
-  const frames = createLinkFrames(spriteTex, {
-    paletteSet: owPaletteSet,
-    // DrawLinkLiftingItem tile $78 — same high bank as the stepladder.
-    highSpriteTexture: sheetTextures.demoSprites ?? null,
-  });
 
   /**
    * Weapon shots use Anim_ItemFrameTiles + facing; rocks/fireballs stay on enemy CHR.
@@ -1207,6 +1298,15 @@ async function main() {
     urlParams.get('skipTitle') === '1'
     || urlParams.get('slot') != null
     || urlParams.get('debug') === '1';
+
+  /** @type {{ slots: number[], practice: boolean } | null} */
+  let ganonResetResult = null;
+  if (urlParams.get('resetGanon') === '1') {
+    ganonResetResult = resetGanonEncounterInStorage();
+    if (ganonResetResult.slots.length || ganonResetResult.practice) {
+      console.info('[zelda] Ganon/Zelda encounter reset', ganonResetResult);
+    }
+  }
 
   const debugCheats = createDebugCheats();
 
@@ -1435,6 +1535,9 @@ async function main() {
         refillBombs: () => debugRefillBombs(),
         refillRupees: () => debugRefillRupees(),
         killScreen: () => debugKillScreen(),
+        killLink: () => debugKillLink(),
+        /** Rewind Ganon + Zelda endgame (live + battery slot). */
+        resetGanonFight: () => resetGanonFightLive(),
       },
       configurable: true,
     });
@@ -1481,6 +1584,89 @@ async function main() {
     });
   }
 
+  /**
+   * Clear Triforce of Power / lastBoss / boss-room clear so Ganon and Zelda
+   * can be replayed. Persists the active slot (and rewrites storage).
+   */
+  async function resetGanonFightLive() {
+    const quest = inv.quest === 2 ? 2 : 1;
+    const bossRoom =
+      (dungeon?.level === 9 && dungeon.levelData?.bossRoom != null
+        ? dungeon.levelData.bossRoom
+        : quest === 2
+          ? 0x17
+          : 0x42) & 0xff;
+    const zeldaRoom =
+      (dungeon?.level === 9 && dungeon.levelData?.triforceRoom != null
+        ? dungeon.levelData.triforceRoom
+        : quest === 2
+          ? 0x07
+          : 0x32) & 0xff;
+
+    inv.triforceOfPower = 0;
+    questCompleted = 0;
+    endingUi.hide();
+    world.visible = true;
+    linkSprite.visible = true;
+
+    const key = dungeonProgressKey(quest, 9);
+    let saved = dungeonProgress.get(key);
+    if (!saved) {
+      saved = {
+        cleared: new Set(),
+        taken: new Set(),
+        visited: new Set(),
+        pushed: new Set(),
+        doors: new Set(),
+        lastBoss: false,
+        map: 0,
+        compass: 0,
+      };
+      dungeonProgress.set(key, saved);
+    }
+    saved.lastBoss = false;
+    saved.cleared.delete(bossRoom);
+    saved.cleared.delete(zeldaRoom);
+    saved.taken.delete(bossRoom);
+    saved.taken.delete(zeldaRoom);
+    for (const side of ['north', 'south', 'west', 'east']) {
+      const next = dungeonNeighbor(bossRoom, dirForSide(side));
+      if (next !== zeldaRoom) continue;
+      saved.doors.delete(`${bossRoom}:${side}`);
+      saved.doors.delete(
+        `${next}:${side === 'north' ? 'south' : side === 'south' ? 'north' : side === 'west' ? 'east' : 'west'}`,
+      );
+    }
+
+    if (dungeon?.level === 9) {
+      dungeon.lastBossDefeated = false;
+      dungeon.clearedRooms.delete(bossRoom);
+      dungeon.clearedRooms.delete(zeldaRoom);
+      dungeon.takenItems.delete(bossRoom);
+      dungeon.takenItems.delete(zeldaRoom);
+      // Drop a stale Zelda sprite if her room is currently streamed.
+      for (const e of enemies) {
+        if (isZelda(e.objType) && (e.homeRoomId ?? roomId) === zeldaRoom) {
+          e.alive = false;
+        }
+      }
+      spawnedRooms.delete(zeldaRoom);
+      sealLastBossShutters(dungeon.doorState, dungeon.levelData, false);
+      snapshotDungeonProgress();
+      const south = dungeonNeighbor(bossRoom, DIR.DOWN);
+      const west = dungeonNeighbor(bossRoom, DIR.LEFT);
+      const park = south ?? west;
+      if (park != null && !busy) {
+        await loadDungeonRoom(park, south != null ? DIR.UP : DIR.RIGHT);
+      }
+    }
+
+    if (playing) persistSave('reset ganon');
+    else resetGanonEncounterInStorage();
+    setStatus('Ganon encounter reset — fight him again, then save Zelda');
+    return { bossRoom };
+  }
+
   function savePracticeState() {
     if (!playing) {
       setStatus('Start a game before practice save');
@@ -1498,6 +1684,7 @@ async function main() {
     }
     caveTaken.clear();
     owSecretsRevealed.clear();
+    owItemsTaken.clear();
     hintMarks.clear();
     dungeonProgress.clear();
     textBox.close();
@@ -1507,6 +1694,7 @@ async function main() {
       inv,
       owSecretsRevealed,
       caveTaken,
+      owItemsTaken,
       hintMarks,
       dungeonProgress,
     });
@@ -1603,6 +1791,7 @@ async function main() {
           : null,
       owSecretsRevealed,
       caveTaken,
+      owItemsTaken,
       hintMarks,
       dungeonProgress,
     };
@@ -1662,6 +1851,14 @@ async function main() {
     setStatus(victims.length ? `Debug: killed ${victims.length}` : 'Debug: no enemies on screen');
   }
 
+  function debugKillLink() {
+    if (!playing || !killLink(inv)) return;
+    debugUi.close();
+    refreshHud();
+    beginDeath();
+    setStatus('Debug: Link killed');
+  }
+
   const debugUi = createDebugUi({
     getCheats: () => debugCheats,
     setCheats: (patch) => {
@@ -1672,6 +1869,7 @@ async function main() {
     refillBombs: debugRefillBombs,
     refillRupees: debugRefillRupees,
     killScreen: debugKillScreen,
+    killLink: debugKillLink,
     onClose: () => {},
   });
   document.getElementById('btn-debug')?.addEventListener('click', () => {
@@ -2012,6 +2210,18 @@ async function main() {
     return OW_ENEMY_BOUNDS;
   }
 
+  /**
+   * Bosses stay in their home room's BoundByRoom; other foes may chase across
+   * seams via the camera pad.
+   * @param {{ objType: number, homeRoomId?: number | null }} e
+   */
+  function enemyBoundsFor(e) {
+    if (mode === 'dungeon' && enemyUsesUwRoomBounds(e.objType)) {
+      return uwEnemyBoundsForRoom(e.homeRoomId ?? roomId, roomId);
+    }
+    return enemyBounds();
+  }
+
   function clearFxLayer() {
     for (const child of fxLayer.removeChildren()) {
       child.destroy({ texture: false, textureSource: false });
@@ -2088,6 +2298,9 @@ async function main() {
           );
           if (opened.length) {
             refreshDungeonRoomVisual();
+            for (const side of opened) {
+              refreshNeighborDoorVisual(dungeon.room.roomId, side);
+            }
             audio?.playSfx('door');
             setStatus(`Bombed ${opened.join('/')} wall open`);
           }
@@ -2350,6 +2563,29 @@ async function main() {
   }
 
   /**
+   * NES CreateRoomObjects `@MakeHeartContainerOW` — dock heart on room `$5F`.
+   */
+  function syncOwRoomItem() {
+    roomItem = createOwHeartContainer(roomId, owItemsTaken);
+  }
+
+  /**
+   * Touch-pickup for the OW room item (GameMode `$05` skips the lift pose).
+   */
+  function tryPickupOwRoomItem() {
+    const picked = tryPickupRoomItem(roomItem, link.x, link.y);
+    if (picked == null) return;
+    owItemsTaken.add(roomId & 0xff);
+    const label = grantRoomItem(inv, picked);
+    refreshHud();
+    invUi.refresh(inv, invView());
+    audio?.playSfx('item_taken');
+    audio?.playFanfare('item');
+    setStatus(`Got ${label}!`);
+    persistSave();
+  }
+
+  /**
    * Soft-enter an OW room after a seam cross / raft / etc.
    * Spawn latch stays until the room fully leaves the camera — clearing a
    * screen must not refill while Link is still there.
@@ -2371,17 +2607,46 @@ async function main() {
       candleRoom = createCandleRoomState();
       pondSecret = restorePondSecret(owSecretsRevealed, roomId);
       owWaterRgb = OW_WATER_RGB;
+      syncOwRoomItem();
     };
     const bound = bindOwScreenFromStream(roomId);
     applyRoomState();
     if (bound) spawnOwRoomEnemies(roomId, dir);
-    void ensureOwNeighbors().then(() => {
-      if (mode !== 'overworld' || (roomId & 0xff) !== (nextRoomId & 0xff)) return;
-      if (!bound && bindOwScreenFromStream(roomId)) applyRoomState();
-      spawnOwRoomEnemies(roomId, dir);
-      spawnVisibleOwRooms(dir);
-      applyPlayCamera();
-    });
+    void ensureOwNeighbors()
+      .then(() => {
+        if (mode !== 'overworld' || (roomId & 0xff) !== (nextRoomId & 0xff)) return;
+        if (!bound && bindOwScreenFromStream(roomId)) applyRoomState();
+        spawnOwRoomEnemies(roomId, dir);
+        spawnVisibleOwRooms(dir);
+        applyPlayCamera();
+      })
+      .catch((err) => {
+        console.warn('OW neighbor stream failed', err);
+      });
+  }
+
+  /** True when a streamed OW room has collision + art ready to bind. */
+  function owRoomReady(mapIndex) {
+    const entry = owStream.get(mapIndex & 0xff);
+    return Boolean(entry?.pack && entry?.tileGrid && entry?.sprite);
+  }
+
+  /**
+   * Prefetch one OW room (and its neighborhood) without changing the anchor.
+   * Used when a raft dock approach would otherwise soft-enter an unbound room,
+   * null `screen`, and freeze the step loop on a black playfield.
+   * @param {number} mapIndex
+   */
+  function prefetchOwRoom(mapIndex) {
+    const id = mapIndex & 0xff;
+    void ensureOwRoom(id)
+      .then(() => {
+        if (mode !== 'overworld') return;
+        return ensureOwNeighbors();
+      })
+      .catch((err) => {
+        console.warn(`OW prefetch $${id.toString(16)} failed`, err);
+      });
   }
 
   /**
@@ -2447,12 +2712,13 @@ async function main() {
     restoreArmosReveals(tileGrid, id, owSecretsRevealed);
     let tex;
     try {
-      tex = await Assets.load(bgUrl(id, inv.quest));
+      tex = markScaled(await Assets.load(bgUrl(id, inv.quest)));
     } catch {
-      tex = await Assets.load(bgUrl(id, 1));
+      tex = markScaled(await Assets.load(bgUrl(id, 1)));
     }
     tex.source.scaleMode = 'nearest';
     const entry = owStream.upsert(id, tex, { tileGrid, pack, fogged: false });
+    applyBurnTreeColorHints(entry?.sprite ?? null, pack, id);
     bg = owStream.get(roomId)?.sprite ?? bg;
     for (const p of bgPatches) {
       patchOwBgSquare(p.col, p.row, p.tiles, id);
@@ -2473,6 +2739,7 @@ async function main() {
         id,
       );
     }
+    syncOwBombCracks(entry, id);
     return entry;
   }
 
@@ -2571,6 +2838,8 @@ async function main() {
       const frame = uwDoorFrames.get(id);
       if (frame?.sprite) frame.sprite.visible = !fogged;
       if (frame?.fog) frame.fog.visible = false;
+      // Cracks are omitted while fogged; rebuild when the room becomes visible.
+      syncUwBombCracks(existing, existing.pack, fogged);
       return existing;
     }
     const room = dungeon.levelData.rooms.find((r) => r.roomId === id);
@@ -2610,6 +2879,7 @@ async function main() {
     if (!tileGrid) return null;
     const entry = uwStream.upsert(id, tex, { tileGrid, pack: room, fogged });
     setUwDoorFrame(id, frameTex, fogged);
+    syncUwBombCracks(entry, room, fogged);
     return entry;
   }
 
@@ -2638,6 +2908,8 @@ async function main() {
       const frame = uwDoorFrames.get(id);
       if (frame?.sprite) frame.sprite.visible = !fogged;
       if (frame?.fog) frame.fog.visible = false;
+      const entry = uwStream.get(id);
+      syncUwBombCracks(entry, entry?.pack, fogged);
     }
     uwStream.layout(roomId);
     uwDoorFrames.layout(roomId);
@@ -2672,6 +2944,17 @@ async function main() {
       spawned = spawned.filter(
         (e) => !isBombUpgradePerson(e.objType) && !isGrumble(e.objType),
       );
+    }
+    // InitUnderworldPersonC: full Triforce dismisses L9 gatekeeper + opens shutters.
+    const l9Gate = filterLevel9EntranceGate(spawned, dungeon.level, inv);
+    spawned = l9Gate.remaining;
+    if (l9Gate.openShutters) {
+      openRoomShutters(dungeon.doorState, room);
+      dungeon.clearedRooms.add(id);
+      if (id === roomId) {
+        roomClearedLatch = true;
+        refreshDungeonRoomVisual();
+      }
     }
     tagEnemyHomeRoom(spawned, id);
     const fresh = filterUnoccupiedSpawnPoints(spawned, enemies, spawnClaims);
@@ -2767,6 +3050,7 @@ async function main() {
         closeShutterBehind(dungeon.doorState, room, enteredSide);
       }
       restoreClearedShutters(dungeon.doorState, dungeon.clearedRooms, level);
+      sealLastBossShutters(dungeon.doorState, level, dungeon.lastBossDefeated);
 
       await ensureUwRoom(room.roomId, false);
       const entry = uwStream.get(room.roomId);
@@ -2948,9 +3232,9 @@ async function main() {
     try {
       let tex;
       try {
-        tex = await Assets.load(bgUrl(nextRoomId, inv.quest));
+        tex = markScaled(await Assets.load(bgUrl(nextRoomId, inv.quest)));
       } catch {
-        tex = await Assets.load(bgUrl(nextRoomId, 1));
+        tex = markScaled(await Assets.load(bgUrl(nextRoomId, 1)));
       }
       tex.source.scaleMode = 'nearest';
       // Re-check after await — raft / death / another load may have started.
@@ -3128,6 +3412,7 @@ async function main() {
       clearEnemies();
       spawnedRooms = new Set();
       spawnClaims = new Set();
+      syncOwRoomItem();
       spawnOwRoomEnemies(mapIndex, spawn.dir ?? link.dir);
       applyPlayCamera();
 
@@ -3191,6 +3476,7 @@ async function main() {
 
       // Keep shutter / bomb / key opens before painting door faces.
       restoreClearedShutters(dungeon.doorState, dungeon.clearedRooms, level);
+      sealLastBossShutters(dungeon.doorState, level, dungeon.lastBossDefeated);
 
       // TriggeredDoorCmd $02: the shutter Link walked through shuts behind
       // him. Cleared rooms stay open — their trigger re-fires immediately.
@@ -3379,10 +3665,23 @@ async function main() {
         roomKillCount: 0,
         lastBossDefeated: Boolean(saved?.lastBoss),
       };
+      // Older builds set lastBoss on any boss kill (e.g. Patra). That marked
+      // Ganon's room cleared and skipped the fight. Heal those saves unless the
+      // Triforce of Power was actually collected.
+      if (dungeon.lastBossDefeated && !inv.triforceOfPower) {
+        dungeon.lastBossDefeated = false;
+        const bossRoomId = level.bossRoom;
+        if (bossRoomId != null) dungeon.clearedRooms.delete(bossRoomId & 0xff);
+      }
       applyEnemyPaletteForMode();
       if (saved?.doors) {
         for (const k of saved.doors) dungeon.doorState.open.add(k);
       }
+      sealLastBossShutters(
+        dungeon.doorState,
+        level,
+        dungeon.lastBossDefeated,
+      );
       inv.map = saved?.map ?? 0;
       inv.compass = saved?.compass ?? 0;
         owStream.clear();
@@ -3446,16 +3745,19 @@ async function main() {
     caveInteractLatch = false;
     caveExitLatch = true; // ignore exit until Link walks further inside
     gambleAmounts = cave.kind === 'gamble' ? rollMoneyGameAmounts() : null;
+    gambleResolved = false;
     // Bombs/keys/etc. restock every visit; do not keep prior shop purchases
     // in the saved `caveTaken` set or the slot vanishes forever.
     clearShopVisitTaken(cave, caveTaken);
     // `roomId` is still the OW entrance screen (Mode B does not change it).
+    // Money game: stake "-10" under each rupee until a pick reveals results.
     caveScene.openWith(
       cave,
       caveTaken,
       potionShopWaresHidden(cave, inv),
       inv,
       roomId,
+      cave.kind === 'gamble' ? moneyGameStakeLabels() : null,
     );
     audio?.playSfx('stairs');
     setStatus(
@@ -3464,6 +3766,15 @@ async function main() {
     titleEl.textContent = `Cave $${caveId.toString(16)}`;
     refreshHud();
     openCaveDialogue(cave);
+    // NES deducts the door fee when the cave text runs — not on walk-up.
+    if (cave.kind === 'door') {
+      const result = tryDoorRepair(inv, cave, caveTakenState());
+      if (result.ok) {
+        setStatus(result.label);
+        audio?.playSfx('rupee');
+        refreshHud();
+      }
+    }
   }
 
   async function leaveCave(opts = {}) {
@@ -3474,6 +3785,7 @@ async function main() {
       y: opts.y ?? caveReturn.y,
       dir: opts.dir ?? caveReturn.dir,
     };
+    textBox.close();
     invUi.close();
     world.y = 0;
     // Hide cave first — loadOverworldScreen may rebuild sprite caches, and
@@ -3557,37 +3869,41 @@ async function main() {
 
     if (cave.kind === 'gamble') {
       // Three amounts sit at the ware columns ($58/$78/$98, Y=$98).
-      if (Math.abs(link.y - CAVE_WARE_Y) > 12) return;
-      let slot = -1;
-      for (let i = 0; i < CAVE_WARE_XS.length; i += 1) {
-        if (Math.abs(link.x - CAVE_WARE_XS[i]) < 12) {
-          slot = i;
-          break;
-        }
-      }
-      if (slot < 0) return;
+      // One pick per visit — ROM HandleMoneyGame then idles in state 8.
+      // Use the same ware hitbox as stepCave's latch, or a looser check here
+      // latches a no-op and never retries when Link steps fully onto the slot.
+      if (gambleResolved) return;
+      const ware = wareUnderLink(
+        link,
+        caveWareSlots(cave, caveTaken, inv, caveEntranceRoomId()),
+      );
+      if (!ware) return;
       const amounts = gambleAmounts ?? rollMoneyGameAmounts();
       gambleAmounts = amounts;
-      const result = tryGamble(inv, cave, slot, amounts);
+      const result = tryGamble(inv, cave, ware.index, amounts);
       setStatus(result.ok ? result.label : (result.reason ?? 'Gamble'));
-      refreshHud();
-      return;
-    }
-
-    if (cave.kind === 'door') {
-      const near =
-        Math.abs(link.x - 0x78) < 16 && Math.abs(link.y - 0x80) < 20;
-      if (!near) return;
-      const result = tryDoorRepair(inv, cave, caveTakenState());
-      setStatus(result.ok ? result.label : (result.reason ?? 'Door'));
+      if (result.ok) {
+        gambleResolved = true;
+        // Reveal signed win/loss under all three rupees (PrependSignToPrice).
+        caveScene.refreshWares(
+          caveTaken,
+          false,
+          inv,
+          moneyGameResultLabels(amounts),
+        );
+        audio?.playSfx('rupee');
+      }
       refreshHud();
       return;
     }
 
     if (cave.kind === 'moblin' || cave.kind === 'money') {
-      const near =
-        Math.abs(link.x - 0x78) < 16 && Math.abs(link.y - 0x98) < 20;
-      if (!near) return;
+      // NES: touch the floating rupee (middle ware), not the Moblin sprite.
+      const ware = wareUnderLink(
+        link,
+        caveWareSlots(cave, caveTaken, inv, caveEntranceRoomId()),
+      );
+      if (!ware) return;
       const result = tryMoblinGift(inv, cave, caveTakenState());
       setStatus(result.ok ? result.label : (result.reason ?? 'Nothing'));
       if (result.ok) {
@@ -3650,23 +3966,12 @@ async function main() {
       const overWare = wareUnderLink(link, slots);
       const overRoad =
         cave.kind === 'road' ? roadStairUnderLink(link) : -1;
-      // Only NPC-talk caves use proximity to the dweller; gift/shop use ware touch.
-      const npcTalk =
-        cave.kind === 'gamble'
-        || cave.kind === 'door'
-        || cave.kind === 'moblin'
-        || cave.kind === 'money';
-      const nearNpc =
-        npcTalk
-        && Math.abs(link.x - 0x78) < 16
-        && Math.abs(link.y - 0x90) < 24;
+      // Moblin / gamble / shop / gift: ware touch. Door repair charges on enter.
       const targetKey = overWare
         ? overWare.key
         : overRoad >= 0
           ? `road:${overRoad}`
-          : nearNpc
-            ? 'npc'
-            : null;
+          : null;
       if (!targetKey) {
         caveInteractLatch = false;
       } else if (caveInteractLatch !== targetKey) {
@@ -3698,6 +4003,7 @@ async function main() {
       patchOwBgSquare(secret.col, secret.row, tilesForSecretMarker(secret.marker));
     }
     if (opened.length) {
+      syncOwBombCracks(owStream.get(roomId), roomId);
       audio?.playSfx('secret');
       setStatus(`Secret revealed (${action})!`);
     }
@@ -3740,8 +4046,10 @@ async function main() {
     const next = nesColor(nesIndex);
     if (!next) return;
     const canvas = document.createElement('canvas');
-    canvas.width = spr.texture.width;
-    canvas.height = spr.texture.height;
+    // Texture width is in world units once the source carries a resolution;
+    // the backing store has to match the real pixels or the repaint rescales.
+    canvas.width = spr.texture.source.pixelWidth;
+    canvas.height = spr.texture.source.pixelHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
@@ -3760,9 +4068,7 @@ async function main() {
     }
     ctx.putImageData(image, 0, 0);
     owWaterRgb = next;
-    const tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
-    spr.texture = tex;
+    spr.texture = markScaled(Texture.from(canvas));
     bg = spr;
   }
 
@@ -3889,6 +4195,9 @@ async function main() {
     if (!pages.length) return;
     applyStoryMarks(marks);
     textBox.open(pages, { kind: 'cave' });
+    // Cave physics keep running under the box; say how to clear it so a long
+    // shop pitch does not look like the game froze on the mouth tile.
+    setStatus('Press A / B / Start to continue');
   }
 
   /**
@@ -4285,8 +4594,8 @@ async function main() {
     const spr = owStream.get(targetRoomId)?.sprite ?? null;
     if (!spr) return;
     const canvas = document.createElement('canvas');
-    canvas.width = spr.texture.width;
-    canvas.height = spr.texture.height;
+    canvas.width = spr.texture.source.pixelWidth;
+    canvas.height = spr.texture.source.pixelHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
@@ -4305,12 +4614,93 @@ async function main() {
       const img = /** @type {CanvasImageSource | null} */ (sheet?.source?.resource);
       if (!img) continue;
       const [dx, dy] = positions[i];
-      ctx.drawImage(img, src.sx, src.sy, 8, 8, col * 16 + dx, row * 16 + dy, 8, 8);
+      const T = tilePx();
+      const dxPx = px(col * 16 + dx);
+      const dyPx = px(row * 16 + dy);
+      // common_misc is extracted as sprites (color 0 = transparent). As OW BG,
+      // slot 0 is opaque black — e.g. bomb cave mouth $F3/$24/$F3/$24. Without
+      // this underlay the rock shows through the top half and the mouth looks short.
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(dxPx, dyPx, T, T);
+      ctx.drawImage(
+        img,
+        src.sx * scale(),
+        src.sy * scale(),
+        T,
+        T,
+        dxPx,
+        dyPx,
+        T,
+        T,
+      );
     }
-    const tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
-    spr.texture = tex;
+    spr.texture = markScaled(Texture.from(canvas));
     if (targetRoomId === roomId) bg = spr;
+  }
+
+  /**
+   * Tint unopened candle-burn trees opposite the local forest colour so they
+   * stand out from neighboring canopy (green ↔ orange). Safe to call on screens
+   * that already baked the hint — missing source foliage makes it a no-op.
+   * @param {import('pixi.js').Sprite | null} spr
+   * @param {{ secrets?: object[], attrs?: { outerPalette?: number, innerPalette?: number } }} pack
+   * @param {number} mapIndex
+   */
+  function applyBurnTreeColorHints(spr, pack, mapIndex) {
+    const rowsRgb = owPaletteSet?.rowsRgb;
+    if (!spr || !rowsRgb || !pack?.attrs) return;
+    const secrets = pack.secrets ?? [];
+    if (!secrets.length) return;
+
+    /** @type {{ col: number, row: number, from: number, to: number }[]} */
+    const jobs = [];
+    for (const secret of secrets) {
+      if (secretAction(secret) !== 'burn') continue;
+      const key = `${mapIndex}:${secret.row}:${secret.col}`;
+      if (owSecretsRevealed.has(key)) continue;
+      const from = paletteRowForSquare(
+        secret.row,
+        secret.col,
+        pack.attrs.outerPalette ?? 0,
+        pack.attrs.innerPalette ?? 0,
+      );
+      const to = contrastingTreePaletteRow(from);
+      if (from === to) continue;
+      if (!rowsRgb[from] || !rowsRgb[to]) continue;
+      jobs.push({ col: secret.col, row: secret.row, from, to });
+    }
+    if (!jobs.length) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = spr.texture.source.pixelWidth;
+    canvas.height = spr.texture.source.pixelHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = false;
+    const src = /** @type {CanvasImageSource | null} */ (spr.texture.source.resource);
+    if (!src) return;
+    ctx.drawImage(src, 0, 0);
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let changed = false;
+    const enhanced = scale() === 2;
+    for (const job of jobs) {
+      if (
+        recolorBurnTreeSquareRgba(
+          image.data,
+          canvas.width,
+          job.col,
+          job.row,
+          rowsRgb[job.from],
+          rowsRgb[job.to],
+          { enhanced, nesPxScale: scale() },
+        )
+      ) {
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    ctx.putImageData(image, 0, 0);
+    spr.texture = markScaled(Texture.from(canvas));
   }
 
   /**
@@ -4384,7 +4774,10 @@ async function main() {
     const inCurrentRoom = homeRoom === (roomId & 0xff);
     if (mode === 'dungeon' && dungeon && inCurrentRoom) {
       dungeon.roomKillCount = (dungeon.roomKillCount ?? 0) + 1;
-      if (isBossType(e.objType) && !isZelda(e.objType)) {
+      // NES LastBossDefeated ($672) is set only after Ganon's death sequence —
+      // never on Patra / other bosses. Using isBossType here opened Ganon's
+      // LAST_BOSS shutters (and latched clearedRooms) as soon as Patra died.
+      if (isGanon(e.objType)) {
         dungeon.lastBossDefeated = true;
       }
     }
@@ -4573,11 +4966,24 @@ async function main() {
   }
 
   function stepRoomSecrets() {
+    if (mode === 'overworld') {
+      tryPickupOwRoomItem();
+      return;
+    }
     if (mode !== 'dungeon' || !dungeon?.room) return;
     const effect = roomSecretEffect(dungeon.room);
     // Room clear is a question about *this* room. Asking it of the whole
     // streamed list let a visible neighbour's foes hold the shutters shut.
     const roomFoes = enemiesInRoom(enemies, dungeon.room.roomId);
+
+    // InitUnderworldPersonC live path (already spawned before the gate check).
+    if (dismissLevel9EntranceGate(roomFoes, dungeon.level, inv)) {
+      const sides = openRoomShutters(dungeon.doorState, dungeon.room);
+      dungeon.clearedRooms.add(dungeon.room.roomId);
+      roomClearedLatch = true;
+      if (sides.length) refreshDungeonRoomVisual();
+      setStatus('Triforce complete — path opens');
+    }
 
     // Money-or-life: pay by walking onto heart (−1♥) or rupee (−50) ware.
     if (effect === SECRET.MONEY_OR_LIFE && !roomClearedLatch) {
@@ -4611,7 +5017,9 @@ async function main() {
     const allDead = roomAllDead(roomFoes);
     const ready =
       effect === SECRET.LAST_BOSS
-        ? Boolean(dungeon.lastBossDefeated)
+        // Flag alone is not enough: a stale lastBoss (or wrong setter) must not
+        // latch the room while Ganon is still alive / invisible.
+        ? Boolean(dungeon.lastBossDefeated) && allDead
         : effect === SECRET.MONEY_OR_LIFE
           ? moneyOrLifeReady(roomFoes)
           : allDead;
@@ -4884,7 +5292,7 @@ async function main() {
     for (const e of enemies) {
       if (!enemyCombatActive(e)) continue;
       if (!enemyIsClockFrozen(e)) {
-        stepEnemy(e, bounds, tileGrid, {
+        stepEnemy(e, enemyBoundsFor(e), tileGrid, {
           chase,
           link,
           enemies,
@@ -5518,6 +5926,13 @@ async function main() {
       spawnOwRoomEnemies(roomId, cross.dir);
       return true;
     }
+    // Do not soft-enter an unbound room: that nulls `screen` and the ticker
+    // skips stepOverworld (black playfield). Raft south-from-island is the
+    // common trigger — dock `$55` may have been pruned while exploring `$45`.
+    if (!owRoomReady(cross.nextRoomId)) {
+      prefetchOwRoom(cross.nextRoomId);
+      return false;
+    }
     const fromRoom = roomId & 0xff;
     rebaseEntities(cross.dir);
     link.x = cross.x;
@@ -5535,21 +5950,25 @@ async function main() {
   }
 
   function stepOverworld(inputMask) {
-    // Hold the world still for the frame or two a not-yet-streamed room needs
-    // rather than stepping against the previous screen's tiles and warps.
-    if (busy || !owScreenBound()) return;
-
-    // Pond fairy first so ObjState $40 halt applies to this frame's movement.
-    const fairyHalt = stepPondFairyFountain();
-    const moveMask = fairyHalt ? 0 : inputMask;
+    if (busy) return;
 
     // Raft ride freezes normal movement (UpdateDock halt). Must run even if
     // Link is dying — otherwise combat can zero hearts mid-ride and the game
     // loop skips physics while the raft sprite is left stranded.
+    // Also runs while `screen` is briefly unbound so a dock soft-enter cannot
+    // soft-lock the ride on a black playfield.
     if (raftRide.active) {
+      if (!owScreenBound()) {
+        prefetchOwRoom(roomId);
+      }
       const r = stepRaftRide(link, raftRide, roomId);
       if (r?.cross) {
         // Mid-ride seam: keep scrolling onto the northern shore.
+        if (!owRoomReady(r.cross.nextRoomId)) {
+          prefetchOwRoom(r.cross.nextRoomId);
+          syncRaftSprite();
+          return;
+        }
         const fromRoom = roomId & 0xff;
         rebaseEntities(r.cross.dir);
         link.x = r.cross.x;
@@ -5571,6 +5990,14 @@ async function main() {
       syncRaftSprite();
       return;
     }
+
+    // Hold the world still for the frame or two a not-yet-streamed room needs
+    // rather than stepping against the previous screen's tiles and warps.
+    if (!owScreenBound()) return;
+
+    // Pond fairy first so ObjState $40 halt applies to this frame's movement.
+    const fairyHalt = stepPondFairyFountain();
+    const moveMask = fairyHalt ? 0 : inputMask;
 
     if (inv.dead) return;
 
@@ -5902,6 +6329,7 @@ async function main() {
     dungeon = null;
     caveTaken.clear();
     owSecretsRevealed.clear();
+    owItemsTaken.clear();
     hintMarks.clear();
     dungeonProgress.clear();
     textBox.close();
@@ -5928,6 +6356,7 @@ async function main() {
     saveName = (name || 'LINK').slice(0, 8).toUpperCase();
     caveTaken.clear();
     owSecretsRevealed.clear();
+    owItemsTaken.clear();
     hintMarks.clear();
     dungeonProgress.clear();
     textBox.close();
@@ -5948,6 +6377,7 @@ async function main() {
         inv,
         owSecretsRevealed,
         caveTaken,
+        owItemsTaken,
         hintMarks,
         dungeonProgress,
       });
@@ -6019,6 +6449,11 @@ async function main() {
     }
   });
   titleUi.setSlots(saveStore.listSlots());
+  if (ganonResetResult?.slots.length || ganonResetResult?.practice) {
+    setStatus(
+      `Ganon reset — Continue slot ${(ganonResetResult.slots[0] ?? 0) + 1} to re-fight`,
+    );
+  }
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F5') {
@@ -6190,18 +6625,21 @@ async function main() {
       acc -= stepMs;
       frameCounter = (frameCounter + 1) & 0xff;
 
-      // The world holds still while someone is talking, the same way the
-      // submenu freezes it — nothing steps, nothing spawns, nothing hits Link.
-      // Death outranks dialogue: mode $11 must never be left stuck behind a box.
-      if (invUi.open || (textBox.active && !inv.dead)) {
-        continue;
-      }
-
       // UpdateHeartsAndRupees → World_ChangeRupees: spin the status-bar total
       // one step every other frame, chirping the heart tune as it goes.
+      // Keep rolling during cave speech so door-repair / shop fees are visible
+      // while the text box is up (NES ticks the counter independently).
       if (stepRupeeRoll(rupeeRoll, inv.rupees ?? 0).playTune) {
         audio?.playSfx('text');
         refreshHud();
+      }
+
+      // The world holds still while someone is talking, the same way the
+      // submenu freezes it — nothing steps, nothing spawns, nothing hits Link.
+      // That includes caves: walking out mid-speech left the overlay on the
+      // overworld. Death outranks dialogue either way.
+      if (invUi.open || (textBox.active && !inv.dead)) {
+        continue;
       }
 
       // Keep an in-progress raft ride ticking even after death so Link is not
@@ -6245,7 +6683,9 @@ async function main() {
       const mask = inv.paralyzed > 0 || inv.dead ? 0 : input.mask();
       if (mode === 'cave') {
         stepCave(mask);
-      } else if (mode === 'overworld' && screen) {
+      } else if (mode === 'overworld' && (screen || raftRide.active)) {
+        // Raft can outlive a brief unbound `screen` after a dock soft-enter;
+        // keep stepping so UpdateDock still lands.
         stepOverworld(mask);
       } else if (mode === 'dungeon') {
         stepDungeon(mask);
@@ -6255,9 +6695,17 @@ async function main() {
     if (mode === 'cave' && !invUi.open) caveScene.tick();
     textBox.tick();
     // Radar-only repaint: the mark pulse must breathe without rebuilding the
-    // sprite-heavy half of the status bar every frame.
+    // sprite-heavy half of the status bar every frame. Soft OW/UW room crosses
+    // update `roomId` without `refreshHud`, so pass locator state here or the
+    // player dot sticks until some other HUD event happens to catch up.
     uiFrame = (uiFrame + 1) & 0xffff;
-    hud.pulseMap(uiFrame, currentMapMarks(), currentDungeonMapMarks());
+    const mapRoomId =
+      mode === 'cave' ? (caveReturn?.roomId ?? roomId) : roomId;
+    hud.pulseMap(uiFrame, currentMapMarks(), currentDungeonMapMarks(), {
+      roomId: mapRoomId,
+      mode,
+      dungeon,
+    });
 
     const attacking = isSwordActive(sword);
     const drawY = mode === 'overworld' ? link.y + 2 : link.y;
@@ -6267,7 +6715,10 @@ async function main() {
     }
     linkSprite.texture = itemLiftActive()
       ? frames.textureForLift()
-      : frames.textureFor(link.dir, link.animFrame, attacking);
+      : frames.textureFor(link.dir, link.animFrame, {
+          attacking,
+          magicShield: Boolean(inv.magicShield),
+        });
     linkSprite.x = link.x;
     linkSprite.y = drawY;
     linkSprite.alpha = inv.invuln > 0 && (inv.invuln & 2) ? 0.45 : 1;

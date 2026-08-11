@@ -112,6 +112,9 @@ export function createCaveTileGrid() {
 export function caveWareSlots(cave, taken, inv = null, roomId = null) {
   const takeAnyGone =
     cave.kind === 'take_any' && taken.has(caveTakenKey(cave, 'any', roomId));
+  const moblinGiftGone =
+    (cave.kind === 'moblin' || cave.kind === 'money')
+    && taken.has(caveTakenKey(cave, 'gift', roomId));
   return activeSlots(cave)
     .filter((s) => s.item !== ITEM.NOTHING)
     .map((s) => {
@@ -123,6 +126,7 @@ export function caveWareSlots(cave, taken, inv = null, roomId = null) {
         key,
         gone:
           takeAnyGone
+          || moblinGiftGone
           || taken.has(key)
           || alreadyOwnsShopItem(inv, s.item),
       };
@@ -161,6 +165,20 @@ export function roadStairUnderLink(link) {
 }
 
 /**
+ * Touch box for door-repair dwellers (legacy; door repair charges on enter).
+ * Kept for layout/tests — Moblin gifts use ware touch like NES.
+ * Latch + pay must share this — a wider latch with a tighter pay check
+ * eats the interaction on approach from the south mouth and never retries.
+ * @param {{ x: number, y: number }} link
+ */
+export function nearCaveNpc(link) {
+  return (
+    Math.abs(link.x - CAVE_DWELLER_X) < 16
+    && Math.abs(link.y - CAVE_DWELLER_Y) < 24
+  );
+}
+
+/**
  * Bottom-of-cave control hint for the Mode-B interior.
  * @param {string} kind CaveKind
  */
@@ -174,6 +192,9 @@ export function caveHintLine(kind) {
     case 'shop':
     case 'potion':
       return 'WALK TO ITEM  SOUTH TO LEAVE';
+    case 'moblin':
+    case 'money':
+      return 'WALK TO RUPEE  SOUTH TO LEAVE';
     default:
       return 'SOUTH TO LEAVE';
   }

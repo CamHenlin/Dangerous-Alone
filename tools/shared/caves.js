@@ -6,6 +6,8 @@
  */
 
 import {
+  ARROW,
+  B_ITEM,
   CANDLE_TIER,
   SWORD,
   addBombs,
@@ -62,10 +64,12 @@ export function classifyCave(caveId, textFlags, itemFlags) {
   if (caveId === 0x12 || caveId === 0x13) return 'give';
   if (caveId === 0x14) return 'road';
   if (caveId === 0x18) return 'letter';
-  if (caveId === 0x16) return 'money';
+  // $16 — "LET'S PLAY MONEY MAKING GAME" (CaveFlags money-game / HandleMoneyGame).
+  if (caveId === 0x16) return 'gamble';
   if (caveId === 0x17) return 'door';
   if (caveId === 0x1a) return 'potion';
-  if (caveId === 0x1b || caveId === 0x1c) return 'gamble';
+  // $1B/$1C — "PAY ME AND I'LL TALK" pay-for-hint caves (flagsT), not gambling.
+  if (caveId === 0x1b || caveId === 0x1c) return 'clue';
   if (caveId >= 0x1d && caveId <= 0x20) return 'shop';
   if (caveId >= 0x21 && caveId <= 0x23) return 'moblin';
   if (itemFlags.flagsH && (textFlags & 0x40)) return 'gamble';
@@ -82,12 +86,15 @@ export function caveIndex(caveId) {
 
 /**
  * Shop/potion prices live 4 rows earlier than items (Data Crystal).
+ * Moblin secret amounts share that same shifted strip: native rows for
+ * shops $1D–$1F hold [0,30,0] / [0,100,0] / [0,10,0], which caves
+ * $21–$23 read via caveIndex − 4 (middle price → PostCredit).
  * @param {number} caveId
  * @param {CaveKind} kind
  */
 export function priceRowIndex(caveId, kind) {
   const idx = caveIndex(caveId);
-  if (kind === 'shop' || kind === 'potion') {
+  if (kind === 'shop' || kind === 'potion' || kind === 'moblin' || kind === 'money') {
     return Math.max(0, idx - SHOP_PRICE_DELTA);
   }
   return idx;
@@ -259,14 +266,19 @@ export function grantCaveItem(inv, itemId) {
       grantCandle(inv, CANDLE_TIER.RED);
       return 'Red candle';
     case ITEM.WOOD_ARROW:
-      if (inv.arrow < 1) inv.arrow = 1;
+      if (inv.arrow < ARROW.WOOD) inv.arrow = ARROW.WOOD;
+      if (inv.bow && inv.selectedB === B_ITEM.NONE) inv.selectedB = B_ITEM.BOW;
       return 'Arrows';
     case ITEM.SILVER_ARROW:
-      inv.arrow = 2;
+      inv.arrow = ARROW.SILVER;
+      if (inv.bow && inv.selectedB === B_ITEM.NONE) inv.selectedB = B_ITEM.BOW;
       return 'Silver arrows';
     case ITEM.BOW:
+      // Arrows stay a separate shop purchase — do not soft-grant InvArrow.
       inv.bow = 1;
-      if (inv.arrow < 1) inv.arrow = 1;
+      if (inv.arrow >= ARROW.WOOD && inv.selectedB === B_ITEM.NONE) {
+        inv.selectedB = B_ITEM.BOW;
+      }
       return 'Bow';
     case ITEM.MAGIC_KEY:
       inv.magicKey = 1;
@@ -437,6 +449,8 @@ export function tryBuyCaveSlot(inv, cave, slotIndex, state = {}) {
 /** MoneyGameLossAmounts / win pool (Z_01.asm:63). */
 export const MONEY_GAME_LOSS = Object.freeze([0x0a, 0x28]);
 export const MONEY_GAME_WIN = Object.freeze([0x14, 0x32]);
+/** Stake shown under each rupee before a pick (`InvRupees >= $0A`). */
+export const MONEY_GAME_STAKE = MONEY_GAME_LOSS[0];
 /** MoneyGamePermutations @ Z_01.asm:66 — flattened triplets of pool indexes. */
 export const MONEY_GAME_PERMUTATIONS = Object.freeze([
   0, 1, 2, 1, 2, 0, 2, 0, 1, 0, 2, 1, 2, 1, 0, 1, 0, 2,
@@ -469,7 +483,33 @@ export function rollMoneyGameAmounts(rng = Math.random) {
 }
 
 /**
+ * Signed price string for a money-game amount (NES PrependSignToPrice).
+ * Wins (+20/+50) get '+'; losses get '-'.
+ * @param {number} amount signed delta
+ */
+export function formatMoneyGameAmount(amount) {
+  const n = Math.abs(amount | 0);
+  return `${amount > 0 ? '+' : '-'}${n}`;
+}
+
+/** Labels under each rupee before a pick — always the stake. */
+export function moneyGameStakeLabels() {
+  const label = formatMoneyGameAmount(-MONEY_GAME_STAKE);
+  return [label, label, label];
+}
+
+/**
+ * Labels revealed after a pick — all three rolled amounts with signs.
+ * @param {number[]} amounts signed deltas from {@link rollMoneyGameAmounts}
+ */
+export function moneyGameResultLabels(amounts) {
+  return [0, 1, 2].map((i) => formatMoneyGameAmount(amounts[i] ?? 0));
+}
+
+/**
  * Apply one money-game slot after the player walks onto a ware.
+ * ROM: HandleMoneyGame requires ≥10 rupees, then credits 20|50 or debits 10|40
+ * (floored at 0) for the chosen slot — Z_01.asm:925.
  * @param {object} inv
  * @param {object} cave
  * @param {number} [slotIndex] 0–2
@@ -479,7 +519,9 @@ export function rollMoneyGameAmounts(rng = Math.random) {
 export function tryGamble(inv, cave, slotIndex = 1, amountsOrRng = Math.random) {
   // Legacy boolean coin: true → +20, false → −10.
   if (typeof amountsOrRng === 'boolean') {
-    if (inv.rupees < 10) return { ok: false, reason: 'Need 10 rupees' };
+    if (inv.rupees < MONEY_GAME_STAKE) {
+      return { ok: false, reason: `Need ${MONEY_GAME_STAKE} rupees` };
+    }
     if (amountsOrRng) {
       inv.rupees = Math.min(255, inv.rupees + 20);
       return { ok: true, label: 'Won 20!', rupees: inv.rupees, delta: 20 };
@@ -498,10 +540,12 @@ export function tryGamble(inv, cave, slotIndex = 1, amountsOrRng = Math.random) 
     amounts = rollMoneyGameAmounts();
   }
 
-  const delta = amounts[slotIndex % 3] ?? 0;
-  if (delta < 0 && inv.rupees < -delta) {
-    return { ok: false, reason: `Need ${-delta} rupees` };
+  // Stake gate matches ROM InvRupees < $0A — not the chosen loss amount.
+  if (inv.rupees < MONEY_GAME_STAKE) {
+    return { ok: false, reason: `Need ${MONEY_GAME_STAKE} rupees` };
   }
+
+  const delta = amounts[slotIndex % 3] ?? 0;
   inv.rupees = Math.max(0, Math.min(255, inv.rupees + delta));
   if (delta > 0) {
     return { ok: true, label: `Won ${delta}!`, rupees: inv.rupees, delta };
@@ -510,7 +554,23 @@ export function tryGamble(inv, cave, slotIndex = 1, amountsOrRng = Math.random) 
 }
 
 /**
+ * Door-repair list prices are $05/$0A/$14; NES takes the largest (20).
+ * `find(price > 0)` would wrongly charge 5.
+ * @param {object} cave
+ */
+export function doorRepairPrice(cave) {
+  let max = 0;
+  for (const s of cave?.slots ?? []) {
+    const p = s?.price ?? 0;
+    if (p > max) max = p;
+  }
+  return max > 0 ? max : 20;
+}
+
+/**
  * Door repair charge (pay once per cave room — GetRoomFlagUWItemState).
+ * NES takes the fee as soon as the cave text runs; if Link is short, it
+ * drains whatever he has (never refuses for being broke).
  * @param {object} inv
  * @param {object} cave
  * @param {{ taken?: Set<string>, roomId?: number | null }} [state]
@@ -520,29 +580,33 @@ export function tryDoorRepair(inv, cave, state = {}) {
   if (state.taken?.has(key)) {
     return { ok: false, reason: 'Already paid' };
   }
-  const price = cave.slots.find((s) => s.price > 0)?.price ?? 20;
-  if (inv.rupees < price) {
-    return { ok: false, reason: `Need ${price} rupees` };
-  }
-  inv.rupees -= price;
+  const price = doorRepairPrice(cave);
+  const paid = Math.min(Math.max(0, inv.rupees | 0), price);
+  inv.rupees = (inv.rupees | 0) - paid;
   state.taken?.add(key);
-  return { ok: true, label: `Paid ${price} for the door`, price };
+  return { ok: true, label: `Paid ${paid} for the door`, price: paid };
 }
 
 /**
- * Moblin secret money — grant price amount as rupees (ROM stores amounts in price bytes).
+ * Moblin secret money — NES PostCredit(CavePrices+1): middle price byte.
+ * Walk onto the floating rupee (ware slot 1); amount is 30 / 100 / 10.
  * @param {object} inv
  * @param {object} cave
  * @param {{ taken?: Set<string>, roomId?: number | null }} state
  */
 export function tryMoblinGift(inv, cave, state = {}) {
-  const key = caveTakenKey(cave, 'gift', state.roomId ?? null);
+  const roomId = state.roomId ?? null;
+  const key = caveTakenKey(cave, 'gift', roomId);
   if (state.taken?.has(key)) {
     return { ok: false, reason: 'Already looted' };
   }
-  const amount = cave.slots.find((s) => s.price > 0 && s.price < 255)?.price ?? 30;
+  // Middle slot only (CavePrices+1). Skip $00/$FF filler from mis-indexed rows.
+  const mid = cave.slots[1]?.price ?? 0;
+  const amount = mid > 0 && mid < 255 ? mid : 30;
   inv.rupees = Math.min(255, inv.rupees + amount);
   state.taken?.add(key);
+  // Clear the floating rupee sprite (caveWareSlots keys by slot index).
+  state.taken?.add(caveTakenKey(cave, 1, roomId));
   return { ok: true, label: `Moblin gave ${amount} rupees`, amount };
 }
 

@@ -670,6 +670,11 @@ export function stepLink(
 
     moveDir = resolveLinkDir(link, boundMask, tileGrid, roomId, tileOpts);
     if (!moveDir) {
+      // BoundByRoom may clear the only held direction (e.g. RIGHT at X=$D0).
+      // Still adopt that facing so locked key-door bumps can unlock — movement
+      // stays blocked by the lip / solid face.
+      const faceOnly = pickSingleDir(inputMask);
+      if (faceOnly) link.dir = faceOnly;
       link.animCounter = LINK_ANIM_PERIOD;
       return;
     }
@@ -738,20 +743,106 @@ export function stepLink(
 }
 
 /**
+ * Link walk metatile halves for drawing.
+ *
+ * Facing down starts from shieldless CHR `$08`/`$0A`. NES
+ * `Link_EndMoveAndAnimate` then patches the left OAM tile for the wood
+ * shield (`+$50` → `$58`/`$5A`) or Magical Shield head tiles (`$60`).
+ * `@FixHFlip` clears H-flip on the patched sprite when the pre-patch tile
+ * was `$0A` (only one downward shield frame).
+ *
+ * Other facings keep shield art baked into the walk CHR; `flipH` mirrors the
+ * whole 16×16 (≡ swap halves + flip each), matching side/up walk.
+ *
  * @param {number} dir
  * @param {number} animFrame
- * @returns {{ baseTile: number, flipH: boolean }}
+ * @param {{ magicShield?: boolean }} [opts]
+ * @returns {{
+ *   leftTile: number,
+ *   rightTile: number,
+ *   flipLeft: boolean,
+ *   flipRight: boolean,
+ *   baseTile: number,
+ *   flipH: boolean,
+ * }}
  */
-export function linkWalkSprite(dir, animFrame) {
+export function linkWalkSprite(dir, animFrame, opts = {}) {
   const frame = animFrame & 1;
-  if (dir & DIR.UP) {
-    return { baseTile: 0x0c, flipH: Boolean(frame) };
-  }
+  const magic = Boolean(opts.magicShield);
+
   if (dir & DIR.DOWN) {
-    return { baseTile: 0x08, flipH: Boolean(frame) };
+    // After optional walk H-flip swap, patch left tile only.
+    if (magic) {
+      // LinkHeadTiles `$08`/`$0A` → LinkHeadMagicShieldTiles `$60`.
+      if (frame) {
+        return {
+          leftTile: 0x60,
+          rightTile: 0x08,
+          flipLeft: false,
+          flipRight: true,
+          baseTile: 0x60,
+          flipH: true,
+        };
+      }
+      return {
+        leftTile: 0x60,
+        rightTile: 0x0a,
+        flipLeft: false,
+        flipRight: false,
+        baseTile: 0x60,
+        flipH: false,
+      };
+    }
+    // Wood shield: left `$08`/`$0A` → `$58`/`$5A`.
+    if (frame) {
+      return {
+        leftTile: 0x5a,
+        rightTile: 0x08,
+        flipLeft: false,
+        flipRight: true,
+        baseTile: 0x5a,
+        flipH: true,
+      };
+    }
+    return {
+      leftTile: 0x58,
+      rightTile: 0x0a,
+      flipLeft: false,
+      flipRight: false,
+      baseTile: 0x58,
+      flipH: false,
+    };
   }
-  if (dir & DIR.LEFT) {
-    return { baseTile: frame ? 0x04 : 0x00, flipH: true };
+
+  let baseTile;
+  let flipH;
+  if (dir & DIR.UP) {
+    baseTile = 0x0c;
+    flipH = Boolean(frame);
+  } else if (dir & DIR.LEFT) {
+    baseTile = frame ? 0x04 : 0x00;
+    flipH = true;
+  } else {
+    baseTile = frame ? 0x04 : 0x00;
+    flipH = false;
   }
-  return { baseTile: frame ? 0x04 : 0x00, flipH: false };
+
+  if (flipH) {
+    return {
+      leftTile: baseTile + 2,
+      rightTile: baseTile,
+      flipLeft: true,
+      flipRight: true,
+      baseTile,
+      flipH: true,
+    };
+  }
+  return {
+    leftTile: baseTile,
+    rightTile: baseTile + 2,
+    flipLeft: false,
+    flipRight: false,
+    baseTile,
+    flipH: false,
+  };
 }

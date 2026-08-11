@@ -26,6 +26,16 @@ export const DEFAULT_OPTIONS = Object.freeze({
   /** @type {'integer' | 'smooth'} */
   filter: 'integer',
   fullscreen: false,
+  /**
+   * Art set. `classic` is the original NES tiles, byte for byte, and is the
+   * default: neither enhanced set — procedural shading nor FLUX-generated
+   * tiles — improved on the original enough to justify shipping over it.
+   * `enhanced` loads whichever set `tools/enhance/cli.js` last built.
+   * Switching reloads the page, because every texture is built from the
+   * sheets at boot.
+   * @type {'enhanced' | 'classic'}
+   */
+  graphics: 'classic',
 });
 
 /**
@@ -36,6 +46,7 @@ export function normalizeOptions(raw) {
     scale: DEFAULT_OPTIONS.scale,
     filter: DEFAULT_OPTIONS.filter,
     fullscreen: false,
+    graphics: DEFAULT_OPTIONS.graphics,
     binds: cloneBinds(),
   };
   if (!raw || typeof raw !== 'object') return base;
@@ -44,6 +55,7 @@ export function normalizeOptions(raw) {
     base.scale = /** @type {number | 'auto'} */ (o.scale);
   }
   if (o.filter === 'integer' || o.filter === 'smooth') base.filter = o.filter;
+  if (o.graphics === 'enhanced' || o.graphics === 'classic') base.graphics = o.graphics;
   base.fullscreen = Boolean(o.fullscreen);
   if (o.binds && typeof o.binds === 'object') {
     const binds = /** @type {Record<string, unknown>} */ (o.binds);

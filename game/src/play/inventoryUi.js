@@ -1,4 +1,6 @@
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { px, scale, tilePx } from '@shared/gfxScale.js';
+import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 import { B_ITEM } from '@shared/inventory.js';
 import {
   NES_BREAKOUT_X,
@@ -109,16 +111,11 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
     let tex = tileCache.get(key);
     if (tex) return tex;
     if (!img) return Texture.EMPTY;
-    const canvas = document.createElement('canvas');
-    canvas.width = 8;
-    canvas.height = 8;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return Texture.EMPTY;
-    ctx.imageSmoothingEnabled = false;
+    const { canvas, ctx } = createTileCanvas(8, 8);
     const sx = (sheetIndex % 16) * 8;
     const sy = Math.floor(sheetIndex / 16) * 8;
-    ctx.drawImage(img, sx, sy, 8, 8, 0, 0, 8, 8);
-    const image = ctx.getImageData(0, 0, 8, 8);
+    ctx.drawImage(img, sx * scale(), sy * scale(), tilePx(), tilePx(), 0, 0, 8, 8);
+    const image = ctx.getImageData(0, 0, px(8), px(8));
     const d = image.data;
     for (let i = 0; i < d.length; i += 4) {
       if (d[i + 3] < 16) continue;
@@ -142,8 +139,7 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
       }
     }
     ctx.putImageData(image, 0, 0);
-    tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
+    tex = textureFromCanvas(canvas);
     tileCache.set(key, tex);
     return tex;
   }
@@ -161,15 +157,10 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
       const key = 'tf:full';
       let tex = tileCache.get(key);
       if (tex) return tex;
-      const canvas = document.createElement('canvas');
-      canvas.width = 8;
-      canvas.height = 8;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return Texture.EMPTY;
+      const { canvas, ctx } = createTileCanvas(8, 8);
       ctx.fillStyle = '#fc9838';
       ctx.fillRect(0, 0, 8, 8);
-      tex = Texture.from(canvas);
-      tex.source.scaleMode = 'nearest';
+      tex = textureFromCanvas(canvas);
       tileCache.set(key, tex);
       return tex;
     }
@@ -328,8 +319,9 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
     for (const slot of SUBMENU_B_SLOTS) {
       const pos = bSlotPos(slot);
       const icon = bItemIcon(inv, slot.id);
-      if (!icon) continue;
-      placeIcon(icon.tile, icon.pal, pos.x, pos.y);
+      // Bow draws alone before arrows are bought; arrow tile needs both.
+      if (icon) placeIcon(icon.tile, icon.pal, pos.x, pos.y);
+      else if (!(slot.id === B_ITEM.BOW && inv.bow)) continue;
       if (slot.id === B_ITEM.BOW && inv.bow && pos.bowX != null) {
         placeIcon(0x2a, 0, pos.bowX, pos.y);
       }

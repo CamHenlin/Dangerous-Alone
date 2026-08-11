@@ -2,6 +2,7 @@ import {
   DIR,
   OW_FIRST_UNWALKABLE,
   OW_WALKABLE_REMAP,
+  UW_BOUNDS,
   UW_FIRST_UNWALKABLE,
   getMonsterCollidingTile,
   normalizeOwTile,
@@ -108,6 +109,21 @@ import {
   keeseInitFlyerSpeed,
   moveFlyer,
 } from './flyerMove.js';
+import {
+  GEL_SHOVE_QSPEED,
+  GEL_SPLIT_START_QSPEED,
+  GEL_SPLIT_START_TIMER,
+  GEL_STATE,
+  ZOL_GEL_TURN_RATE,
+  gelSplitChildDirs,
+  initialGelState,
+  isGelType,
+  isZolOrGelType,
+  normalZolGelQSpeed,
+  pickZolGelEdgeDelay,
+  snapGelAfterShove,
+  zolGelPaused,
+} from './zolGelAi.js';
 
 export {
   QSPEED,
@@ -393,7 +409,9 @@ export function createEnemy(spawn) {
         ? 0x30
         : keese
           ? 0
-          : 20 + ((spawn.x ?? 0) & 0x1f),
+          : isZolOrGelType(objType)
+            ? pickZolGelEdgeDelay(objType, spawn.x ?? 0)
+            : 20 + ((spawn.x ?? 0) & 0x1f),
     // Legacy whole-px field (flyers/worms/boss helpers). Walker types use qSpeedFrac.
     qSpeed: qFrac != null ? 0 : 1,
     // NES ObjQSpeedFrac — MoveObject applies ×4/frame (see objQSpeed.js).
@@ -434,8 +452,12 @@ export function createEnemy(spawn) {
     wallmasterRetreatDir: undefined,
     wallmasterTilesCrossed: objType === OBJ.WALLMASTER ? 0 : undefined,
     wallmasterCrawl: objType === OBJ.WALLMASTER ? 0 : undefined,
-    turnRate: isWandererType(objType) ? turnRateForType(objType) : undefined,
+    turnRate: isWandererType(objType) || isZolOrGelType(objType)
+      ? turnRateForType(objType)
+      : undefined,
     turnTimer: 0,
+    /** Gel_Move state (InitGel → 2; Zol children → 0). */
+    gelState: initialGelState(objType),
     gridOffset: 0,
     wantsToShoot: false,
     jumperState:
@@ -639,7 +661,7 @@ function moveDir(e, speed) {
 
 const DIRS = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT];
 
-/** Flyers / swimmers — room bounds only, no tile probes. */
+/** Flyers / hoppers / swimmers — room bounds only, no tile probes. */
 export function enemyIgnoresTiles(objType) {
   return (
     objType === OBJ.BLUE_KEESE
@@ -648,6 +670,9 @@ export function enemyIgnoresTiles(objType) {
     || objType === OBJ.PEAHAT
     || objType === OBJ.FLYING_GHINI
     || objType === OBJ.ZORA
+    // Tektites hop onto rocks/water/forest Link cannot walk (UpdateTektiteOrBoulder).
+    || objType === OBJ.BLUE_TEKTITE
+    || objType === OBJ.RED_TEKTITE
     || objType === OBJ.BOULDER_SET
     || objType === OBJ.BOULDER
     || objType === OBJ.AQUAMENTUS
@@ -656,7 +681,10 @@ export function enemyIgnoresTiles(objType) {
 
 /**
  * Ground walkers that must not remain on water/rock after spawn.
- * Skips flyers, Zora, bosses, NPCs, Armos statues, edge-pending.
+ * Skips flyers, Zora, bosses, NPCs, Armos statues, edge-pending,
+ * and foes that intentionally stand on / phase through blocks
+ * (Blue Wizzrobe fades through `$B0`/`$F4+`; Pols Voice hops them).
+ * Per-frame eject of those types wedges them against block edges.
  * @param {Enemy} e
  */
 export function enemyNeedsWalkableGround(e) {
@@ -664,6 +692,7 @@ export function enemyNeedsWalkableGround(e) {
   if (enemyIgnoresTiles(e.objType)) return false;
   if (e.armosStatue || e.objType === OBJ.ARMOS) return false;
   if (isBossType(e.objType)) return false;
+  if (isWizzrobeType(e.objType) || e.objType === OBJ.POLS_VOICE) return false;
   return true;
 }
 
@@ -1101,6 +1130,107 @@ function moveEnemyStep(e, bounds, tileGrid, tileOpts = {}) {
 }
 
 /**
+ * Gel_MoveSplitting — QSpeed $FF until tile or room boundary blocks.
+ * @returns {boolean} true if blocked (C=1)
+ */
+function gelMoveSplitting(e, bounds, tileGrid, tileOpts = {}) {
+  e.qSpeedFrac = GEL_SHOVE_QSPEED;
+  if (
+    (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
+    && onTileBoundary(e)
+    && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)
+  ) {
+    return true;
+  }
+  if (!e.dir) return true;
+  const speed = consumeQSpeedPixels(e);
+  if (speed <= 0) return false;
+  const beforeX = e.x;
+  const beforeY = e.y;
+  moveDir(e, speed);
+  let blocked = false;
+  if (e.x < bounds.minX) {
+    e.x = bounds.minX;
+    blocked = true;
+  }
+  if (e.x > bounds.maxX) {
+    e.x = bounds.maxX;
+    blocked = true;
+  }
+  if (e.y < bounds.minY) {
+    e.y = bounds.minY;
+    blocked = true;
+  }
+  if (e.y > bounds.maxY) {
+    e.y = bounds.maxY;
+    blocked = true;
+  }
+  const moved = Math.abs(e.x - beforeX) + Math.abs(e.y - beforeY);
+  if (moved > 0) advanceGridOffset(e, moved);
+  // NES masks gridOffset to $0F; zero when landing on a square.
+  if (((e.gridOffset ?? 0) & 0x0f) === 0) e.gridOffset = 0;
+  return blocked;
+}
+
+/**
+ * UpdateZol / UpdateGel movement (Z_04 UpdateNormalZolOrGel + Gel_Move).
+ * @param {Enemy} e
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ * @param {number[][] | null | undefined} tileGrid
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function }} tileOpts
+ * @param {{ x: number, y: number } | null | undefined} chase
+ * @param {{ rngByte?: () => number }} [opts]
+ */
+function stepZolOrGel(e, bounds, tileGrid, tileOpts, chase, opts = {}) {
+  if (isGelType(e.objType)) {
+    if (e.gelState == null) e.gelState = GEL_STATE.NORMAL;
+
+    if (e.gelState === GEL_STATE.SPLIT_START) {
+      // Gel_Move @State0 → state 1 with QSpeed $20 and 5-frame timer.
+      e.qSpeedFrac = GEL_SPLIT_START_QSPEED;
+      e.timer = GEL_SPLIT_START_TIMER;
+      e.gelState = GEL_STATE.SPLIT_SHOVE;
+      return;
+    }
+
+    if (e.gelState === GEL_STATE.SPLIT_SHOVE) {
+      // While timer > 0, shove; stop early if blocked. Then snap → state 2.
+      if ((e.timer ?? 0) > 0) {
+        if (!gelMoveSplitting(e, bounds, tileGrid, tileOpts)) return;
+      }
+      snapGelAfterShove(e);
+      e.gelState = GEL_STATE.NORMAL;
+      e.qSpeedFrac = QSPEED.GEL_ACTIVE;
+      return;
+    }
+  }
+
+  // UpdateNormalZolOrGel — Zol state 0 / Gel state 2.
+  e.qSpeedFrac = normalZolGelQSpeed(e.objType);
+  e.turnRate = ZOL_GEL_TURN_RATE;
+
+  // ObjTimer >= 5: pause at the tile edge (no Wanderer_TargetPlayer).
+  if (zolGelPaused(e.timer)) return;
+
+  if (onTileBoundary(e)) {
+    const rnd = typeof opts.rngByte === 'function'
+      ? opts.rngByte
+      : () => (e.anim + e.id * 17 + (e.turnTimer ?? 0)) & 0xff;
+    wandererDecideFacing(e, chase, rnd);
+  }
+
+  moveEnemyStep(e, bounds, tileGrid, tileOpts);
+
+  // At a square with timer == 0: roll the next edge delay (ZolGelDelays).
+  if (onTileBoundary(e) && (e.timer ?? 0) === 0) {
+    const rnd = typeof opts.rngByte === 'function'
+      ? opts.rngByte()
+      : (e.anim + e.id * 13) & 0xff;
+    e.timer = pickZolGelEdgeDelay(e.objType, rnd);
+  }
+}
+
+/**
  * @param {Enemy} e
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
  * @param {number[][] | null} [tileGrid]
@@ -1116,7 +1246,8 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
   if (!e.alive || e.edgePending) return;
   if (e.invuln > 0) e.invuln -= 1;
   e.anim += 1;
-  e.timer -= 1;
+  // NES ObjTimer: decrement only while > 0 (never wraps negative).
+  if (e.timer > 0) e.timer -= 1;
 
   // Darknuts never stay stunned.
   if (e.objType === OBJ.RED_DARKNUT || e.objType === OBJ.BLUE_DARKNUT) {
@@ -1264,13 +1395,8 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     return;
   }
 
-  if (t === OBJ.GEL || t === OBJ.GEL2) {
-    if (e.timer <= 0) {
-      e.dir = pickWanderDir(tileGrid, e.x, e.y, (e.anim >> 2) + e.id, tileOpts);
-      e.timer = 8;
-    }
-    if ((e.anim & 3) === 0) moveAndCollide(e, 1, bounds, tileGrid, tileOpts);
-    else bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
+  if (isZolOrGelType(t)) {
+    stepZolOrGel(e, bounds, tileGrid, tileOpts, chase, opts);
     return;
   }
 
@@ -1381,26 +1507,29 @@ function stepFlyer(e, bounds, chase) {
   moveAndCollide(e, spd, bounds, null);
 }
 
-/** Zora burrower states 0–5; fireball at state 3 (via shootTimer in tryEnemyShoot). */
-function stepZora(e, bounds) {
+/**
+ * Zora burrower states 0–5; fireball at state 3 (via shootTimer in tryEnemyShoot).
+ *
+ * NES UpdateZora → UpdateBurrower never moves the Zora (no Wanderer_TargetPlayer /
+ * Walker_Move). When the burrow cycle wraps to state 0, DestroyMonster + clear
+ * ZoraActive so CheckZora can place a new one on water. Walking here let Zoras
+ * leave the lake onto land under continuous OW camera bounds.
+ */
+function stepZora(e, _bounds) {
   // UpdateZora → UpdateBurrower: same BlueLeeverStateQSpeeds table.
   const st = e.zoraState ?? 0;
   e.qSpeedFrac = BLUE_LEEVER_STATE_QSPEEDS[st] ?? 0;
-  if (e.timer > 0) {
-    if ((st === 2 || st === 4) && e.qSpeedFrac > 0) {
-      moveAndCollideQSpeed(e, bounds, null);
-    }
+  if (e.timer > 0) return;
+  e.zoraState = (st + 1) % 6;
+  // Finished cycle (5 → 0): despawn so CheckZora can respawn on water.
+  if (e.zoraState === 0) {
+    e.alive = false;
     return;
   }
-  e.zoraState = (st + 1) % 6;
   const times = [40, 24, 32, 48, 32, 24];
   e.timer = times[e.zoraState] ?? 32;
   e.qSpeedFrac = BLUE_LEEVER_STATE_QSPEEDS[e.zoraState] ?? 0;
   if (e.zoraState === 3) e.shootTimer = 0; // fire next tryEnemyShoot
-  if (e.zoraState === 2 || e.zoraState === 4) {
-    e.dir = DIRS[e.anim & 3];
-    moveAndCollideQSpeed(e, bounds, null);
-  }
 }
 
 function stepRope(e, bounds, tileGrid, tileOpts, link) {
@@ -1559,6 +1688,8 @@ export function wallmasterIsCapturing(e) {
 
 /**
  * Darknut ParryOrShove: if weapon dir OR monster dir is axis pair $03/$0C, parry.
+ * Facing each other on the same axis (NES: OR of dirs is $03 or $0C) →
+ * shield blocks; side / back attacks connect.
  * @param {number} monsterDir
  * @param {number} weaponDir
  */
@@ -1569,6 +1700,18 @@ export function darknutParries(monsterDir, weaponDir) {
   // Facing each other on the same axis (NES: OR of dirs is $03 or $0C).
   const ored = m | w;
   return ored === 0x03 || ored === 0x0c || Boolean(axis(m) && axis(m) === axis(w));
+}
+
+/**
+ * True when this foe is a Darknut whose shield faces the weapon.
+ * @param {Enemy} e
+ * @param {number} weaponDir
+ */
+function darknutFaceBlocks(e, weaponDir) {
+  return (
+    (e.objType === OBJ.RED_DARKNUT || e.objType === OBJ.BLUE_DARKNUT)
+    && darknutParries(e.dir, weaponDir ?? 0)
+  );
 }
 
 /**
@@ -1624,10 +1767,7 @@ export function trySwordHitEnemy(e, sword, linkX, linkY, swordTier, opts = {}) {
   if (!dodongoStunned && isImmuneToDamage(e.invulnMask, DAMAGE.SWORD)) {
     return 'parry';
   }
-  if (
-    (e.objType === OBJ.RED_DARKNUT || e.objType === OBJ.BLUE_DARKNUT)
-    && darknutParries(e.dir, sword.dir ?? 0)
-  ) {
+  if (darknutFaceBlocks(e, sword.dir ?? 0)) {
     return 'parry';
   }
   const dmg = swordDamage(swordTier);
@@ -1758,6 +1898,11 @@ export function tryBeamOrRodHitEnemy(e, p, opts = {}) {
     p.alive = false;
     return 'parry';
   }
+  // Sword beam uses the same face-parry as melee (rod is already mask-immune).
+  if (darknutFaceBlocks(e, p.dir ?? 0)) {
+    p.alive = false;
+    return 'parry';
+  }
   if (isPatra(e.objType) && opts.enemies && !patraParentVulnerable(e, opts.enemies)) {
     p.alive = false;
     return 'parry';
@@ -1786,6 +1931,8 @@ export function tryBeamOrRodHitEnemy(e, p, opts = {}) {
 /**
  * @param {Enemy} e
  * @param {import('./bomb.js').Bomb} bomb
+ * @param {{ enemies?: Enemy[] }} [opts]
+ * @returns {true | false | 'parry'}
  */
 export function tryBombHitEnemy(e, bomb, opts = {}) {
   if (!e.alive || e.invuln > 0) return false;
@@ -1799,6 +1946,10 @@ export function tryBombHitEnemy(e, bomb, opts = {}) {
     return false;
   }
   if (!bombHits(bomb, enemyRect(e))) return false;
+  // NES: blast uses Link's facing when the bomb was placed vs Darknut dir.
+  if (darknutFaceBlocks(e, bomb.dir ?? 0)) {
+    return 'parry';
+  }
   e.invuln = 16;
   if (isWormType(e.objType) && opts.enemies) {
     return damageWorm(e, opts.enemies, 0x40);
@@ -1855,14 +2006,22 @@ export function spawnDeathSplits(dead, enemies) {
       if (k) born.push(k);
     }
   } else if (dead.objType === OBJ.ZOL) {
+    // CreateChildGel: type $14, state 0, shared gridOffset; opposite facings.
+    const dirs = gelSplitChildDirs(dead.dir);
     for (let i = 0; i < 2; i += 1) {
       const g = createEnemy({
         objType: OBJ.GEL,
-        x: dead.x + (i ? 6 : -6),
+        x: dead.x,
         y: dead.y,
+        dir: dirs[i],
         slotIndex: dead.slotIndex,
       });
-      if (g) born.push(g);
+      if (g) {
+        g.gelState = GEL_STATE.SPLIT_START;
+        g.gridOffset = dead.gridOffset ?? 0;
+        g.timer = 0;
+        born.push(g);
+      }
     }
   } else if (dead.objType === OBJ.GHINI) {
     for (const e of enemies) {
@@ -1886,4 +2045,16 @@ export const OW_ENEMY_BOUNDS = Object.freeze({
   maxX: 0xd8,
   minY: 0x4d,
   maxY: 0xd0,
+});
+
+/**
+ * UW BoundByRoom box in enemy chase-bounds form (`max*` is exclusive of the
+ * 16px sprite, matching OW_ENEMY_BOUNDS). Boss AI clamps to this instead of
+ * the Phase-18 camera chase pad so Manhandla / Patra / etc. stay in-room.
+ */
+export const UW_ENEMY_BOUNDS = Object.freeze({
+  minX: UW_BOUNDS.left,
+  maxX: UW_BOUNDS.right + 16,
+  minY: UW_BOUNDS.top,
+  maxY: UW_BOUNDS.bottom + 16,
 });

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   applyOneHitKill,
   createDebugCheats,
+  killLink,
   MAX_RUPEES,
   refillBombs,
   refillHearts,
@@ -54,6 +55,16 @@ test('refillRupees fills to NES max', () => {
   inv.rupees = 3;
   refillRupees(inv);
   assert.equal(inv.rupees, MAX_RUPEES);
+});
+
+test('killLink zeros hearts and marks dead', () => {
+  const inv = createInventory();
+  inv.halfHearts = 6;
+  inv.invuln = 40;
+  assert.equal(killLink(inv), true);
+  assert.equal(inv.halfHearts, 0);
+  assert.equal(inv.dead, true);
+  assert.equal(killLink(inv), false);
 });
 
 test('applyOneHitKill only forces on successful hits', () => {

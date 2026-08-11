@@ -149,6 +149,7 @@ export function countsTowardRoomClear(e) {
  */
 export function persistsAfterRoomClear(objType) {
   const t = objType ?? 0;
+  if (t === 0x37) return true; // Zelda — NPC, not a clear-counting foe
   if (t >= 0x4b && t <= 0x52) return true; // UW persons
   if (t === 0x49 || t === 0x4a) return true; // traps
   return false;
@@ -205,7 +206,9 @@ export function tryRingleaderClear(enemies) {
 export function applyRoomClear(roomItem, allDead, effectOverride, opts = {}) {
   const effect = effectOverride ?? roomItem?.effect ?? SECRET.NONE;
   if (effect === SECRET.LAST_BOSS) {
-    if (!opts.lastBossDefeated) {
+    // NES: LastBossDefeated after Ganon dies. Require both the flag and a clear
+    // room so Patra (or a stale save flag) cannot open Zelda's shutter early.
+    if (!opts.lastBossDefeated || !allDead) {
       return { shutter: false, revealItem: false, effect };
     }
   } else if (!allDead) {

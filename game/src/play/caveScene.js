@@ -1,4 +1,6 @@
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { scale, tilePx } from '@shared/gfxScale.js';
+import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 import { HUD_HEIGHT } from '@shared/collision.js';
 import {
   CAVE_DWELLER_X,
@@ -30,12 +32,7 @@ const HINT_GREY = 0x888888;
  * @param {Record<string, Texture>} sheetTextures
  */
 function buildStairsTexture(sheetTextures) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 16;
-  canvas.height = 16;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return Texture.EMPTY;
-  ctx.imageSmoothingEnabled = false;
+  const { canvas, ctx } = createTileCanvas(16, 16);
   const positions = [
     [0, 0],
     [0, 8],
@@ -49,10 +46,9 @@ function buildStairsTexture(sheetTextures) {
     const img = /** @type {CanvasImageSource | null} */ (sheet?.source?.resource);
     if (!img) continue;
     const [dx, dy] = positions[i];
-    ctx.drawImage(img, src.sx, src.sy, 8, 8, dx, dy, 8, 8);
+    ctx.drawImage(img, src.sx * scale(), src.sy * scale(), tilePx(), tilePx(), dx, dy, 8, 8);
   }
-  const tex = Texture.from(canvas);
-  tex.source.scaleMode = 'nearest';
+  const tex = textureFromCanvas(canvas);
   return tex;
 }
 
@@ -208,15 +204,31 @@ export function createCaveScene(deps) {
   }
 
   /**
+   * Optional per-slot price labels (money-game stake / reveal). When set,
+   * drawn instead of shop/potion numeric prices for those indexes.
+   * @type {(string | null)[] | null}
+   */
+  let warePriceLabels = null;
+
+  /**
    * @param {object} nextCave
    * @param {Set<string>} taken
    * @param {boolean} [hidden]
    * @param {object | null} [inv]
    * @param {number | null} [roomId]
+   * @param {(string | null)[] | null} [priceLabels]
    */
-  function open(nextCave, taken, hidden = false, inv = null, roomId = null) {
+  function open(
+    nextCave,
+    taken,
+    hidden = false,
+    inv = null,
+    roomId = null,
+    priceLabels = null,
+  ) {
     cave = nextCave;
     entranceRoomId = roomId;
+    warePriceLabels = priceLabels;
     paintBg();
     paintNpc(nextCave.dweller);
     paintFires();
@@ -230,9 +242,12 @@ export function createCaveScene(deps) {
    * @param {Set<string>} taken
    * @param {boolean} [hidden]
    * @param {object | null} [inv]
+   * @param {(string | null)[] | null | undefined} [priceLabels]
+   *   Pass to replace labels; omit to keep the previous set.
    */
-  function refreshWares(taken, hidden = false, inv = null) {
+  function refreshWares(taken, hidden = false, inv = null, priceLabels) {
     waresHidden = hidden;
+    if (priceLabels !== undefined) warePriceLabels = priceLabels;
     wareLayer.removeChildren().forEach((c) =>
       c.destroy({ children: true, texture: false, textureSource: false }),
     );
@@ -249,8 +264,12 @@ export function createCaveScene(deps) {
       spr.x = slot.x + (drawn.narrow ? 4 : 0);
       spr.y = slot.y;
       wareLayer.addChild(spr);
-      if (showPrices && slot.price > 0 && fontImg) {
-        const price = nesText(fontImg, String(slot.price), slot.x - 2, CAVE_WARE_Y + 18, WHITE);
+      const override = warePriceLabels?.[slot.index] ?? null;
+      const shopPrice =
+        showPrices && slot.price > 0 ? String(slot.price) : null;
+      const label = override ?? shopPrice;
+      if (label && fontImg) {
+        const price = nesText(fontImg, label, slot.x - 2, CAVE_WARE_Y + 18, WHITE);
         wareLayer.addChild(price);
       }
     }
@@ -266,6 +285,7 @@ export function createCaveScene(deps) {
     cave = null;
     entranceRoomId = null;
     waresHidden = false;
+    warePriceLabels = null;
     wareLayer.removeChildren().forEach((c) =>
       c.destroy({ children: true, texture: false, textureSource: false }),
     );

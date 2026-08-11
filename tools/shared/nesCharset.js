@@ -30,6 +30,8 @@ export function nesCharTile(ch) {
   const c = String(ch ?? '').toUpperCase();
   if (c === ' ') return 0x24;
   if (c === '-') return 0x62;
+  // Money-game / price signs — PrependSignToPrice uses tile $64 for '+'.
+  if (c === '+') return 0x64;
   if (PUNCT_TILE[c] != null) return PUNCT_TILE[c];
   if (c >= '0' && c <= '9') return c.charCodeAt(0) - 48;
   if (c >= 'A' && c <= 'Z') return 0x0a + (c.charCodeAt(0) - 65);

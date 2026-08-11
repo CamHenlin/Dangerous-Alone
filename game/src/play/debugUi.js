@@ -7,6 +7,7 @@
  * @param {() => void} api.refillBombs
  * @param {() => void} api.refillRupees
  * @param {() => void} api.killScreen
+ * @param {() => void} api.killLink
  * @param {() => void} [api.onClose]
  */
 export function createDebugUi(api) {
@@ -43,6 +44,9 @@ export function createDebugUi(api) {
   });
   el.querySelector('#dbg-kill')?.addEventListener('click', () => {
     api.killScreen();
+  });
+  el.querySelector('#dbg-kill-link')?.addEventListener('click', () => {
+    api.killLink();
   });
   el.querySelector('#dbg-invincible')?.addEventListener('change', (e) => {
     const t = /** @type {HTMLInputElement} */ (e.target);

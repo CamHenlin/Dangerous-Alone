@@ -49,6 +49,18 @@ export function refillRupees(inv) {
 }
 
 /**
+ * Force Link into the dead state (ignores invuln / invincible).
+ * @param {{ halfHearts: number, dead?: boolean }} inv
+ * @returns {boolean} true if this call started a death
+ */
+export function killLink(inv) {
+  if (inv.dead) return false;
+  inv.halfHearts = 0;
+  inv.dead = true;
+  return true;
+}
+
+/**
  * After a weapon hit helper returns, force a kill when OHK is on.
  * Respects parry / miss (`hit !== true`).
  * @param {{ alive?: boolean, hp?: number } | null | undefined} e

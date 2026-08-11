@@ -483,6 +483,35 @@ export function restoreClearedShutters(state, clearedRoomIds, level) {
 }
 
 /**
+ * Seal only the Zelda-side LAST_BOSS shutter until Ganon is defeated.
+ * Approach shutters (south/west entry) stay open when those rooms are cleared
+ * — that is how Link walks into the fight. The Zelda-side pair must not stay
+ * open from a prior kill, or the princess room is reachable without the fight.
+ *
+ * @param {DoorState} state
+ * @param {{ level?: number, levelNumber?: number, bossRoom?: number, triforceRoom?: number, rooms?: { roomId: number, doors?: Record<string, { type?: string }> }[] }} level
+ * @param {boolean} lastBossDefeated
+ */
+export function sealLastBossShutters(state, level, lastBossDefeated) {
+  if (lastBossDefeated || !level) return;
+  const levelNum = level.levelNumber ?? level.level;
+  if (levelNum !== 9) return;
+  const boss = level.bossRoom;
+  const zelda = level.triforceRoom;
+  if (boss == null || zelda == null) return;
+  const bossId = boss & 0xff;
+  const zeldaId = zelda & 0xff;
+  const room = level.rooms?.find((r) => r.roomId === bossId);
+  if (!room?.doors) return;
+  for (const side of ['north', 'south', 'west', 'east']) {
+    if (room.doors[side]?.type !== 'shutter') continue;
+    const next = dungeonNeighbor(bossId, dirForSide(side));
+    if (next !== zeldaId) continue;
+    closeDoorPair(state, bossId, side);
+  }
+}
+
+/**
  * Axis-aligned probe rect at the center of a room doorway.
  * @param {{ x: number, y: number }} origin
  * @param {{ w: number, h: number }} roomSize

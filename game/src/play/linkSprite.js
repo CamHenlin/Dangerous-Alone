@@ -6,9 +6,9 @@ import {
 } from '@shared/enemyPalette.js';
 import { linkPaletteRgb } from '@shared/linkPalette.js';
 import { linkWalkSprite } from '@shared/linkMotion.js';
+import { markScaled, tilePx } from '@shared/gfxScale.js';
 import { swordAttackBaseTile } from '@shared/sword.js';
 
-const TILE = 8;
 const SHEET_COLS = 16;
 /**
  * `DrawLinkLiftingItem` / Anim_ItemFrameTiles @$28 — mirrored pair at PPU $78.
@@ -75,8 +75,8 @@ export function createLinkFrames(sheetTexture, opts = {}) {
 
   function tileXY(tileIndex) {
     return {
-      sx: (tileIndex % SHEET_COLS) * TILE,
-      sy: Math.floor(tileIndex / SHEET_COLS) * TILE,
+      sx: (tileIndex % SHEET_COLS) * tilePx(),
+      sy: Math.floor(tileIndex / SHEET_COLS) * tilePx(),
     };
   }
 
@@ -102,38 +102,65 @@ export function createLinkFrames(sheetTexture, opts = {}) {
     ctx.putImageData(img, 0, 0);
   }
 
-  function compose(baseTile, flipH) {
+  /**
+   * Blit one 8×16 CHR pair (top tile + top+1) at (dx,0), optionally H-flipped
+   * in place (NES sprite attribute bit, not a whole-metatile mirror).
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} topTile
+   * @param {number} dx
+   * @param {boolean} flipH
+   * @param {number} T
+   */
+  function drawHalf(ctx, topTile, dx, flipH, T) {
+    const blit = (tileIndex, dy) => {
+      const { sx, sy } = tileXY(tileIndex);
+      if (flipH) {
+        ctx.save();
+        ctx.translate(dx + T, dy);
+        ctx.scale(-1, 1);
+        ctx.drawImage(sheetImage, sx, sy, T, T, 0, 0, T, T);
+        ctx.restore();
+      } else {
+        ctx.drawImage(sheetImage, sx, sy, T, T, dx, dy, T, T);
+      }
+    };
+    blit(topTile, 0);
+    blit(topTile + 1, T);
+  }
+
+  /**
+   * @param {number} leftTile
+   * @param {number} rightTile
+   * @param {boolean} flipLeft
+   * @param {boolean} flipRight
+   */
+  function compose(leftTile, rightTile, flipLeft, flipRight) {
+    const T = tilePx();
     const canvas = document.createElement('canvas');
-    canvas.width = 16;
-    canvas.height = 16;
+    canvas.width = T * 2;
+    canvas.height = T * 2;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       throw new Error('2d context unavailable');
     }
     ctx.imageSmoothingEnabled = false;
-    if (flipH) {
-      ctx.translate(16, 0);
-      ctx.scale(-1, 1);
-    }
-    const drawTile = (tileIndex, dx, dy) => {
-      const { sx, sy } = tileXY(tileIndex);
-      ctx.drawImage(sheetImage, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
-    };
-    drawTile(baseTile, 0, 0);
-    drawTile(baseTile + 1, 0, 8);
-    drawTile(baseTile + 2, 8, 0);
-    drawTile(baseTile + 3, 8, 8);
+    drawHalf(ctx, leftTile, 0, flipLeft, T);
+    drawHalf(ctx, rightTile, T, flipRight, T);
     applyLinkPalette(canvas);
-    const tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
-    return tex;
+    return markScaled(Texture.from(canvas));
   }
 
-  function getTexture(baseTile, flipH) {
-    const key = `${baseTile}:${flipH ? 1 : 0}:r${ring}`;
+  /**
+   * @param {number} leftTile
+   * @param {number} rightTile
+   * @param {boolean} flipLeft
+   * @param {boolean} flipRight
+   */
+  function getTexture(leftTile, rightTile, flipLeft, flipRight) {
+    const key = `${leftTile}:${rightTile}:${flipLeft ? 1 : 0}${flipRight ? 1 : 0}:r${ring}`;
     let tex = cache.get(key);
     if (!tex) {
-      tex = compose(baseTile, flipH);
+      tex = compose(leftTile, rightTile, flipLeft, flipRight);
       cache.set(key, tex);
     }
     return tex;
@@ -142,16 +169,24 @@ export function createLinkFrames(sheetTexture, opts = {}) {
   /**
    * @param {number} dir
    * @param {number} animFrame
-   * @param {boolean} [attacking]
+   * @param {boolean | { attacking?: boolean, magicShield?: boolean }} [attackingOrOpts]
    */
-  function textureFor(dir, animFrame, attacking = false) {
-    if (attacking) {
+  function textureFor(dir, animFrame, attackingOrOpts = false) {
+    const opts =
+      typeof attackingOrOpts === 'object' && attackingOrOpts
+        ? attackingOrOpts
+        : { attacking: Boolean(attackingOrOpts) };
+    if (opts.attacking) {
       const baseTile = swordAttackBaseTile(dir);
       const flipH = Boolean(dir & DIR.LEFT);
-      return getTexture(baseTile, flipH);
+      // Attack frames stay shieldless (NES skips patch when tile ≥ `$0B`).
+      if (flipH) {
+        return getTexture(baseTile + 2, baseTile, true, true);
+      }
+      return getTexture(baseTile, baseTile + 2, false, false);
     }
-    const { baseTile, flipH } = linkWalkSprite(dir, animFrame);
-    return getTexture(baseTile, flipH);
+    const walk = linkWalkSprite(dir, animFrame, { magicShield: opts.magicShield });
+    return getTexture(walk.leftTile, walk.rightTile, walk.flipLeft, walk.flipRight);
   }
 
   /**
@@ -160,7 +195,8 @@ export function createLinkFrames(sheetTexture, opts = {}) {
    */
   function textureForLift() {
     if (!highImage) {
-      return getTexture(0x08, false);
+      // Wood-shield down frame (NES always patches facing-down walk).
+      return getTexture(0x58, 0x0a, false, false);
     }
     const key = `lift:${LIFT_PPU_TILE}:r${ring}`;
     let tex = cache.get(key);
@@ -173,9 +209,10 @@ export function createLinkFrames(sheetTexture, opts = {}) {
 
   /** Mirrored 8×16 pair: left $78/$79, right H-flipped copy. */
   function composeLift() {
+    const T = tilePx();
     const canvas = document.createElement('canvas');
-    canvas.width = 16;
-    canvas.height = 16;
+    canvas.width = T * 2;
+    canvas.height = T * 2;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       throw new Error('2d context unavailable');
@@ -186,22 +223,20 @@ export function createLinkFrames(sheetTexture, opts = {}) {
       const { sx, sy } = tileXY(tileIndex);
       if (flipH) {
         ctx.save();
-        ctx.translate(dx + TILE, dy);
+        ctx.translate(dx + T, dy);
         ctx.scale(-1, 1);
-        ctx.drawImage(highImage, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
+        ctx.drawImage(highImage, sx, sy, T, T, 0, 0, T, T);
         ctx.restore();
       } else {
-        ctx.drawImage(highImage, sx, sy, TILE, TILE, dx, dy, TILE, TILE);
+        ctx.drawImage(highImage, sx, sy, T, T, dx, dy, T, T);
       }
     };
     blit(local, 0, 0, false);
-    blit(local + 1, 0, TILE, false);
-    blit(local, TILE, 0, true);
-    blit(local + 1, TILE, TILE, true);
+    blit(local + 1, 0, T, false);
+    blit(local, T, 0, true);
+    blit(local + 1, T, T, true);
     applyLinkPalette(canvas);
-    const tex = Texture.from(canvas);
-    tex.source.scaleMode = 'nearest';
-    return tex;
+    return markScaled(Texture.from(canvas));
   }
 
   return { textureFor, textureForLift, setPaletteSet, setRing };

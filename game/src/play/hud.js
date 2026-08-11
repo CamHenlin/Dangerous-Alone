@@ -1,4 +1,6 @@
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { tilePx } from '@shared/gfxScale.js';
+import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 import { HUD_HEIGHT } from '@shared/collision.js';
 import { B_ITEM, heartDisplay } from '@shared/inventory.js';
 import { STATUS_A_XY, STATUS_B_XY, bItemIcon, swordIcon } from '@shared/inventoryIcons.js';
@@ -146,13 +148,18 @@ export function createHud(deps = {}) {
     const tileTex = (tile) => {
       let tex = boxTileCache.get(tile);
       if (tex) return tex;
-      const canvas = document.createElement('canvas');
-      canvas.width = 8;
-      canvas.height = 8;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return Texture.EMPTY;
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(bgImg, (tile % 16) * 8, Math.floor(tile / 16) * 8, 8, 8, 0, 0, 8, 8);
+      const { canvas, ctx } = createTileCanvas(8, 8);
+      ctx.drawImage(
+        bgImg,
+        (tile % 16) * tilePx(),
+        Math.floor(tile / 16) * tilePx(),
+        tilePx(),
+        tilePx(),
+        0,
+        0,
+        8,
+        8,
+      );
       const image = ctx.getImageData(0, 0, 8, 8);
       const d = image.data;
       for (let i = 0; i < d.length; i += 4) {
@@ -166,8 +173,7 @@ export function createHud(deps = {}) {
         }
       }
       ctx.putImageData(image, 0, 0);
-      tex = Texture.from(canvas);
-      tex.source.scaleMode = 'nearest';
+      tex = textureFromCanvas(canvas);
       boxTileCache.set(tile, tex);
       return tex;
     };
@@ -339,15 +345,23 @@ export function createHud(deps = {}) {
     /**
      * Cheap per-frame radar repaint — animates the Phase 19 mark pulse without
      * touching the sprite-heavy half of the bar.
+     *
+     * Also syncs locator state (`roomId` / mode / dungeon). Continuous OW/UW
+     * seam crosses update those without calling `update`, and the player dot
+     * must follow Link every screen — not only when hearts/counters rebuild.
      * @param {number} frame
      * @param {{ roomId: number, kind: string }[]} [marks]
      * @param {{ roomId: number, kind: string }[]} [dungeonMarks]
+     * @param {{ roomId?: number, mode?: string, dungeon?: object | null }} [radar]
      */
-    pulseMap(frame, marks, dungeonMarks) {
+    pulseMap(frame, marks, dungeonMarks, radar = {}) {
       if (!lastState) return;
       lastState.frame = frame;
       if (marks) lastState.mapMarks = marks;
       if (dungeonMarks) lastState.dungeonMarks = dungeonMarks;
+      if (radar.roomId != null) lastState.roomId = radar.roomId;
+      if (radar.mode != null) lastState.mode = radar.mode;
+      if (radar.dungeon !== undefined) lastState.dungeon = radar.dungeon;
       drawMap(lastState);
     },
   };

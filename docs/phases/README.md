@@ -34,6 +34,7 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | 18 | [Quality of life 1](./phase-18-quality-of-life.md) | Complete |
 | 19 | [Quality of life 2](./phase-19-quality-of-life-2.md) | Complete |
 | 20 | [Continuous-camera cleanup](./phase-20-streaming-cleanup.md) | Complete |
+| 21 | [Graphics overhaul (2× / 256 colour)](./phase-21-graphics-overhaul.md) | Shelved — original art ships |
 | — | [Thorough review (fidelity audit)](./phase-thorough-review.md) | Complete |
 
 ## Shared docs

@@ -326,10 +326,11 @@ export function grantRoomItem(inv, itemType, opts = {}) {
     case 0x00: // Bombs (floor refill)
       addBombs(inv, 4);
       return 'Bombs';
-    case 0x0a: // Bow
+    case 0x0a: // Bow — arrows are a separate shop purchase (NES InvBow / InvArrow)
       inv.bow = 1;
-      if (inv.arrow < ARROW.WOOD) inv.arrow = ARROW.WOOD;
-      if (inv.selectedB === B_ITEM.NONE) inv.selectedB = B_ITEM.BOW;
+      if (inv.arrow >= ARROW.WOOD && inv.selectedB === B_ITEM.NONE) {
+        inv.selectedB = B_ITEM.BOW;
+      }
       return 'Bow';
     case 0x08: // Wooden arrows
       if (inv.arrow < ARROW.WOOD) inv.arrow = ARROW.WOOD;

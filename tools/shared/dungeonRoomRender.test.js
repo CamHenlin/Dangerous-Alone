@@ -12,7 +12,7 @@ import { finalizeLevelMeta } from './dungeons.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-test('composeDoorFrameTiles: lintel + wall above; E/W seam hides; no cavity jambs', () => {
+test('composeDoorFrameTiles: N lintel + wall above; E/W seam hides; door-face lintel under Link', () => {
   const room = {
     roomId: 0x53,
     doors: {
@@ -29,13 +29,18 @@ test('composeDoorFrameTiles: lintel + wall above; E/W seam hides; no cavity jamb
   // North lintel + wall above.
   assert.equal(grid[1][14], 0x78);
   assert.ok(grid[0][15] !== 0, 'wall above north door occludes');
-  // West: lintel / wall above cavity, and seam col 0 through the passage.
-  assert.ok(grid[9][2] !== 0, 'west lintel');
+  // West: wall above door face + seam/outer jamb; lintel over cavity stays under Link.
+  assert.equal(grid[9][2], 0, 'west door-face lintel stays under Link');
+  assert.equal(grid[9][3], 0, 'west door-face lintel (inner) stays under Link');
+  assert.ok(grid[9][0] !== 0, 'west seam still occludes at lintel row');
+  assert.ok(grid[9][1] !== 0, 'west outer jamb still occludes at lintel row');
   assert.ok(grid[8][2] !== 0, 'wall above west opening');
   assert.ok(grid[10][0] !== 0, 'west seam column hides Link mid-wall');
   assert.ok(grid[10][1] !== 0, 'west outer jamb hides Link mid-wall');
   assert.ok(grid[11][30] !== 0, 'east outer jamb hides Link mid-wall');
   assert.ok(grid[11][31] !== 0, 'east seam column hides Link mid-wall');
+  assert.equal(grid[9][28], 0, 'east door-face lintel stays under Link');
+  assert.equal(grid[9][29], 0, 'east door-face lintel (cavity col) stays under Link');
   // Cavity and walk-height inner jambs beside it must stay clear.
   assert.equal(grid[10][2], 0, 'west cavity not overlaid');
   assert.equal(grid[10][3], 0, 'west inner jamb not overlaid');

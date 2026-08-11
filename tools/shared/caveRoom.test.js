@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { DIR, OW_BOUNDS } from './collision.js';
 import { createLinkState, stepLink } from './linkMotion.js';
 import {
+  CAVE_DWELLER_X,
+  CAVE_DWELLER_Y,
   CAVE_ENTER_SPAWN,
   CAVE_FIRE_TILE,
   CAVE_ROAD_XS,
@@ -13,6 +15,7 @@ import {
   checkCaveExit,
   createCaveTileGrid,
   dwellerKind,
+  nearCaveNpc,
   roadStairUnderLink,
   wareUnderLink,
 } from './caveRoom.js';
@@ -121,5 +124,32 @@ test('caveHintLine depends on cave kind', () => {
   assert.match(caveHintLine('road'), /STAIRS/);
   assert.match(caveHintLine('give'), /ITEM/);
   assert.match(caveHintLine('shop'), /ITEM/);
+  assert.match(caveHintLine('moblin'), /RUPEE/);
+  assert.equal(caveHintLine('door'), 'SOUTH TO LEAVE');
   assert.equal(caveHintLine('clue'), 'SOUTH TO LEAVE');
+});
+
+test('caveWareSlots hides moblin gift after looting', () => {
+  const cave = {
+    caveId: 0x21,
+    kind: 'moblin',
+    slots: [
+      { item: 63, price: 0 },
+      { item: 24, price: 30 },
+      { item: 63, price: 0 },
+    ],
+  };
+  const taken = new Set(['19:33:gift']);
+  const slots = caveWareSlots(cave, taken, null, 0x13);
+  assert.equal(slots.length, 1);
+  assert.equal(slots[0].gone, true);
+});
+
+test('nearCaveNpc matches the dweller, not a south approach dead-zone', () => {
+  assert.equal(nearCaveNpc({ x: CAVE_DWELLER_X, y: CAVE_DWELLER_Y }), true);
+  // South approach: just outside the box must not latch (or pay never runs).
+  assert.equal(nearCaveNpc({ x: CAVE_DWELLER_X, y: CAVE_DWELLER_Y + 24 }), false);
+  assert.equal(nearCaveNpc({ x: CAVE_DWELLER_X, y: CAVE_DWELLER_Y + 23 }), true);
+  assert.equal(nearCaveNpc({ x: CAVE_DWELLER_X - 16, y: CAVE_DWELLER_Y }), false);
+  assert.equal(nearCaveNpc({ x: 0x20, y: CAVE_DWELLER_Y }), false);
 });

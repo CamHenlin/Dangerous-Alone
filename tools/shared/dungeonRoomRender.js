@@ -2,8 +2,7 @@
  * Render a composed UW play-area tile grid to RGBA (256×176).
  */
 
-import { decodeBgTile } from './tileChr.js';
-import { nesColor, rgbaFromNesIndices } from './nesPalette.js';
+import { bgTileColors, bgTilePixels, colorMask, tileSize } from './bgTilePixels.js';
 import {
   FLOOR_ORIGIN,
   FLOOR_TILES_H,
@@ -63,8 +62,10 @@ export function paletteRowForPlayTile(row, col, outer, inner) {
  * @returns {{ width: number, height: number, rgba: Uint8Array }}
  */
 export function renderPlayGridRgba(tileGrid, opts) {
-  const width = PLAY_COLS * 8;
-  const height = PLAY_ROWS * 8;
+  const T = tileSize();
+  const mask = colorMask();
+  const width = PLAY_COLS * T;
+  const height = PLAY_ROWS * T;
   const rgba = new Uint8Array(width * height * 4);
   const outer = opts.outerPalette ?? 0;
   const inner = opts.innerPalette ?? 1;
@@ -73,15 +74,13 @@ export function renderPlayGridRgba(tileGrid, opts) {
   for (let tr = 0; tr < PLAY_ROWS; tr += 1) {
     for (let tc = 0; tc < PLAY_COLS; tc += 1) {
       const palRow = paletteRowForPlayTile(tr, tc, outer, inner);
-      const colors = rgbaFromNesIndices(paletteSet.rows[palRow]);
-      const [br, bg, bb] = nesColor(paletteSet.rows[palRow][0]);
-      colors[0] = { r: br, g: bg, b: bb, a: 255 };
+      const colors = bgTileColors(paletteSet.rows[palRow]);
 
-      const indices = decodeBgTile(tileGrid[tr][tc], tileSources, patternBins);
-      for (let y = 0; y < 8; y += 1) {
-        for (let x = 0; x < 8; x += 1) {
-          const c = colors[indices[y * 8 + x] & 3];
-          const px = ((tr * 8 + y) * width + (tc * 8 + x)) * 4;
+      const indices = bgTilePixels(tileGrid[tr][tc], tileSources, patternBins);
+      for (let y = 0; y < T; y += 1) {
+        for (let x = 0; x < T; x += 1) {
+          const c = colors[indices[y * T + x] & mask];
+          const px = ((tr * T + y) * width + (tc * T + x)) * 4;
           rgba[px] = c.r;
           rgba[px + 1] = c.g;
           rgba[px + 2] = c.b;
@@ -106,12 +105,12 @@ export function renderPlayGridRgba(tileGrid, opts) {
 export function renderUwSquareRgba(primary, opts) {
   const tileSources = opts.tileSources ?? UW_TILE_SOURCES;
   const palRow = opts.paletteRow ?? 1;
-  const colors = rgbaFromNesIndices(opts.paletteSet.rows[palRow & 3]);
-  const [br, bg, bb] = nesColor(opts.paletteSet.rows[palRow & 3][0]);
-  colors[0] = { r: br, g: bg, b: bb, a: 255 };
+  const colors = bgTileColors(opts.paletteSet.rows[palRow & 3]);
 
-  const width = 16;
-  const height = 16;
+  const T = tileSize();
+  const mask = colorMask();
+  const width = T * 2;
+  const height = T * 2;
   const rgba = new Uint8Array(width * height * 4);
   const tiles = [
     [primary & 0xff, (primary + 2) & 0xff],
@@ -119,11 +118,11 @@ export function renderUwSquareRgba(primary, opts) {
   ];
   for (let tr = 0; tr < 2; tr += 1) {
     for (let tc = 0; tc < 2; tc += 1) {
-      const indices = decodeBgTile(tiles[tr][tc], tileSources, opts.patternBins);
-      for (let y = 0; y < 8; y += 1) {
-        for (let x = 0; x < 8; x += 1) {
-          const c = colors[indices[y * 8 + x] & 3];
-          const px = ((tr * 8 + y) * width + (tc * 8 + x)) * 4;
+      const indices = bgTilePixels(tiles[tr][tc], tileSources, opts.patternBins);
+      for (let y = 0; y < T; y += 1) {
+        for (let x = 0; x < T; x += 1) {
+          const c = colors[indices[y * T + x] & mask];
+          const px = ((tr * T + y) * width + (tc * T + x)) * 4;
           rgba[px] = c.r;
           rgba[px + 1] = c.g;
           rgba[px + 2] = c.b;
@@ -170,8 +169,10 @@ export function renderDoorFrameOverlayRgba(room, opts = {}) {
     opts.openSides
     ?? openSidesForRoom(room, opts.doorState ?? null);
   const tileGrid = composeDoorFrameTiles(room, { openSides });
-  const width = PLAY_COLS * 8;
-  const height = PLAY_ROWS * 8;
+  const T = tileSize();
+  const mask = colorMask();
+  const width = PLAY_COLS * T;
+  const height = PLAY_ROWS * T;
   const rgba = new Uint8Array(width * height * 4);
   const outer = room.doors?.outerPalette ?? opts.outerPalette ?? 0;
   const inner = room.doors?.innerPalette ?? opts.innerPalette ?? 1;
@@ -186,14 +187,12 @@ export function renderDoorFrameOverlayRgba(room, opts = {}) {
       const tile = tileGrid[tr][tc] & 0xff;
       if (DOOR_OVERLAY_CLEAR_TILES.has(tile)) continue;
       const palRow = paletteRowForPlayTile(tr, tc, outer, inner);
-      const colors = rgbaFromNesIndices(paletteSet.rows[palRow]);
-      const [br, bg, bb] = nesColor(paletteSet.rows[palRow][0]);
-      colors[0] = { r: br, g: bg, b: bb, a: 255 };
-      const indices = decodeBgTile(tile, tileSources, patternBins);
-      for (let y = 0; y < 8; y += 1) {
-        for (let x = 0; x < 8; x += 1) {
-          const c = colors[indices[y * 8 + x] & 3];
-          const px = ((tr * 8 + y) * width + (tc * 8 + x)) * 4;
+      const colors = bgTileColors(paletteSet.rows[palRow]);
+      const indices = bgTilePixels(tile, tileSources, patternBins);
+      for (let y = 0; y < T; y += 1) {
+        for (let x = 0; x < T; x += 1) {
+          const c = colors[indices[y * T + x] & mask];
+          const px = ((tr * T + y) * width + (tc * T + x)) * 4;
           rgba[px] = c.r;
           rgba[px + 1] = c.g;
           rgba[px + 2] = c.b;

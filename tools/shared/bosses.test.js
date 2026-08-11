@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DIR } from './collision.js';
+import { UW_BOUNDS } from './collision.js';
 import {
   BOSS,
   bossHp,
   bossNeedsArrow,
+  enemyUsesUwRoomBounds,
   isBossType,
   isZelda,
   stepBoss,
@@ -19,7 +21,14 @@ import {
   stepBossAi,
   tryDodongoEatBomb,
 } from './bossAi.js';
-import { createEnemy, tryArrowHitEnemy, tryBombHitEnemy, trySwordHitEnemy } from './enemies.js';
+import {
+  UW_ENEMY_BOUNDS,
+  createEnemy,
+  tryArrowHitEnemy,
+  tryBombHitEnemy,
+  trySwordHitEnemy,
+} from './enemies.js';
+import { chaseBoundsForCamera, uwEnemyBoundsForRoom } from './roomStream.js';
 import { shootArrow } from './projectiles.js';
 import { SWORD_PHASE, createSwordState } from './sword.js';
 import { SWORD } from './inventory.js';
@@ -29,6 +38,29 @@ test('boss type helpers', () => {
   assert.equal(isZelda(BOSS.ZELDA), true);
   assert.equal(bossNeedsArrow(BOSS.GOHMA), true);
   assert.equal(bossNeedsArrow(BOSS.DODONGO), false);
+  assert.equal(enemyUsesUwRoomBounds(BOSS.MANHANDLA), true);
+  assert.equal(enemyUsesUwRoomBounds(BOSS.GLEEOK_HEAD), true);
+  assert.equal(enemyUsesUwRoomBounds(0x10), false); // red octorok
+});
+
+test('Manhandla stays inside UW BoundByRoom under chase-pad bounds', () => {
+  // Phase-18 chaseBoundsForCamera reaches into the HUD (minY=$28 at cam 0).
+  // Bosses must clamp to UW_ENEMY_BOUNDS instead so they cannot leave the room.
+  const e = createEnemy({ objType: BOSS.MANHANDLA, x: 0x80, y: 0x60 });
+  assert.ok(e);
+  e.dir = DIR.UP;
+  e.timer = 0;
+  const room = uwEnemyBoundsForRoom(0x6e, 0x6e);
+  assert.equal(room.minY, UW_BOUNDS.top);
+  assert.ok(chaseBoundsForCamera(0, 0).minY < UW_BOUNDS.top);
+  for (let i = 0; i < 400; i += 1) {
+    e.anim = (e.anim ?? 0) + 1;
+    stepBossAi(e, room, { chase: { x: 0x80, y: 0x20 } });
+  }
+  assert.ok(e.x >= UW_ENEMY_BOUNDS.minX);
+  assert.ok(e.x <= UW_ENEMY_BOUNDS.maxX - 16);
+  assert.ok(e.y >= UW_ENEMY_BOUNDS.minY, `y=${e.y} escaped above UW top`);
+  assert.ok(e.y <= UW_ENEMY_BOUNDS.maxY - 16);
 });
 
 test('dodongo ignores sword; eats bombs', () => {

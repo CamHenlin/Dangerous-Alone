@@ -9,8 +9,10 @@ test('placeBomb offsets by facing', () => {
   assert.equal(up.x, 0x80 + 4);
   assert.equal(up.phase, 'fuse');
   assert.equal(up.timer, BOMB_FUSE);
+  assert.equal(up.dir, DIR.UP);
   const right = placeBomb(0x80, 0x80, DIR.RIGHT);
   assert.equal(right.x, 0x80 + 4 + 16);
+  assert.equal(right.dir, DIR.RIGHT);
 });
 
 test('fuse then explode then done', () => {

@@ -62,10 +62,14 @@ export function tryStartRaftRide(link, roomId, inv, ride) {
   if (!inv?.raft || !isRaftDockRoom(roomId) || ride.active) return false;
   const dockX = raftDockX(roomId);
   if (Math.abs(link.x - dockX) > RAFT_ALIGN_PX) return false;
-  link.x = dockX;
 
-  /** @param {number} state */
-  const begin = (state) => {
+  /** @param {number} state @param {number} y */
+  const begin = (state, y) => {
+    // Soft-align only when the ride actually starts. Snapping X on a failed
+    // Y check ran every OW frame in `$3F`/`$55` and pinned Link to the dock
+    // column — UD worked, LR looked broken, until he left the dock room.
+    link.x = dockX;
+    link.y = y;
     ride.active = true;
     ride.state = state;
     ride.crossed = false;
@@ -81,14 +85,12 @@ export function tryStartRaftRide(link, roomId, inv, ride) {
 
   // Top edge — arriving from the north screen (UpdateDock state 1).
   if (Math.abs(link.y - 0x3d) <= RAFT_ALIGN_PX) {
-    link.y = 0x3d;
-    return begin(RAFT_STATE.DOWN);
+    return begin(RAFT_STATE.DOWN, 0x3d);
   }
   // Dock lip (UpdateDock state 2). NES tests Y=$7D exactly. Soft-align only
   // north of the `$7F` landing spot so DOWN→land cannot immediately re-fire UP.
   if (link.y >= RAFT_DOCK_Y_MIN && link.y < RAFT_DOCK_Y_MAX) {
-    link.y = 0x7d;
-    return begin(RAFT_STATE.UP);
+    return begin(RAFT_STATE.UP, 0x7d);
   }
   return false;
 }
@@ -216,9 +218,15 @@ export function stepRaftRide(link, ride, roomId) {
     link.y += 1;
     ride.y += 1;
     if (link.y >= 0x7f) {
-      // NES lands at $7F. Clear stride — a leftover gridOffset would walk
-      // south into the old UP band and bounce straight back north.
-      link.y = 0x7f;
+      // NES UpdateDock stops the scroll at Y=$7F with ObjGridOffset=$02
+      // ($7F-$7D) so Link finishes the southbound 8px cell onto sand at
+      // $85 — the first row where the pier opens and LEFT/RIGHT are free.
+      //
+      // Applying only gridOffset=$02 still leaves a one-frame pier park:
+      // pressing LEFT/RIGHT mid-cell (absOff<4) flips facing north, walks
+      // onto Y=$7D, and immediately re-boards the raft. Commit the completed
+      // cell instead so shore control matches the NES end state.
+      link.y = 0x85;
       link.dir = DIR.DOWN;
       endRide(link, ride);
       return { landed: true };

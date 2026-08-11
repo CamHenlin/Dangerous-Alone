@@ -32,3 +32,10 @@ yarn-debug.log*
 yarn-error.log*
 coverage/
 .turbo/
+
+# Intermediate AI tile renders (regenerable, and must stay out of publicDir)
+assets/ai-cache/
+
+# Python bytecode from enhance tooling
+__pycache__/
+*.pyc

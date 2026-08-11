@@ -29,7 +29,9 @@ export function turnRateForType(objType) {
   if (objType >= 0x2b && objType <= 0x2d) return 0x40;
   // Ghini $21 → $FF, "to turn as often as possible" (UpdateGhini)
   if (objType === 0x21) return 0xff;
-  // Darknut / Stalfos / Gibdo / Like-Like / Vire / Zol → $80
+  // Zol / Gel — UpdateNormalZolOrGel uses $20 (not the common $80 path).
+  if (objType === 0x13 || objType === 0x14 || objType === 0x15) return 0x20;
+  // Darknut / Stalfos / Gibdo / Like-Like / Vire → $80
   return 0x80;
 }
 
@@ -43,7 +45,7 @@ export function isWandererType(objType) {
     || objType === 0x0b
     || objType === 0x0c
     || objType === 0x12
-    || objType === 0x13
+    // Zol $13 uses UpdateNormalZolOrGel (zolGelAi.js), not UpdateCommonWanderer.
     || objType === 0x17
     // Ghini $21 uses UpdateCommonWanderer (Z_04.asm UpdateGhini).
     || objType === 0x21

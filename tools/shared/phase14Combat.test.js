@@ -46,6 +46,8 @@ test('Darknut face-parry on opposing dirs', () => {
   assert.equal(darknutParries(DIR.RIGHT, DIR.LEFT), true);
   assert.equal(darknutParries(DIR.UP, DIR.DOWN), true);
   assert.equal(darknutParries(DIR.RIGHT, DIR.RIGHT), false);
+  assert.equal(darknutParries(DIR.RIGHT, DIR.UP), false);
+  assert.equal(darknutParries(DIR.DOWN, DIR.LEFT), false);
 });
 
 test('Bubble sword block + zero-damage harm', () => {

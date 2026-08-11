@@ -72,6 +72,20 @@ export function isPatraChild(objType) {
   return objType === PATRA_CHILD || objType === PATRA_CHILD_RED;
 }
 
+/**
+ * UW bosses / orbiters stay inside BoundByRoom — they must not use the
+ * Phase-18 camera chase pad (which reaches into the HUD and neighboring rooms).
+ * @param {number} objType
+ */
+export function enemyUsesUwRoomBounds(objType) {
+  return (
+    isBossType(objType)
+    || objType === BOSS.GLEEOK_HEAD
+    || isPatraChild(objType)
+    || objType === CHILD_DIGDOGGER
+  );
+}
+
 /** Neck/head count for Gleeok type ($43→2 … $45→4); NES last-index = type−$42. */
 export function gleeokHeadCount(objType) {
   if (!isGleeok(objType)) return 0;

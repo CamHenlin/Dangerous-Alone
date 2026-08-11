@@ -45,6 +45,7 @@ test('octorok facing down uses frame offset 2', () => {
 });
 
 test('octorok facing right flips', () => {
+  // Side CHR faces left (snout on left) — H-flip when facing right.
   assert.equal(enemyFlipH(0x07, DIR.RIGHT), true);
   assert.equal(enemyFlipH(0x07, DIR.LEFT), false);
 });
@@ -62,6 +63,7 @@ test('octorok vertical facing uses mirrored draw + up V-flip', () => {
   const side = enemyDrawFlags(0x07, DIR.LEFT, 0);
   assert.equal(side.mirror, false);
   assert.equal(side.flipH, false);
+  assert.equal(enemyDrawFlags(0x07, DIR.RIGHT, 0).flipH, true);
 });
 
 test('tektite always mirrors', () => {
@@ -94,8 +96,12 @@ test('walker lynel/moblin use facing frames 0–3', () => {
   assert.equal(enemyFrameIndex(0x01, DIR.UP, 0), 3);
   assert.equal(enemyFrameTile(0x01, 0), 0xce);
   assert.equal(enemyFrameTile(0x03, 0), 0xf0);
-  assert.equal(enemyDrawFlags(0x03, DIR.RIGHT, 0).flipH, true);
+  // OW side CHR faces right — H-flip when facing left (same as Link/Goriya).
+  assert.equal(enemyDrawFlags(0x03, DIR.LEFT, 0).flipH, true);
+  assert.equal(enemyDrawFlags(0x03, DIR.RIGHT, 0).flipH, false);
   assert.equal(enemyDrawFlags(0x03, DIR.RIGHT, 0).mirror, false);
+  assert.equal(enemyDrawFlags(0x01, DIR.LEFT, 0).flipH, true);
+  assert.equal(enemyDrawFlags(0x01, DIR.RIGHT, 0).flipH, false);
 });
 
 test('goriya shares darknut side CHR facing (H-flip on LEFT)', () => {

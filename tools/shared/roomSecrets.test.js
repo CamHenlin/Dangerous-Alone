@@ -104,6 +104,7 @@ test('persons persist after room clear; tip rooms are not fight rooms', () => {
   assert.equal(persistsAfterRoomClear(0x4b), true);
   assert.equal(persistsAfterRoomClear(0x51), true);
   assert.equal(persistsAfterRoomClear(0x49), true);
+  assert.equal(persistsAfterRoomClear(0x37), true); // Zelda
   assert.equal(persistsAfterRoomClear(0x07), false);
   assert.equal(roomHasClearCountingType([{ alive: true, objType: 0x4b, npc: true }]), false);
   assert.equal(roomHasClearCountingType([{ alive: false, objType: 0x2a, npc: false }]), true);
@@ -120,13 +121,19 @@ test('ringleader kills remaining clear-counting foes when slot 1 empty', () => {
   assert.equal(foes[2].alive, true); // bubble ignored
 });
 
-test('LAST_BOSS clear needs lastBossDefeated flag', () => {
+test('LAST_BOSS clear needs lastBossDefeated flag and allDead', () => {
   const item = createRoomItem({
     floorItem: { itemType: ROOM_ITEM.HEART_CONTAINER },
     specialItem: { effectType: SECRET.LAST_BOSS, positionIndex: 0 },
   });
+  // Flag unset: all-dead alone must not open Zelda's shutter.
   assert.equal(applyRoomClear(item, true, SECRET.LAST_BOSS).shutter, false);
-  const ok = applyRoomClear(item, false, SECRET.LAST_BOSS, { lastBossDefeated: true });
+  // Flag set but Ganon still alive (Patra leftover / stale save): stay shut.
+  assert.equal(
+    applyRoomClear(item, false, SECRET.LAST_BOSS, { lastBossDefeated: true }).shutter,
+    false,
+  );
+  const ok = applyRoomClear(item, true, SECRET.LAST_BOSS, { lastBossDefeated: true });
   assert.equal(ok.shutter, true);
   assert.equal(ok.revealItem, true);
 });
