@@ -15,19 +15,24 @@ Edit PROMPT_TEMPLATE below and rerun. The cache keys on the prompt text, so
 changing it regenerates; leaving it alone resumes where you left off.
 
 --------------------------------------------------------------------------
-WHY THE OUTPUT IS CONSTRAINED TO 16 COLOURS
+COLOUR: WHAT THE MODEL IS ALLOWED TO USE
 
-Not an aesthetic choice. Every runtime recolor in this engine — dungeon level
-palettes, Link's tunic by ring, damage flash, the death fade — works by
-swapping a row of 4 NES colours. For that to keep working, each output pixel
-must be expressible as (slot, shade): which of the row's 4 colours it is, and
-where it sits on that colour's 4-step ramp. So FLUX may draw anything it likes
-as long as the result quantizes onto those 16 entries.
+Two schemes, chosen per sheet kind by COLOUR_MODE.
 
-PRESERVE_SLOTS goes further and pins each pixel's slot to the original,
-letting FLUX supply only the shading. That guarantees silhouettes, tile edges
-and collision appearance survive exactly. Turn it off for more freedom and
-more risk.
+"master" — the model may use any colour in the 512-entry master palette. This is
+what lets the art be genuinely enhanced rather than a reshaded original: FLUX
+picks its own colours and we keep them. Alongside the colour plane we store a
+*slot* plane (which of the tile's original 4 NES colours each pixel descends
+from), so a runtime recolor can still shift the whole tile by the delta between
+the old and new palette row. Detail survives; dungeon levels still differ.
+
+"row" — the older scheme: every pixel must land on its palette row's 4 slots x 8
+shades. Cheaper and exactly recolourable, but the model can only shade, never
+choose a colour.
+
+Recolors that depend on this: dungeon LevelInfo rows, Link's tunic by ring,
+damage flash, the death fade.
+
 --------------------------------------------------------------------------
 """
 
@@ -51,6 +56,7 @@ from tileContext import (  # noqa: E402
     self_tiled_context,
     transparent_context,
 )
+from backends import make_backend  # noqa: E402
 from spriteFrames import (  # noqa: E402
     compose_frame,
     extract_parts,
@@ -185,8 +191,19 @@ CONTEXT = 3
 # right at the silhouette where it matters most.
 TRANSPARENT_RGB = (255, 0, 255)
 
-MODE = "img2img"       # "edit" (instruction-style) or "img2img"
-IMAGE_STRENGTH = 0.55  # img2img only: how strongly the original is held
+# Which image model does the work.
+#   "sdxl-pixelart" — SDXL with a pixel-art LoRA. Measured 2.4x closer to the
+#                     game's palette than FLUX and ~2.3x faster, because it is
+#                     the only option here actually trained on pixel art.
+#   "flux2-klein"   — FLUX.2-klein via mflux.
+BACKEND = "sdxl-pixelart"
+
+# Each backend's strength parameter, in that backend's own units. They are
+# inverses of each other, so they are deliberately NOT one shared number.
+FLUX_INFLUENCE = 0.55   # mflux: how strongly the input is HELD (1 = untouched)
+SDXL_DENOISE = 0.45     # diffusers: how much is DENOISED AWAY (0 = untouched)
+
+MODE = "img2img"       # "edit" (instruction-style) or "img2img", FLUX only
 STEPS = 12             # also sets strength granularity: mflux buckets to an integer step
 SEED = 7
 GEN_PX = 768           # render size; must divide by CONTEXT so the crop is exact
@@ -214,13 +231,36 @@ QUANTIZE = 4           # model weight quantization (3/4/5/6/8), None for full
 #                original (Link's eyes, his belt buckle). Rendered at 256px and
 #                brought back to 32x32 they do not survive, and refinement loses
 #                his face while gaining nothing. Shading-only is better here.
-SLOT_MODE = {"background": "refine", "sprites": "pinned"}
+SLOT_MODE = {"background": "pinned", "sprites": "pinned"}
 
 # Generate sprites as whole characters rather than 16x16 at a time, using the
 # frame manifest from dumpSpriteFrames.js. A normal enemy frame is one 16x16
 # square either way, but a boss is not: Manhandla is 48x48 from five parts and
 # Gohma 48x16 from three, and generated separately those parts do not agree.
 SPRITE_FRAMES = True
+
+# Where output colours may come from, per sheet kind.
+#   "master" — any of the 512 master-palette entries; FLUX's own colours are
+#              kept, and a slot plane is written alongside so recolors still work
+#   "row"    — constrained to the tile's own palette row (4 slots x 8 shades)
+#
+# MEASURED: 92% of background tiles are drawn under more than one palette
+# context (one common_background tile appears in 12), so "master" bakes in
+# whichever row the tile happened to be generated under and the same sand comes
+# out orange on one screen and cream on another. Absolute colour is only sound
+# for art that appears in exactly one context — 19 of 226 background tiles.
+# Backgrounds therefore stay on "row" until the shade is widened (see below).
+#
+# Sprites stay on "row" for now because their textures are cut from baked PNGs
+# and recoloured by exact RGB match at runtime; moving them to "master" needs the
+# sprite texture builders to read planes instead. Backgrounds have no such
+# coupling: overworld screens are pre-baked, and dungeon rooms already compose
+# from planes.
+COLOUR_MODE = {"background": "row", "sprites": "row"}
+
+# Let FLUX's own shading through instead of re-deriving it from luminance.
+# Only meaningful in "master" colour mode, where the model's colours are kept.
+AI_SHADING = True
 
 # What a sprite frame depicts, by key prefix. Same lever as DESCRIPTIONS.
 FRAME_DESCRIPTIONS = {
@@ -236,7 +276,7 @@ FRAME_DESCRIPTIONS = {
 # a different slot, and fall back to pinned for that tile. Catches the case where
 # the model quietly redrew the tile as something else instead of detailing it.
 #
-# This guard is what makes a lower IMAGE_STRENGTH safe. At 0.70 the render barely
+# This guard is what makes a freer generation safe. Held tightly the render barely
 # departed from the input (median slot change 0.5%), so refinement had nothing to
 # work with and new geometry was 1.25% of pixels. Dropping to 0.55 lets the model
 # actually add structure; anything that goes too far lands back on the original
@@ -247,14 +287,35 @@ REFINE_MAX_CHANGE = 0.35
 # True  = silhouettes and tile edges provably preserved, detail is shading only.
 # False = FLUX may reshape the tile; expect seams between background tiles.
 PRESERVE_SLOTS = True
-SHADE_CONTRAST = 1.15  # how hard FLUX's luminance maps onto the 4-step ramp
-SHADE_FLOOR = 9.0      # ignore variation below this; keeps flat fills flat
+# Shading is proportional to the *actual* luminance difference from the rest of
+# the slot, in shade steps per luminance unit.
+#
+# This used to normalise by the region's own standard deviation, which is wrong
+# in the one case that matters: a nearly-flat region has a tiny std, so dividing
+# by it amplified sensor-level noise to the full range. On a 16x16 sprite, where
+# a slot may cover only a few dozen pixels, every tile hit the clamp at both
+# ends — a 150-step spread across Link's tunic, which is not shading but grain.
+#
+# The gain is set so detailed art is unchanged: a typical textured tile has a
+# luminance std around 30, and 30 * 1.15 = 34.5 shade steps, which is what the
+# old "37 per std-dev" produced there. Flat regions now stay flat instead of
+# being stretched to fill the ramp.
+SHADE_GAIN = 1.15
+SHADE_DEADZONE = 4.0   # luminance differences below this produce no shading
+# Radius, in output pixels, of the same-slot reference a sprite pixel is shaded
+# against. Roughly a character feature wide at 2x, so a limb can be lit on one
+# side while the model's larger disagreements with the original silhouette do
+# not become shading. 0 falls back to the slot's global mean.
+SPRITE_LOCAL_REF = 4.0
+# How many uniform tiles a slot needs before it counts as flat ground — see
+# `flat_slots`. One is an incidental solid block; repeats mean a fill colour.
+MIN_FLAT_FILL_TILES = 2
 # Farthest a pixel may move from its base shade. 1 keeps everything within one
 # step, which matters most on large flat fills: FLUX draws real cast shadows
 # under trees, and on a four-step cream ramp an unclamped shadow lands on the
 # darkest step as a flat grey blob that also fails to line up with the same
 # shadow in the neighbouring tile. 2 allows deeper contrast on detailed art.
-SHADE_MAX_STEP = 3
+SHADE_MAX_STEP = 96    # farthest a pixel may move from base (was 3 of 8 steps)
 # Radius of the high-pass applied to FLUX's luminance before it becomes shading.
 #
 # Each tile is rendered independently, so the model's *global* lighting — a
@@ -294,6 +355,11 @@ SHEETS: list[str] = []
 
 TILE_PX = 16  # enhanced tile edge
 
+# Identifies the backend and its settings in the cache key, so switching models
+# or strengths regenerates rather than silently reusing another model's art.
+_BACKEND_SIG = (f"sdxl-pixelart|{SDXL_DENOISE}" if BACKEND == "sdxl-pixelart"
+                else f"flux2-klein|{MODE}|{STEPS}|{FLUX_INFLUENCE}|{QUANTIZE}")
+
 # The run of "#RRGGBB, #RRGGBB, ..." the prompt lists as the allowed colours.
 _COLOR_LIST_RE = re.compile(r"(?:#[0-9A-F]{6}(?:, )?){2,}")
 
@@ -307,36 +373,23 @@ def load_palettes():
     return next(p for p in doc["paletteSets"] if p["id"] == "overworld")
 
 
-SHADES = 8          # shade steps per NES colour; must match masterPalette.js
-BASE_SHADE = 4      # the step whose RGB equals the untouched NES colour
+SHADES = 256        # shade steps per NES colour; must match masterPalette.js
+BASE_SHADE = 128    # the step whose RGB equals the untouched NES colour
 
 
-def expand_row(row_rgb):
-    """4 NES colours -> the 4 x SHADES (slot, shade) entries.
+def expand_row(row_nes):
+    """4 NES colour *indices* -> the 4 x SHADES entries of their ramps.
 
-    Mirrors tools/shared/masterPalette.js. Kept in step by the test in
-    masterPalette.test.js; if that ramp changes, change this with it.
+    Looked up in the palette dumped from masterPalette.js rather than
+    recomputed. A hand-mirrored copy of the ramp maths lived here and drifted
+    the first time the ramp was retuned; reading the dump makes that impossible.
     """
-    gains = [0.40, 0.55, 0.70, 0.85, 1.0, 1.13, 1.26, 1.40]
-    lift = [0, 0, 0, 0, 0, 4, 8, 12]
-    temp = [(-7, -5, 12), (-5, -4, 9), (-3, -2, 6), (-2, -1, 3),
-            (0, 0, 0), (4, 2, -2), (7, 4, -4), (11, 7, -7)]
+    pal = master_palette_rgb()
     out = []
-    for base in row_rgb:
-        for s in range(SHADES):
-            if s == BASE_SHADE:
-                out.append(tuple(int(c) for c in base))
-                continue
-            scaled = [base[c] * gains[s] + lift[s] for c in range(3)]
-            peak = max(scaled)
-            if peak > 255:
-                over = min(1.0, (peak - 255) / 255)
-                scaled = [(v * 255) / peak + over * 18 for v in scaled]
-            lum = (0.299 * scaled[0] + 0.587 * scaled[1] + 0.114 * scaled[2]) / 255
-            mid = max(0.0, 4 * lum * (1 - lum))
-            out.append(tuple(
-                max(0, min(255, int(round(scaled[c] + temp[s][c] * mid)))) for c in range(3)
-            ))
+    for nes in row_nes:
+        base = int(nes) * SHADES
+        for shade in range(SHADES):
+            out.append(tuple(int(v) for v in pal[base + shade]))
     return out
 
 
@@ -402,35 +455,113 @@ def quantize_to_palette(img, palette16, out_px=TILE_PX):
     return (idx // SHADES).astype(np.uint8), (idx % SHADES).astype(np.uint8)
 
 
-def shade_from_luminance(img, slot_map):
-    """Take only shading from FLUX, relative to other pixels of the same slot."""
+def flat_slots(tiles):
+    """Slots the game uses as flat ground, which must never be shaded.
+
+    A slot qualifies if the sheet contains at least one tile made entirely of
+    it. That is the signature of a fill colour: the game repeats that tile
+    across open ground, so every instance has to stay identical.
+
+    This generalises `flatten_if_uniform`, which only protects a tile that is
+    uniform on its own. The visible failure was on *mixed* tiles — a tile that
+    is half sand and half rock had its sand shaded to match the rock's shadow,
+    and since that tile sits against plain sand tiles the boundary showed up as
+    a grid of faintly darker squares across the desert. The colour has to be
+    flat everywhere it appears, not just where it appears alone.
+    """
+    counts = {}
+    for t in tiles:
+        v = np.unique(t)
+        if len(v) == 1:
+            counts[int(v[0])] = counts.get(int(v[0]), 0) + 1
+    # A real fill colour *repeats* — overworld sand has 7 uniform tiles, the HUD
+    # backdrop 49. A slot with exactly one uniform tile is an incidental solid
+    # block, and the text sheets have one of those in every colour: taking them
+    # at face value marked all four slots flat, so demo_background and
+    # common_background came out with zero shading and the title screen was
+    # pixel-identical to Classic.
+    flat = {0} | {s for s, n in counts.items() if n >= MIN_FLAT_FILL_TILES}
+    return flat
+
+
+def _masked_blur(lum, mask, radius):
+    """Blur `lum` using only the pixels in `mask` (normalised convolution).
+
+    An ordinary blur pulls in whatever sits next to the region — for a sprite
+    that is the transparent background, which is why a plain high-pass wrecked
+    sprite shading. Weighting by the mask and dividing by the blurred mask keeps
+    the average strictly inside the material.
+    """
+    m = mask.astype(np.float32)
+    num, den = _blur(lum * m, radius), _blur(m, radius)
+    return np.where(den > 1e-3, num / np.maximum(den, 1e-3), lum)
+
+
+def _blur(a, radius):
+    """Separable Gaussian blur on a float array.
+
+    PIL's GaussianBlur rejects float images, and rounding to uint8 first would
+    quantise the very differences this is measuring.
+    """
+    r = max(1.0, float(radius))
+    x = np.arange(-int(3 * r), int(3 * r) + 1, dtype=np.float32)
+    k = np.exp(-(x ** 2) / (2 * r * r))
+    k /= k.sum()
+    pad = len(k) // 2
+    out = np.pad(a.astype(np.float32), ((0, 0), (pad, pad)), mode="edge")
+    out = np.apply_along_axis(lambda v: np.convolve(v, k, mode="valid"), 1, out)
+    out = np.pad(out, ((pad, pad), (0, 0)), mode="edge")
+    return np.apply_along_axis(lambda v: np.convolve(v, k, mode="valid"), 0, out)
+
+
+def shade_from_luminance(img, slot_map, keep_flat=(0,), highpass=HIGHPASS_RADIUS,
+                         local_ref=0.0):
+    """Take only shading from the model, relative to other pixels of the same slot.
+
+    `keep_flat` lists slots left at the base shade — see `flat_slots`.
+    `highpass` is the blur radius subtracted first; 0 keeps the model's own
+    lighting, which is what a free-standing sprite wants — see the call site.
+    `local_ref` compares each pixel against a blur of its *own slot* at that
+    radius instead of that slot's average over the whole image. Measured
+    silhouette separation between the model's drawing and the original is only
+    ~1.7 std, so on a whole character the two disagree about where things are;
+    against a global mean that disagreement becomes a large shade offset, which
+    is what made bosses blotchy. A local reference keeps genuine form and drops
+    the disagreement. 0 uses the global mean.
+    """
     # Not necessarily square: a sprite frame can be 48x16 (Gohma) or 48x48
     # (Manhandla), so take both dimensions from the slot map rather than
     # assuming a tile.
     h, w = slot_map.shape
     a = np.asarray(img.convert("RGB").resize((w, h), Image.BOX), dtype=np.float32)
     lum = 0.299 * a[..., 0] + 0.587 * a[..., 1] + 0.114 * a[..., 2]
-    if HIGHPASS_RADIUS > 0:
+    if highpass > 0:
         blurred = np.asarray(
             Image.fromarray(np.clip(lum, 0, 255).astype(np.uint8))
-            .filter(ImageFilter.GaussianBlur(radius=HIGHPASS_RADIUS)),
+            .filter(ImageFilter.GaussianBlur(radius=highpass)),
             dtype=np.float32,
         )
         # Re-centre so the residual still has a meaningful mean per slot.
         lum = lum - blurred + float(lum.mean())
     shade = np.full(slot_map.shape, BASE_SHADE, dtype=np.uint8)
     for s in range(4):
+        if s in keep_flat:
+            continue
         m = slot_map == s
         if not m.any():
             continue
+        ref = _masked_blur(lum, m, local_ref)[m] if local_ref > 0 else lum[m].mean()
         vals = lum[m]
-        sd = max(float(vals.std()), SHADE_FLOOR)
-        z = np.clip((vals - vals.mean()) / sd * SHADE_CONTRAST, -SHADE_MAX_STEP, SHADE_MAX_STEP)
-        shade[m] = np.clip(np.rint(BASE_SHADE + z), 0, SHADES - 1).astype(np.uint8)
+        d = vals - ref
+        # Deadzone, then proportional. A flat region has small |d| and so stays
+        # flat; only real luminance structure becomes shading.
+        d = np.sign(d) * np.maximum(np.abs(d) - SHADE_DEADZONE, 0.0)
+        off = np.clip(d * SHADE_GAIN, -SHADE_MAX_STEP, SHADE_MAX_STEP)
+        shade[m] = np.clip(np.rint(BASE_SHADE + off), 0, SHADES - 1).astype(np.uint8)
     return shade
 
 
-def flatten_if_uniform(plane, source_tile):
+def flatten_if_uniform(plane, source_tile, colour_mode="row", nes_row=None):
     """Strip shading from a tile whose original art is a single colour.
 
     Checked per CHR tile rather than per generated square: a square of four
@@ -440,8 +571,45 @@ def flatten_if_uniform(plane, source_tile):
     counts = np.bincount(source_tile.ravel(), minlength=4)
     if counts.max() >= FLAT_SLOT_THRESHOLD * source_tile.size:
         slot = int(counts.argmax())
-        return np.full(plane.shape, slot * SHADES + BASE_SHADE, dtype=np.uint8)
+        if colour_mode == "master" and nes_row is not None:
+            value = int(nes_row[slot]) * SHADES + BASE_SHADE
+        else:
+            value = int(slot) * SHADES + BASE_SHADE
+        return np.full(plane.shape, value, dtype=plane.dtype)
     return plane
+
+
+def master_colours(img, out_px):
+    """Nearest master-palette index for every pixel — the model's own colours.
+
+    No shade derivation, no high-pass, no clamp: whatever FLUX drew is what the
+    tile gets, snapped only to the nearest available entry. The 512-entry master
+    is a full ramp per NES colour, so "snapped" is a very light constraint.
+    """
+    a = np.asarray(img.convert("RGB").resize((out_px, out_px), Image.BOX), dtype=np.int32)
+    pal = master_palette_rgb()
+    d = ((a[:, :, None, :] - pal[None, None, :, :]) ** 2).sum(-1)
+    return d.argmin(-1).astype(np.uint16)
+
+
+_MASTER_CACHE = {}
+
+
+def master_palette_rgb():
+    """The master entries as an array, loaded once from the JS dump.
+
+    Read rather than mirrored: masterPalette.js owns the ramp maths, and a
+    second hand-written copy would drift the next time it is retuned.
+    """
+    if "pal" not in _MASTER_CACHE:
+        path = GRAPHICS / "master_palette.json"
+        if not path.exists():
+            raise SystemExit("missing master_palette.json — run: node tools/enhance/dumpMasterPalette.js")
+        doc = json.loads(path.read_text())
+        if doc.get("shades") != SHADES:
+            raise SystemExit(f"master palette has {doc.get('shades')} shades, aiTiles.py expects {SHADES}")
+        _MASTER_CACHE["pal"] = np.array(doc["rgb"], dtype=np.int32)
+    return _MASTER_CACHE["pal"]
 
 
 def slots_by_chroma(img, palette16, out_px):
@@ -567,13 +735,58 @@ def cache_key(tile_bytes, prompt):
     # all. Keying on it would mean re-rendering every tile for hours whenever
     # the palette depth changes, which cannot alter what FLUX draws.
     h.update(_COLOR_LIST_RE.sub("<colors>", prompt).encode())
-    h.update(f"{UNIT}|{MODE}|{STEPS}|{SEED}|{GEN_PX}|{IMAGE_STRENGTH}|{CONTEXT}".encode())
+    h.update(f"{UNIT}|{SEED}|{GEN_PX}|{CONTEXT}|{_BACKEND_SIG}".encode())
     h.update(repr(sorted(INPUT_PALETTE_ROW.items())).encode())
     return h.hexdigest()[:16]
 
 
+# SDXL reads its prompt through CLIP, which hard-truncates at 77 tokens — about
+# 55 words. The long prompt below is ~1300 words, so under SDXL everything after
+# the first sentence was silently discarded: the per-tile description, the
+# transparency rule, the tiling rules, all of it. Worse, the fragment that did
+# survive describes a *background* ("one continuous piece of the game world,
+# seen from above"), which is actively wrong for a sprite.
+#
+# FLUX encodes with T5 and has a 512-token window, so it reads the long form as
+# written. Pick per backend rather than settling for one that suits neither.
+CLIP_TOKEN_LIMIT = 77
+CLIP_BACKENDS = ("sdxl-pixelart",)
+
+
+def build_short_prompt(sheet_id, base, kind="background", description=None):
+    """A prompt that fits CLIP's window, description first.
+
+    Ordering is the whole point: whatever matters most has to appear before the
+    truncation, so the subject leads and the style notes follow.
+
+    The palette is deliberately not listed. Spelling out even four colours costs
+    ~25 of the 77 tokens, and it buys nothing — output is quantised to the
+    palette afterwards regardless, so the colours are enforced by construction
+    rather than by asking.
+    """
+    fallback = SHEET_DESCRIPTIONS.get(sheet_id, DEFAULT_DESCRIPTION)
+    desc = description or DESCRIPTIONS.get(sheet_id, {}).get(base, fallback)
+    if kind == "sprites":
+        return (f"{desc}. Pixel art game character sprite, crisp flat colours, "
+                f"hard edges, plain magenta background left untouched.")
+    return (f"{desc}. Top-down pixel art terrain, one continuous scene, "
+            f"seamless and tileable, detail right to every edge, crisp flat "
+            f"colours, no grid lines or borders.")
+
+
 def build_prompt(palette16, sheet_id, base, kind="background", description=None):
-    colors = ", ".join("#%02X%02X%02X" % c for c in palette16)
+    if BACKEND in CLIP_BACKENDS:
+        return build_short_prompt(sheet_id, base, kind, description)
+    # Distinct colours only. This listed every entry of the *expanded* palette —
+    # 1024 of them, 530 distinct, opening with a long run of #000000 from slot
+    # 0's dark shades — which is noise even for a model that can read it all.
+    seen_c, colour_list = set(), []
+    for c in palette16:
+        t = tuple(c)
+        if t not in seen_c:
+            seen_c.add(t)
+            colour_list.append("#%02X%02X%02X" % t)
+    colors = ", ".join(colour_list)
     fallback = SHEET_DESCRIPTIONS.get(sheet_id, DEFAULT_DESCRIPTION)
     desc = description or DESCRIPTIONS.get(sheet_id, {}).get(base, fallback)
     src = 16 if UNIT == "square" else 8
@@ -655,18 +868,34 @@ def plan(manifest):
     return jobs, total
 
 
-def _write_sheet(sheet, grids, planes, bake_palette16):
-    """Write a sheet's raw planes and its baked PNG."""
-    (OUT_DIR / f"{sheet['id']}.4bpp").write_bytes(planes.tobytes())
+def _write_sheet(sheet, grids, planes, bake_palette16, slots_plane=None, colour_mode="row"):
+    """Write a sheet's planes and its baked PNG.
+
+    Row mode writes a 16-bit value per pixel (slot * SHADES + shade). Master mode
+    writes a 16-bit master-palette index plus a companion slot plane, which is
+    what lets a runtime recolor move the pixel without its colour having to be
+    one of the row's entries.
+    """
+    if colour_mode == "master":
+        (OUT_DIR / f"{sheet['id']}.colour16").write_bytes(
+            planes.astype("<u2").tobytes())
+        if slots_plane is not None:
+            (OUT_DIR / f"{sheet['id']}.slot").write_bytes(slots_plane.tobytes())
+    else:
+        (OUT_DIR / f"{sheet['id']}.plane").write_bytes(planes.astype("<u2").tobytes())
     cols = min(16, max(len(grids), 1))
     rows = (len(grids) + cols - 1) // cols
     # RGBA, not RGB: on a sprite sheet slot 0 is the transparent hole, and a
     # sheet written without alpha paints it solid — Link ends up in a black box.
     sheet_img = np.zeros((rows * TILE_PX, cols * TILE_PX, 4), dtype=np.uint8)
-    pal = np.array(bake_palette16, dtype=np.uint8)
-    alpha = np.full(4 * SHADES, 255, dtype=np.uint8)
-    if sheet["kind"] == "sprites":
-        alpha[0:SHADES] = 0
+    if colour_mode == "master":
+        pal = master_palette_rgb().astype(np.uint8)
+        alpha = np.full(len(pal), 255, dtype=np.uint8)
+    else:
+        pal = np.array(bake_palette16, dtype=np.uint8)
+        alpha = np.full(4 * SHADES, 255, dtype=np.uint8)
+        if sheet["kind"] == "sprites":
+            alpha[0:SHADES] = 0
     rgba = np.concatenate([pal, alpha[:, None]], axis=1)
     for i in range(len(grids)):
         y, x = divmod(i, cols)
@@ -732,22 +961,14 @@ def main():
             if not rooms.exists():
                 print("  (run: node tools/enhance/dumpRoomGrids.js for dungeon context)")
 
-    # Loaded on first use, not up front. Re-deriving the planes after a change
-    # to the palette depth or the shading maths needs no generation at all, and
-    # loading plus 4-bit quantizing 15GB of weights to then do nothing turns a
-    # seconds-long job into a minutes-long one.
-    model_box = {}
-
-    def get_model():
-        if "m" not in model_box:
-            from mflux.models.common.config import ModelConfig
-            from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
-
-            print(f"loading FLUX.2-klein-4B (quantize={QUANTIZE})...")
-            cfg = ModelConfig.from_name("flux2-klein-4b")
-            cls = Flux2KleinEdit if MODE == "edit" else Flux2Klein
-            model_box["m"] = cls(model_config=cfg, quantize=QUANTIZE)
-        return model_box["m"]
+    # Weights load on first use, not up front. Re-deriving the planes after a
+    # change to the palette depth or the shading maths needs no generation at
+    # all, and loading gigabytes to then do nothing turns a seconds-long job
+    # into a minutes-long one.
+    backend = (make_backend(BACKEND, denoise=SDXL_DENOISE)
+               if BACKEND == "sdxl-pixelart"
+               else make_backend(BACKEND, quantize=QUANTIZE, steps=STEPS,
+                                 influence=FLUX_INFLUENCE, mode=MODE))
 
     wanted = SHEETS or [s["id"] for s in manifest["sheets"]]
     done = 0
@@ -764,7 +985,7 @@ def main():
                        "tiles": decode_tiles((GRAPHICS / sh["bin"]).read_bytes())}
             for sh in manifest["sheets"]
         }
-        sprite_pal = expand_row(ow["rowsRgb"][4])   # sprites bake with SP0
+        sprite_pal = expand_row(ow["rows"][4])   # sprites bake with SP0
         print(f"sprite frames: {len(frames)} whole characters")
         for n, frame in enumerate(frames):
             if not any(p["sheet"] in wanted for p in frame["parts"]):
@@ -786,14 +1007,7 @@ def main():
                 w, h = frame_render_size(frame)
                 src = CACHE_DIR / f"{key}_in.png"
                 tile_to_png(grid, sprite_pal, src, (w, h), transparent_slot0=True)
-                kwargs = dict(seed=SEED, prompt=prompt, num_inference_steps=STEPS,
-                              width=w, height=h, guidance=1.0)
-                if MODE == "edit":
-                    kwargs["image_paths"] = [str(src)]
-                else:
-                    kwargs["image_path"] = str(src)
-                    kwargs["image_strength"] = IMAGE_STRENGTH
-                get_model().generate_image(**kwargs).image.save(cached)
+                backend.generate(src, w, h, prompt, SEED).save(cached)
                 done += 1
                 print(f"  [frame {n + 1}/{len(frames)}] {frame['key']} {frame['width']}x{frame['height']}")
 
@@ -801,8 +1015,15 @@ def main():
             # Sprites stay pinned: the silhouette is the hitbox, and 1-2px
             # features do not survive a re-render.
             slot = np.repeat(np.repeat(grid, 2, axis=0), 2, axis=1)
-            shade = shade_from_luminance(out.resize((slot.shape[1], slot.shape[0]), Image.BOX), slot)
-            plane = slot * SHADES + shade
+            # No high-pass on a sprite. The filter exists so that per-tile
+            # lighting cannot disagree across a tiled background, but a sprite
+            # is free-standing and never tiles — and its low-frequency lighting
+            # (a body rounded by a light from above) is precisely the shading
+            # worth keeping. High-passing it threw that away and kept the noise.
+            shade = shade_from_luminance(
+                out.resize((slot.shape[1], slot.shape[0]), Image.BOX), slot,
+                highpass=0, local_ref=SPRITE_LOCAL_REF)
+            plane = slot.astype(np.uint16) * SHADES + shade
             for k, v in extract_parts(plane, frame, scale=2).items():
                 sprite_parts.setdefault(k, v)
         print(f"sprite tiles from whole characters: {len(sprite_parts)}")
@@ -811,6 +1032,9 @@ def main():
             continue
         raw = (GRAPHICS / sheet["bin"]).read_bytes()
         grids = decode_tiles(raw)
+        # Which slots are this sheet's flat ground, measured from the original
+        # art rather than assumed — it is slot 2 on the overworld, not slot 0.
+        sheet_flat = flat_slots(grids) if sheet["kind"] == "background" else {0}
         # Two different palettes, deliberately:
         #   input_pal — renders what FLUX sees, chosen so the subject is legible
         #   bake_pal  — colours the sheet PNG, and must follow the convention
@@ -819,25 +1043,44 @@ def main():
         # so these can differ without the two ever disagreeing.
         default_row = 4 if sheet["kind"] == "sprites" else 1
         row = INPUT_PALETTE_ROW.get(sheet["id"], default_row)
-        palette16 = expand_row(ow["rowsRgb"][row])
-        bake_palette16 = expand_row(ow["rowsRgb"][default_row])
+        palette16 = expand_row(ow["rows"][row])
+        bake_palette16 = expand_row(ow["rows"][default_row])
 
-        planes = np.zeros((len(grids), TILE_PX, TILE_PX), dtype=np.uint8)
-        # Slot 0 at base shade is the untouched backdrop; anything not generated
-        # keeps the original art rather than coming out black.
+        colour_mode = COLOUR_MODE.get(sheet["kind"], "row")
+        planes = np.zeros((len(grids), TILE_PX, TILE_PX), dtype=np.uint16)
+        # A parallel slot plane travels with the colours so runtime recolors can
+        # shift a pixel by its slot's delta without needing its colour to be one
+        # of the row's entries.
+        slots_plane = np.zeros((len(grids), TILE_PX, TILE_PX), dtype=np.uint8)
+        # Anything not generated keeps the original art rather than coming out
+        # black: slot 0 at base shade for row mode, the equivalent master entry
+        # for master mode.
         for i, g in enumerate(grids):
-            planes[i] = upscale_slots(g) * SHADES + BASE_SHADE
+            up = upscale_slots(g)
+            slots_plane[i] = up
+            if colour_mode == "master":
+                nes = np.array(ow["rows"][row], dtype=np.int64)
+                planes[i] = nes[up].astype(np.uint32) * SHADES + BASE_SHADE
+            else:
+                planes[i] = up.astype(np.uint16) * SHADES + BASE_SHADE
 
+        # Tiles a whole-character frame already produced. Everything else falls
+        # through to the per-square path below rather than being skipped: the
+        # frame manifest reaches most of a sprite sheet but not all of it (the
+        # demo/title sprites are not part of any animation), and a tile no frame
+        # covers used to keep the original art untouched.
+        covered = set()
         if sheet["kind"] == "sprites" and sprite_parts:
             for i in range(len(grids)):
                 got = sprite_parts.get((sheet["id"], i))
                 if got is not None:
                     planes[i] = flatten_if_uniform(got, grids[i])
-            _write_sheet(sheet, grids, planes, bake_palette16)
-            continue
+                    covered.add(i)
 
         for base, grid in units_for(grids):
             if not grid.any():
+                continue
+            if all(base + n in covered for n in range(4)):
                 continue
             if args.only is not None and base not in args.only:
                 continue
@@ -854,18 +1097,10 @@ def main():
                     render_grid, palette16, src, GEN_PX,
                     transparent_slot0=(sheet["kind"] == "sprites"),
                 )
-                kwargs = dict(
-                    seed=SEED, prompt=prompt, num_inference_steps=STEPS,
-                    width=GEN_PX, height=GEN_PX, guidance=1.0,
-                )
-                if MODE == "edit":
-                    kwargs["image_paths"] = [str(src)]
-                else:
-                    kwargs["image_path"] = str(src)
-                    kwargs["image_strength"] = IMAGE_STRENGTH
                 # Only the centre cell was ever the subject; the rest was
                 # context so the model could draw the joins.
-                crop_centre(get_model().generate_image(**kwargs).image, CONTEXT).save(cached)
+                crop_centre(backend.generate(src, GEN_PX, GEN_PX, prompt, SEED),
+                            CONTEXT).save(cached)
                 done += 1
                 print(f"  [{done}/{len(jobs)}] {sheet['id']} {UNIT} @{base}")
 
@@ -883,19 +1118,50 @@ def main():
             # Shading always runs through the same path, so the high-pass, the
             # step clamp and the flat-fill rule apply whichever slots we ended up
             # with.
-            shade = shade_from_luminance(out, slot)
-            plane = slot * SHADES + shade
+            if colour_mode == "master" and AI_SHADING:
+                # The model's own colours, snapped only to the nearest master
+                # entry. No shade derivation, no high-pass, no clamp.
+                plane = master_colours(out, out_px)
+            else:
+                is_sprite = sheet["kind"] == "sprites"
+                shade = shade_from_luminance(
+                    out, slot, keep_flat=sheet_flat,
+                    highpass=0 if is_sprite else HIGHPASS_RADIUS,
+                    local_ref=SPRITE_LOCAL_REF if is_sprite else 0.0)
+                plane = slot.astype(np.uint16) * SHADES + shade
 
             if UNIT == "square":
-                for n, part in enumerate(split_square(plane)):
-                    if base + n < len(planes):
-                        planes[base + n] = flatten_if_uniform(part, grids[base + n])
+                parts = split_square(plane)
+                slot_parts = split_square(slot)
+                for n, part in enumerate(parts):
+                    if base + n >= len(planes) or base + n in covered:
+                        # A frame drew this tile as part of a whole character,
+                        # which is better context than a lone 16x16 square.
+                        continue
+                    planes[base + n] = flatten_if_uniform(
+                        part, grids[base + n], colour_mode, ow["rows"][row])
+                    slots_plane[base + n] = slot_parts[n]
             else:
-                planes[base] = flatten_if_uniform(plane, grid)
+                planes[base] = flatten_if_uniform(plane, grid, colour_mode, ow["rows"][row])
+                slots_plane[base] = slot
 
-        _write_sheet(sheet, grids, planes, bake_palette16)
+        _write_sheet(sheet, grids, planes, bake_palette16, slots_plane, colour_mode)
         print(f"{sheet['id']}: {len(grids)} tiles -> {sheet['sheet']}")
 
+    # Absolute colours are only meaningful relative to the palette row the tile
+    # was rendered under for the model. Record it, or a consumer cannot shift
+    # the tile into a different row later.
+    (OUT_DIR / "ai_manifest.json").write_text(json.dumps({
+        "shades": SHADES,
+        "sheets": {
+            sh["id"]: {
+                "colourMode": COLOUR_MODE.get(sh["kind"], "row"),
+                "genRow": INPUT_PALETTE_ROW.get(
+                    sh["id"], 4 if sh["kind"] == "sprites" else 1),
+            }
+            for sh in manifest["sheets"]
+        },
+    }, indent=2))
     (OUT_DIR / "prompt.txt").write_text(prompt)
     print(f"\nwrote {OUT_DIR}")
     print(f"generations this run: {done}")

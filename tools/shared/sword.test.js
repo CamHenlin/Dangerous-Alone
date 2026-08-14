@@ -4,6 +4,7 @@ import { DIR } from './collision.js';
 import { SWORD } from './inventory.js';
 import {
   SWORD_PHASE,
+  cancelSword,
   createSwordState,
   isSwordActive,
   rectsOverlap,
@@ -18,6 +19,16 @@ import {
   swordSpriteRotation,
   tryStartSword,
 } from './sword.js';
+
+test('cancelSword aborts a mid-swing blade', () => {
+  const sword = createSwordState();
+  tryStartSword(sword, DIR.UP, SWORD.WOOD);
+  assert.equal(isSwordActive(sword), true);
+  cancelSword(sword);
+  assert.equal(isSwordActive(sword), false);
+  assert.equal(sword.phase, 0);
+  assert.equal(sword.timer, 0);
+});
 
 test('tryStartSword requires wood+', () => {
   const sword = createSwordState();

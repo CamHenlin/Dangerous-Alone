@@ -68,6 +68,8 @@ import {
   isGoriyaStyleFacing,
   isWandererType,
   onTileBoundary,
+  tickWandererTurnTimer,
+  truncateWandererGridOffset,
   turnRateForType,
   wandererDecideFacing,
 } from './wandererAi.js';
@@ -972,38 +974,52 @@ export function canEnemyMove(tileGrid, x, y, dir, tileOpts = {}) {
 }
 
 /**
- * Pick an open cardinal. Prefer reverse, then perpendicular, then any open.
- * Avoids UP↔DOWN (or L↔R) ping-pong when trapped in a corridor.
+ * Walker_GetNextAltDir search when the current facing is blocked.
+ * Order matches Z_07.asm: random perpendicular → other perp → reverse → none.
+ * Returns 0 when no walkable alternate exists (moving dir cleared; facing kept).
  *
  * @param {number[][] | null | undefined} tileGrid
  * @param {number} x
  * @param {number} y
  * @param {number} currentDir
- * @param {number} [salt]
+ * @param {number} [salt] fallback entropy when randomByte is omitted
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function }} [tileOpts]
+ * @param {(() => number) | null} [randomByte] NES Random,X (bit7 picks first perp)
  */
-export function pickUnblockedDir(tileGrid, x, y, currentDir, salt = 0, tileOpts = {}) {
+export function pickUnblockedDir(
+  tileGrid,
+  x,
+  y,
+  currentDir,
+  salt = 0,
+  tileOpts = {},
+  randomByte = null,
+) {
   const reverse = oppositeDir(currentDir);
   const perpendicular =
     currentDir & (DIR.UP | DIR.DOWN)
       ? [DIR.LEFT, DIR.RIGHT]
       : [DIR.UP, DIR.DOWN];
-  if (salt & 1) perpendicular.reverse();
+  // Walker_AltDir_GetRandomObjPerpendicularDir: ASL Random → BCS picks index 1.
+  const roll = typeof randomByte === 'function' ? randomByte() & 0xff : salt & 0xff;
+  if (roll & 0x80) perpendicular.reverse();
 
   /** @type {number[]} */
   const candidates = [];
   const pushUnique = (d) => {
     if (d && !candidates.includes(d)) candidates.push(d);
   };
-  pushUnique(reverse);
   for (const d of perpendicular) pushUnique(d);
-  for (let i = 0; i < 4; i += 1) pushUnique(DIRS[(salt + i) & 3]);
+  pushUnique(reverse);
 
-  if (!tileGrid) return reverse || candidates[0] || DIR.DOWN;
+  if (!tileGrid && typeof tileOpts.collidingTile !== 'function') {
+    return candidates[0] || reverse || 0;
+  }
 
   for (const d of candidates) {
     if (canEnemyMove(tileGrid, x, y, d, tileOpts)) return d;
   }
-  return reverse || candidates[0] || DIR.DOWN;
+  return 0;
 }
 
 /**
@@ -1060,26 +1076,52 @@ export function applyVireJump(e) {
 }
 
 /**
+ * Walker_CheckTileCollision only tests tiles when ObjGridOffset == 0
+ * (BNE early-out). Mid-stride skips walkability so a committed 16px step
+ * can pass through block corners. `$10` is nonzero until truncated after move.
+ * @param {Enemy} e
+ */
+function atWalkerTileCheck(e) {
+  return (e.gridOffset ?? 0) === 0;
+}
+
+/**
+ * Try Walker_GetNextAltDir when the current facing is blocked.
+ * @returns {boolean} true if a walkable facing was found
+ */
+function tryAltDir(e, tileGrid, tileOpts, randomByte) {
+  const next = pickUnblockedDir(
+    tileGrid,
+    e.x,
+    e.y,
+    e.dir,
+    e.id + e.anim,
+    tileOpts,
+    randomByte,
+  );
+  if (!next) return false;
+  e.dir = next;
+  e.timer = Math.min(e.timer, 4);
+  return true;
+}
+
+/**
  * Move if room bounds + optional tile walkability allow it.
- * NES Walker_CheckTileCollision only tests tiles when gridOffset == 0;
- * mid-stride (including Vire hops) skips walkability so a committed
- * 16px step can pass through block corners.
  * @param {Enemy} e
  * @param {number} speed
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
  * @param {number[][] | null | undefined} tileGrid
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
+ * @param {(() => number) | null} [randomByte]
  */
-function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}) {
+function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}, randomByte = null) {
   const checkTiles =
     (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
-    && onTileBoundary(e)
+    && atWalkerTileCheck(e)
     && !enemyIgnoresTiles(e.objType);
   if (checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
-    e.dir = pickUnblockedDir(tileGrid, e.x, e.y, e.dir, e.id + e.anim, tileOpts);
-    e.timer = Math.min(e.timer, 4);
-    // Same frame: if the new facing is open, keep moving (TryNextDir).
-    if (!canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
+    // Same frame: if an alt facing is open, keep moving (TryNextDir).
+    if (!tryAltDir(e, tileGrid, tileOpts, randomByte)) {
       bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
       return;
     }
@@ -1097,16 +1139,15 @@ function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}) {
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
  * @param {number[][] | null | undefined} tileGrid
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [tileOpts]
+ * @param {(() => number) | null} [randomByte]
  */
-function moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts = {}) {
+function moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts = {}, randomByte = null) {
   const checkTiles =
     (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
-    && onTileBoundary(e)
+    && atWalkerTileCheck(e)
     && !enemyIgnoresTiles(e.objType);
   if (checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
-    e.dir = pickUnblockedDir(tileGrid, e.x, e.y, e.dir, e.id + e.anim, tileOpts);
-    e.timer = Math.min(e.timer, 4);
-    if (!canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
+    if (!tryAltDir(e, tileGrid, tileOpts, randomByte)) {
       bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
       return;
     }
@@ -1124,9 +1165,18 @@ function moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts = {}) {
 }
 
 /** Prefer ObjQSpeedFrac MoveObject; fall back to whole-pixel qSpeed. */
-function moveEnemyStep(e, bounds, tileGrid, tileOpts = {}) {
-  if (e.qSpeedFrac != null) moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts);
-  else moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts);
+function moveEnemyStep(e, bounds, tileGrid, tileOpts = {}, randomByte = null) {
+  if (e.qSpeedFrac != null) {
+    moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts, randomByte);
+  } else {
+    moveAndCollide(e, e.qSpeed, bounds, tileGrid, tileOpts, randomByte);
+  }
+}
+
+/** @param {Enemy} e @param {{ rngByte?: () => number }} [opts] */
+function enemyRandomByte(e, opts = {}) {
+  if (typeof opts.rngByte === 'function') return opts.rngByte;
+  return () => (e.anim + e.id * 17 + (e.turnTimer ?? 0)) & 0xff;
 }
 
 /**
@@ -1212,14 +1262,14 @@ function stepZolOrGel(e, bounds, tileGrid, tileOpts, chase, opts = {}) {
   // ObjTimer >= 5: pause at the tile edge (no Wanderer_TargetPlayer).
   if (zolGelPaused(e.timer)) return;
 
+  // Wanderer_TargetPlayer: tick timer → move → maybe reface on square.
+  tickWandererTurnTimer(e);
+  const rnd = enemyRandomByte(e, opts);
+  moveEnemyStep(e, bounds, tileGrid, tileOpts, rnd);
   if (onTileBoundary(e)) {
-    const rnd = typeof opts.rngByte === 'function'
-      ? opts.rngByte
-      : () => (e.anim + e.id * 17 + (e.turnTimer ?? 0)) & 0xff;
+    truncateWandererGridOffset(e);
     wandererDecideFacing(e, chase, rnd);
   }
-
-  moveEnemyStep(e, bounds, tileGrid, tileOpts);
 
   // At a square with timer == 0: roll the next edge delay (ZolGelDelays).
   if (onTileBoundary(e) && (e.timer ?? 0) === 0) {
@@ -1288,9 +1338,10 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     return;
   }
 
-  if (t === OBJ.ARMOS && (e.armosFade ?? 0) > 0) {
+  // Armos / Flying Ghini fade-in (InitArmosOrFlyingGhini ObjTimer) — stay put.
+  if ((t === OBJ.ARMOS || t === OBJ.FLYING_GHINI) && (e.armosFade ?? 0) > 0) {
     e.armosFade -= 1;
-    if (e.armosFade === 0) {
+    if (e.armosFade === 0 && t === OBJ.ARMOS) {
       // InitArmos: $20 if Random < $80, else $60.
       const rnd = typeof opts.rngByte === 'function'
         ? opts.rngByte()
@@ -1405,21 +1456,23 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     return;
   }
 
-  // Lynel/Goriya: UpdateGoriya facing. Others: Wanderer_TargetPlayer.
+  // Wanderer_TargetPlayer / UpdateGoriya: move first, then reface on square.
   if (isWandererType(t)) {
-    if (onTileBoundary(e)) {
-      if (isGoriyaStyleFacing(t)) {
-        goriyaDecideFacing(e, chase);
-      } else {
-        const rnd = () => (e.anim + e.id * 17 + (e.turnTimer ?? 0)) & 0xff;
-        wandererDecideFacing(e, chase, rnd);
-      }
-    }
+    tickWandererTurnTimer(e);
+    const rnd = enemyRandomByte(e, opts);
     const goBefore = e.gridOffset ?? 0;
-    moveEnemyStep(e, bounds, tileGrid, tileOpts);
+    moveEnemyStep(e, bounds, tileGrid, tileOpts, rnd);
     // UpdateVireState0: hop while facing left/right (table sums to 0 over a tile).
     // Only after a real step so a bounced edge cannot re-apply the same offset.
     if (t === OBJ.VIRE && (e.gridOffset ?? 0) !== goBefore) applyVireJump(e);
+    if (onTileBoundary(e)) {
+      truncateWandererGridOffset(e);
+      if (isGoriyaStyleFacing(t)) {
+        goriyaDecideFacing(e, chase);
+      } else {
+        wandererDecideFacing(e, chase, rnd);
+      }
+    }
     return;
   }
 

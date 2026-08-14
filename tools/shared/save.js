@@ -244,6 +244,8 @@ export function serializeGameState(state) {
     owItemsTaken: toSortedArray(state.owItemsTaken ?? []),
     /** Phase 19: OW (`roomId:condition`) and UW (`d:level:roomId:condition`) tip marks. */
     hintMarks: toSortedArray(state.hintMarks ?? []),
+    /** Phase 22: one-shot story beats already spoken (`item:10`, `level:3`). */
+    toldStory: toSortedArray(state.toldStory ?? []),
     dungeons: serializeDungeonProgress(state.dungeonProgress),
   };
 }
@@ -341,6 +343,8 @@ export function createSaveStore(storage = globalThis.localStorage) {
  * @param {Set<string>} target.owSecretsRevealed
  * @param {Set<string>} target.caveTaken
  * @param {Set<number>} [target.owItemsTaken]
+ * @param {Set<string>} [target.hintMarks]
+ * @param {Set<string>} [target.toldStory]
  * @param {Map<number, object>} target.dungeonProgress
  */
 export function applyLoadedSave(payload, target) {
@@ -357,6 +361,11 @@ export function applyLoadedSave(payload, target) {
   // Saves written before Phase 19 have no marks; the radar just starts clean.
   target.hintMarks?.clear();
   for (const k of payload.hintMarks ?? []) target.hintMarks?.add(k);
+  // Pre-Phase-22 saves have no record of what was said. An empty set means a
+  // resumed run may hear one item introduced twice, which beats never hearing
+  // any of them because the file predates the field.
+  target.toldStory?.clear();
+  for (const k of payload.toldStory ?? []) target.toldStory?.add(String(k));
   target.dungeonProgress.clear();
   for (const [level, data] of hydrateDungeonProgress(payload.dungeons)) {
     target.dungeonProgress.set(level, data);

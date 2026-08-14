@@ -13,6 +13,7 @@ import {
   caveHintLine,
   caveWareSlots,
   checkCaveExit,
+  clearCaveTransitState,
   createCaveTileGrid,
   dwellerKind,
   nearCaveNpc,
@@ -21,6 +22,8 @@ import {
 } from './caveRoom.js';
 import { ITEM } from './caves.js';
 import { sheetForPpuTile } from './enemyAnim.js';
+import { createInventory, SWORD } from './inventory.js';
+import { cancelSword, createSwordState, isSwordActive, tryStartSword } from './sword.js';
 
 test('dwellerKind maps ROM bytes', () => {
   assert.equal(dwellerKind(0x58), 'old_man');
@@ -34,6 +37,29 @@ test('caveDwellerDraw matches ObjAnimFrameHeap $58–$5B', () => {
   assert.deepEqual(caveDwellerDraw(0x5b), { tile: 0xf8, pal: 2, mirror: false });
   assert.equal(sheetForPpuTile(0x98, 'overworld').sheet, 'overworld');
   assert.equal(sheetForPpuTile(CAVE_FIRE_TILE, 'overworld').sheet, 'common');
+});
+
+test('clearCaveTransitState drops shove/sword that softlock Mode B', () => {
+  const link = createLinkState(CAVE_ENTER_SPAWN.x, CAVE_ENTER_SPAWN.y, DIR.UP);
+  link.posFrac = 0.5;
+  link.gridOffset = 4;
+  link.moving = true;
+  const inv = createInventory();
+  inv.shovePixels = 0x20;
+  inv.shoveDir = DIR.DOWN;
+  inv.paralyzed = 2;
+  inv.itemLiftTimer = 0x80;
+  const sword = createSwordState();
+  tryStartSword(sword, DIR.UP, SWORD.WOOD);
+  clearCaveTransitState({ link, inv, sword, cancelSword });
+  assert.equal(link.posFrac, 0);
+  assert.equal(link.gridOffset, 0);
+  assert.equal(link.moving, false);
+  assert.equal(inv.shovePixels, 0);
+  assert.equal(inv.shoveDir, 0);
+  assert.equal(inv.paralyzed, 0);
+  assert.equal(inv.itemLiftTimer, 0);
+  assert.equal(isSwordActive(sword), false);
 });
 
 test('enter spawn is not an immediate exit', () => {

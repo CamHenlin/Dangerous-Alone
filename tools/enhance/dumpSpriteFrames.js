@@ -66,6 +66,8 @@ function sheetId(key) {
   return SHEET_KEY_TO_ID[key] ?? key;
 }
 const DIRS = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT];
+/** Every dungeon level, so every level-specific sprite sheet is reachable. */
+const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /**
  * One 16x16 sprite = four CHR tiles in UL, LL, UR, LR order.
@@ -146,10 +148,20 @@ function linkFrames() {
   const frames = [];
   for (const dir of DIRS) {
     for (let anim = 0; anim < 2; anim += 1) {
-      const { baseTile, flipH } = linkWalkSprite(dir, anim);
-      const parts = quad(baseTile, 'overworld', 1, 0, 0, { flipH });
+      // Link is two 8x16 halves whose tiles are *not* consecutive — walking
+      // down is 0x58/0x59 on the left and 0x0a/0x0b on the right. Building him
+      // with quad(baseTile) assumed four consecutive tiles, which pulled in
+      // 0x5a from the other animation frame, missed the real right half, and
+      // swapped the halves on the side-facing frames. The result decomposed
+      // into garbage that did not even read as a character.
+      const s = linkWalkSprite(dir, anim);
+      const parts = [
+        ...half(s.leftTile, 'overworld', 1, 0, 0, { flipH: s.flipLeft }),
+        ...half(s.rightTile, 'overworld', 1, 8, 0, { flipH: s.flipRight }),
+      ];
       if (parts.length) frames.push({ key: `link:walk:${dir}:${anim}`, parts });
     }
+    // The attack poses *are* four consecutive tiles (`swordAttackBaseTile`).
     const atk = swordAttackBaseTile(dir);
     const parts = quad(atk, 'overworld', 1, 0, 0, { flipH: Boolean(dir & DIR.LEFT) });
     if (parts.length) frames.push({ key: `link:attack:${dir}`, parts });
@@ -166,37 +178,42 @@ export function dumpSpriteFrames({ quiet = false } = {}) {
 
   for (const objType of new Set(Object.values(OBJ))) {
     if (typeof objType !== 'number') continue;
-    // Bosses live on level-specific sheets; 1 is representative and the sheet
-    // id is recorded per part anyway.
+    // Every level, not just level 1. The sheet a PPU id resolves to depends on
+    // the level, so enumerating only level 1 reached the level-1 sheets and
+    // nothing else: boss_sprites_3468, boss_sprites_9, underworld_sprites_358
+    // and underworld_sprites_469 were never generated at all. Frames whose
+    // tiles are already covered get dropped by the dedup below, so the extra
+    // levels cost nothing where the sheets are shared.
     for (const mode of ['overworld', 'dungeon']) {
-      const level = 1;
-      if (hasBossComposer(objType)) {
-        // Bosses only ever appear underground, and the same PPU id resolves to
-        // a different sheet in overworld mode — enumerating both would generate
-        // art for unrelated tiles using a boss's layout.
-        if (mode === 'dungeon') frames.push(...bossFrames(objType, mode, level));
-        continue;
-      }
-      if (!hasEnemySprite(objType)) continue;
-      for (const dir of DIRS) {
-        for (let anim = 0; anim < 2; anim += 1) {
-          const frameIndex = enemyFrameIndex(objType, dir, anim, {});
-          const flags = enemyDrawFlags(objType, dir, frameIndex);
-          let parts;
-          if (objType === OBJ.WALLMASTER) {
-            parts = [
-              ...half(0xac, mode, level, 0, 0, flags),
-              ...half(wallmasterRightTile(frameIndex), mode, level, 8, 0, flags),
-            ];
-          } else {
-            const ppu = enemyFrameTile(objType, frameIndex);
-            if (ppu == null) continue;
-            parts = enemyHalfSprite(objType)
-              ? half(ppu, mode, level, 0, 0, flags)
-              : quad(ppu, mode, level, 0, 0, flags);
-          }
-          if (parts.length) {
-            frames.push({ key: `obj:${objType}:${mode}:${dir}:${anim}`, parts });
+      for (const level of LEVELS) {
+        if (hasBossComposer(objType)) {
+          // Bosses only ever appear underground, and the same PPU id resolves
+          // to a different sheet in overworld mode — enumerating both would
+          // generate art for unrelated tiles using a boss's layout.
+          if (mode === 'dungeon') frames.push(...bossFrames(objType, mode, level));
+          continue;
+        }
+        if (!hasEnemySprite(objType)) continue;
+        for (const dir of DIRS) {
+          for (let anim = 0; anim < 2; anim += 1) {
+            const frameIndex = enemyFrameIndex(objType, dir, anim, {});
+            const flags = enemyDrawFlags(objType, dir, frameIndex);
+            let parts;
+            if (objType === OBJ.WALLMASTER) {
+              parts = [
+                ...half(0xac, mode, level, 0, 0, flags),
+                ...half(wallmasterRightTile(frameIndex), mode, level, 8, 0, flags),
+              ];
+            } else {
+              const ppu = enemyFrameTile(objType, frameIndex);
+              if (ppu == null) continue;
+              parts = enemyHalfSprite(objType)
+                ? half(ppu, mode, level, 0, 0, flags)
+                : quad(ppu, mode, level, 0, 0, flags);
+            }
+            if (parts.length) {
+              frames.push({ key: `obj:${objType}:${mode}:${level}:${dir}:${anim}`, parts });
+            }
           }
         }
       }
@@ -211,11 +228,16 @@ export function dumpSpriteFrames({ quiet = false } = {}) {
 
   // Drop frames whose tile set is already covered by an earlier, larger frame:
   // every tile still gets generated, just in the most complete context we have.
+  //
+  // Link is exempt. Left and right are the same tiles H-flipped, so the dedup
+  // dropped a facing entirely and the manifest held only three of his four
+  // directions — fine for tile coverage, useless when what you want to look at
+  // is the character assembled in every direction.
   const seen = new Set();
   const kept = [];
   for (const f of [...frames].sort((a, b) => b.parts.length - a.parts.length)) {
     const ids = f.parts.map((p) => `${p.sheet}#${p.index}`);
-    if (ids.every((id) => seen.has(id))) continue;
+    if (!f.key.startsWith('link:') && ids.every((id) => seen.has(id))) continue;
     ids.forEach((id) => seen.add(id));
     kept.push(f);
   }

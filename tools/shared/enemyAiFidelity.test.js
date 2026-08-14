@@ -259,10 +259,15 @@ test('ghini $21 uses the common wanderer at turn rate $FF (UpdateGhini)', () => 
 test('ghini turn rate $FF always wins the roll and locks onto Link', () => {
   const link = { x: 0x80, y: 0x5d };
   const e = createEnemy({ objType: OBJ.GHINI, x: 0x80, y: 0x8d });
-  e.posFrac = 0x80; // QSpeed $20 → 1 px this frame
-  stepEnemy(e, BOUNDS, null, { chase: link, link });
+  e.dir = DIR.LEFT;
+  e.gridOffset = 0x0f; // one px shy of a square — reface after landing
+  e.qSpeedFrac = 0x40;
+  e.posFrac = 0;
+  stepEnemy(e, BOUNDS, null, { chase: link, link, rngByte: () => 0x00 });
+  // Moved in the old facing, then truncated + faced UP toward Link (dx < 9).
+  assert.equal(e.x, 0x7f);
+  assert.equal(e.gridOffset, 0);
   assert.equal(e.dir, DIR.UP);
-  assert.equal(e.y, 0x8c);
 });
 
 test('flying ghini $22 keeps its own flyer routine', () => {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   BASE_SHADE,
-  MASTER_PALETTE_256,
+  masterPalette,
   MASTER_SIZE,
   SHADES,
   expandRowIndices,
@@ -17,7 +17,7 @@ import { NES_MASTER_PALETTE, nesColor } from './nesPalette.js';
 
 test('master palette is one full ramp per NES colour', () => {
   assert.equal(MASTER_SIZE, NES_MASTER_PALETTE.length * SHADES);
-  assert.equal(MASTER_PALETTE_256.length, MASTER_SIZE);
+  assert.equal(masterPalette().length, MASTER_SIZE);
 });
 
 test('base shade round-trips every NES color exactly', () => {
@@ -32,9 +32,12 @@ test('ramp runs monotonically dark to light', () => {
   for (let i = 0; i < NES_MASTER_PALETTE.length; i += 1) {
     const steps = Array.from({ length: SHADES }, (_, s) => lum(masterColor(masterIndex(i, s))));
     for (let s = 1; s < SHADES; s += 1) {
+      // With 256 levels each step is a fraction of a unit, so per-channel
+      // rounding can invert two neighbours by a hair. What matters is that the
+      // ramp never visibly goes backwards, hence the tolerance.
       assert.ok(
-        steps[s] >= steps[s - 1],
-        `NES ${i} shade ${s} (${steps[s]}) not >= shade ${s - 1} (${steps[s - 1]})`,
+        steps[s] >= steps[s - 1] - 0.5,
+        `NES ${i} shade ${s} (${steps[s]}) below shade ${s - 1} (${steps[s - 1]})`,
       );
     }
   }
@@ -65,8 +68,10 @@ test('pixels pack and split symmetrically', () => {
 });
 
 test('toClassicSlots recovers the original 2bpp art', () => {
-  const original = Uint8Array.from([0, 1, 2, 3, 3, 2, 1, 0]);
+  // Uint16: a packed pixel is slot * SHADES + shade, which exceeds a byte once
+  // the shade is continuous.
+  const original = Uint16Array.from([0, 1, 2, 3, 3, 2, 1, 0]);
   // Any shading applied on top must still flatten back to the source pixels.
-  const enhanced = original.map((slot, i) => packPixel(slot, i % SHADES));
+  const enhanced = Uint16Array.from(original, (slot, i) => packPixel(slot, i % SHADES));
   assert.deepEqual([...toClassicSlots(enhanced)], [...original]);
 });

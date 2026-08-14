@@ -37,15 +37,11 @@ export function createOptionsUi(api) {
     const opts = api.getOptions();
     const scaleSel = el.querySelector('#opt-scale');
     const filterSel = el.querySelector('#opt-filter');
-    const graphicsSel = el.querySelector('#opt-graphics');
     if (scaleSel instanceof HTMLSelectElement) {
       scaleSel.value = String(opts.scale);
     }
     if (filterSel instanceof HTMLSelectElement) {
       filterSel.value = opts.filter;
-    }
-    if (graphicsSel instanceof HTMLSelectElement) {
-      graphicsSel.value = opts.graphics;
     }
     const bindsBox = el.querySelector('#opt-binds');
     if (bindsBox) {
@@ -67,15 +63,6 @@ export function createOptionsUi(api) {
     const v = t.value === 'auto' ? 'auto' : Number(t.value);
     const opts = { ...api.getOptions(), scale: v };
     api.setOptions(saveOptions(opts));
-  });
-
-  el.querySelector('#opt-graphics')?.addEventListener('change', (e) => {
-    const t = /** @type {HTMLSelectElement} */ (e.target);
-    const opts = { ...api.getOptions(), graphics: t.value };
-    api.setOptions(saveOptions(opts));
-    // Every texture in the game is cut from the sheets during boot, so there is
-    // no way to swap art sets in place — reload and rebuild them all.
-    globalThis.location?.reload();
   });
 
   el.querySelector('#opt-filter')?.addEventListener('change', (e) => {

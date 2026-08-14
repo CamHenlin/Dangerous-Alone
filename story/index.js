@@ -5,6 +5,8 @@
 
 import * as caves from './caves.js';
 import * as persons from './persons.js';
+import * as ending from './ending.js';
+import { ITEMS } from './items.js';
 import {
   ITEM_ADVICE,
   LEVELS,
@@ -26,6 +28,12 @@ export const STORY = Object.freeze({
     byTextId: persons.byTextId,
   }),
   levels: LEVELS,
+  items: ITEMS,
+  ending: Object.freeze({
+    thanks: ending.THANKS,
+    peace: ending.PEACE,
+    epilogue: ending.EPILOGUE,
+  }),
   itemAdvice: ITEM_ADVICE,
   missedPriority: MISSED_PRIORITY,
   missedMax: MISSED_MAX,

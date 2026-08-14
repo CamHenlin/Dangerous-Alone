@@ -49,7 +49,8 @@ def compose_frame(frame, banks):
 def extract_parts(plane, frame, scale=2):
     """Cut a generated frame back into per-tile planes.
 
-    `plane` is the frame at `scale` x NES resolution. Returns
+    `plane` is the frame at `scale` x NES resolution — either a 2D (slot, shade)
+    plane or an RGB image, so only the spatial dimensions are checked. Returns
     {(sheet, index): tile_plane}, each `TILE * scale` square and stored in the
     sheet's own orientation.
     """
@@ -59,7 +60,7 @@ def extract_parts(plane, frame, scale=2):
         y = part["y"] * scale
         x = part["x"] * scale
         sub = plane[y:y + step, x:x + step]
-        if sub.shape != (step, step):
+        if sub.shape[:2] != (step, step):
             continue
         # Undo the layout's flips: the sheet stores the unflipped tile.
         if part.get("flipH"):

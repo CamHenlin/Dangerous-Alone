@@ -202,6 +202,35 @@ export function levelDossier(level, opts = {}) {
 }
 
 /**
+ * What an item says the first time it is held overhead.
+ *
+ * Unlike cave and person text there is no ROM line to fall back on — the NES
+ * says nothing at all here — so an unwritten item simply stays silent.
+ *
+ * @param {number} itemType ROM `Item_codes` value
+ * @param {{ story?: object }} [opts]
+ * @returns {{ pages: string[], marks: object[] }}
+ */
+export function itemStory(itemType, opts = {}) {
+  const story = opts.story ?? STORY;
+  const items = story.items ?? {};
+  const entry = items[itemType & 0xff] ?? items[String(itemType & 0xff)];
+  return normalizeEntry(entry) ?? { pages: [], marks: [] };
+}
+
+/**
+ * The first-visit words for a labyrinth. Silent for a level with no `onEnter`.
+ *
+ * @param {number} level
+ * @param {{ story?: object }} [opts]
+ * @returns {{ pages: string[], marks: object[] }}
+ */
+export function levelEntryStory(level, opts = {}) {
+  const dossier = levelDossier(level, opts);
+  return normalizeEntry(dossier?.onEnter) ?? { pages: [], marks: [] };
+}
+
+/**
  * The briefing shown when the Triforce shard in `level` is claimed.
  *
  * Order: what this shard means → where the next labyrinth is → what was left

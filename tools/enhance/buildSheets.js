@@ -117,12 +117,12 @@ export function buildEnhancedSheets({
     const { width, height, rgba } = renderEnhancedSheet(enhanced, palette);
     fs.writeFileSync(path.join(outDir, block.sheet), encodePngRgba(width, height, rgba));
 
-    // The raw 4bpp planes travel alongside the PNG so tooling (and any future
+    // The raw planes travel alongside the PNG so tooling (and any future
     // re-render at a different baked palette) never has to reverse the colours.
-    const raw = new Uint8Array(enhanced.length * ENHANCED_TILE_PX * ENHANCED_TILE_PX);
+    const raw = new Uint16Array(enhanced.length * ENHANCED_TILE_PX * ENHANCED_TILE_PX);
     enhanced.forEach((t, i) => raw.set(t.pixels, i * t.pixels.length));
-    const rawName = `${block.id}.4bpp`;
-    fs.writeFileSync(path.join(outDir, rawName), raw);
+    const rawName = `${block.id}.plane`;
+    fs.writeFileSync(path.join(outDir, rawName), Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength));
 
     sheets.push({
       id: block.id,

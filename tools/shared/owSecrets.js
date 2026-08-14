@@ -170,6 +170,67 @@ export function tryRevealSecrets(secrets, revealed, mapIndex, action, x, y, tile
 }
 
 /**
+ * True when this push secret needs the power bracelet.
+ * @param {{ marker?: number, requiresBracelet?: boolean }} secret
+ */
+function pushNeedsBracelet(secret) {
+  if (secret.requiresBracelet != null) return secret.requiresBracelet !== false;
+  return secret.marker !== 0xe8;
+}
+
+/**
+ * While shoving a grave/rock face from below/above, ease Link onto the NES
+ * exact-X axis one pixel per frame. The 16×16 metatile looks aligned at
+ * x±8, but UpdateRockOrGravestone compares X equal — same gap dungeon push
+ * blocks cover with nudgeLinkOntoPushAxis.
+ *
+ * @param {object[]} secrets
+ * @param {Set<string>} revealed
+ * @param {number} mapIndex
+ * @param {{ x: number, y: number, gridOffset?: number }} link
+ * @param {number} facingDir
+ * @param {{ bracelet?: number }} [opts]
+ * @returns {'left' | 'right' | null}
+ */
+export function nudgeLinkOntoGraveAxis(
+  secrets,
+  revealed,
+  mapIndex,
+  link,
+  facingDir,
+  opts = {},
+) {
+  if (!link || !facingDir) return null;
+  const vertical = facingDir & (DIR.UP | DIR.DOWN);
+  if (!vertical) return null;
+
+  for (const secret of secrets ?? []) {
+    if (secretAction(secret) !== 'push') continue;
+    if (pushNeedsBracelet(secret) && !(opts.bracelet > 0)) continue;
+    const key = `${mapIndex}:${secret.row}:${secret.col}`;
+    if (revealed.has(key)) continue;
+    const rect = secretWorldRect(secret);
+    const linkY = link.y + 3;
+    const dx = link.x - rect.x;
+    const dy = linkY - rect.y;
+    // Pressing into the face, within one walk-column on X and the NES dy window.
+    if ((facingDir & DIR.UP) && !(dy >= 0 && dy < 0x11)) continue;
+    if ((facingDir & DIR.DOWN) && !(dy <= 0 && dy > -0x11)) continue;
+    if (dx === 0) return null;
+    if (Math.abs(dx) > 0x10) continue;
+    if (dx < 0) {
+      link.x += 1;
+      link.gridOffset = 0;
+      return 'right';
+    }
+    link.x -= 1;
+    link.gridOffset = 0;
+    return 'left';
+  }
+  return null;
+}
+
+/**
  * Push grave/rock: exact X align, vertical face+hold $10 (UpdateRockOrGravestone).
  * Rocks (secret marker $E5) need InvBracelet; gravestones ($E8) do not.
  * @param {object[]} secrets
@@ -203,11 +264,7 @@ export function tryPushGraveSecret(
   for (const secret of secrets ?? []) {
     if (secretAction(secret) !== 'push') continue;
     // NES: rock ($62 / $E5) needs bracelet; gravestone ($65 / $E8) does not.
-    const needsBracelet =
-      secret.requiresBracelet != null
-        ? secret.requiresBracelet !== false
-        : secret.marker !== 0xe8;
-    if (needsBracelet && !(opts.bracelet > 0)) continue;
+    if (pushNeedsBracelet(secret) && !(opts.bracelet > 0)) continue;
     const key = `${mapIndex}:${secret.row}:${secret.col}`;
     if (revealed.has(key)) continue;
     const rect = secretWorldRect(secret);

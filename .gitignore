@@ -39,3 +39,6 @@ assets/ai-cache/
 # Python bytecode from enhance tooling
 __pycache__/
 *.pyc
+
+# Scratch previews dumped while proving a render
+tmp_*.png

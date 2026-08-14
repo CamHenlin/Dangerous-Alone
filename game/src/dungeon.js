@@ -1,4 +1,5 @@
 import { Application, Assets, Container, Graphics, Sprite } from 'pixi.js';
+import { initPixiApp } from '@shared/pixiBoot.js';
 
 const stageEl = document.getElementById('stage');
 const statusEl = document.getElementById('status');
@@ -130,16 +131,19 @@ async function loadLevel(quest, levelNumber) {
 
   if (!app) {
     app = new Application();
-    await app.init({
-      background: '#000000',
-      width: 16,
-      height: 16,
-      antialias: false,
-      resolution: 1,
-      autoDensity: true,
-      preference: 'webgl',
-    });
-    stageEl.appendChild(app.canvas);
+    await initPixiApp(
+      app,
+      {
+        background: '#000000',
+        width: 16,
+        height: 16,
+        antialias: false,
+        resolution: 1,
+        autoDensity: true,
+      },
+      { host: stageEl },
+    );
+    if (app.canvas.parentNode !== stageEl) stageEl.appendChild(app.canvas);
     world = new Container();
     world.scale.set(SCALE);
     app.stage.addChild(world);

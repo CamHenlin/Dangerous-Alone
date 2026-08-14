@@ -27,6 +27,42 @@ export const CAVE_ENTER_SPAWN = Object.freeze({
   dir: 0x08, // UP
 });
 
+/**
+ * Drop OW combat leftovers that would softlock Mode B.
+ *
+ * Caves do not run `stepCombat`, so a knockback or sword swing still armed
+ * when Link steps on the mouth never finishes — `stepCave` refuses to walk
+ * while `shovePixels > 0` or the blade is active, and the room looks frozen.
+ *
+ * @param {{
+ *   link: { posFrac?: number, gridOffset?: number, moving?: boolean },
+ *   inv: {
+ *     shovePixels?: number,
+ *     shoveDir?: number,
+ *     paralyzed?: number,
+ *     itemLiftTimer?: number,
+ *   },
+ *   sword?: { phase?: number, timer?: number, dir?: number } | null,
+ *   cancelSword?: (sword: object) => void,
+ * }} state
+ */
+export function clearCaveTransitState(state) {
+  const { link, inv, sword = null, cancelSword = null } = state;
+  link.posFrac = 0;
+  link.gridOffset = 0;
+  link.moving = false;
+  inv.shovePixels = 0;
+  inv.shoveDir = 0;
+  inv.paralyzed = 0;
+  inv.itemLiftTimer = 0;
+  if (sword && cancelSword) cancelSword(sword);
+  else if (sword) {
+    sword.phase = 0;
+    sword.timer = 0;
+    sword.dir = 0;
+  }
+}
+
 /** Playfield size matches OW (256×176 under HUD). */
 export const CAVE_BOUNDS = Object.freeze({
   left: 0x10,

@@ -6,6 +6,7 @@ import {
   SECRET_ACTION,
   SECRET_CAVE_TILES,
   collectScreenSecrets,
+  nudgeLinkOntoGraveAxis,
   revealSecretTiles,
   secretAction,
   tryPushGraveSecret,
@@ -151,4 +152,31 @@ test('grave push needs exact X + hold frames', () => {
       0,
     );
   }
+});
+
+test('grave nudge slides Link onto exact X then push opens', () => {
+  const tileGrid = Array.from({ length: 22 }, () => Array(32).fill(0xd8));
+  const secrets = [{ row: 3, col: 4, marker: 0xe8, action: 'push' }];
+  const revealed = new Set();
+  const hold = new Map();
+  // One walk-column left of the grave — looks under it, fails exact CMP.
+  const link = { x: 4 * 16 - 8, y: HUD_HEIGHT + 3 * 16 + 5, gridOffset: 0, dir: DIR.UP };
+  let opened = [];
+  for (let i = 0; i < 8 + GRAVE_PUSH_HOLD; i += 1) {
+    nudgeLinkOntoGraveAxis(secrets, revealed, 1, link, DIR.UP, {});
+    opened = tryPushGraveSecret(
+      secrets,
+      revealed,
+      1,
+      link,
+      tileGrid,
+      DIR.UP,
+      hold,
+      {},
+    );
+    if (opened.length) break;
+  }
+  assert.equal(link.x, 4 * 16);
+  assert.equal(opened.length, 1);
+  assert.equal(tileGrid[6][8], 0x70);
 });

@@ -1,8 +1,8 @@
 /**
- * Turn one original 8x8 2bpp tile into a 16x16 4bpp enhanced tile.
+ * Turn one original 8x8 2bpp tile into a 16x16 enhanced tile.
  *
  * The contract, which every downstream consumer relies on:
- *   - output is 16x16, one byte per pixel, value = slot * 4 + shade
+ *   - output is 16x16, one 16-bit value per pixel: slot * SHADES + shade
  *   - `slot` is the original NES palette slot, so the tile still recolours
  *     correctly under any palette row the runtime swaps in
  *   - `shade` is new detail, and only ever moves a pixel along its own colour's
@@ -78,7 +78,9 @@ export function enhanceTile(slots8, ctx = {}) {
   const { labels, regions } = findRegions(slots, w, h);
   const seed = ctx.seed ?? seedFor(sheetId, tileIndex);
 
-  const out = new Uint8Array(w * h);
+  // Uint16: a packed pixel is slot * SHADES + shade, which no longer fits in a
+  // byte now that the shade is continuous.
+  const out = new Uint16Array(w * h);
   for (let y = 0; y < h; y += 1) {
     for (let x = 0; x < w; x += 1) {
       const i = y * w + x;
@@ -116,7 +118,7 @@ export function enhanceTile(slots8, ctx = {}) {
         bodyGain: spec.bodyGain,
       });
       // Shader gains were tuned against a 4-step ramp; scale them so the same
-      // form and texture cover the same perceptual range on a longer one.
+      // form and texture span the same perceptual range on a longer one.
       const rampScale = spec.scaleWithRamp === false ? 1 : SHADES / 4;
       const shade = BASE_SHADE
         + (form * spec.formGain + spec.texture(shadeCtx)) * rampScale;

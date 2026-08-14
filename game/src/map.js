@@ -1,4 +1,5 @@
 import { Application, Assets, Container, Graphics, Sprite } from 'pixi.js';
+import { initPixiApp } from '@shared/pixiBoot.js';
 
 const stageEl = document.getElementById('stage');
 const statusEl = document.getElementById('status');
@@ -116,16 +117,19 @@ async function init() {
     app = new Application();
     const worldW = index.map.widthScreens * index.screen.widthPixels;
     const worldH = index.map.heightScreens * index.screen.heightPixels;
-    await app.init({
-      background: '#000000',
-      width: worldW * SCALE,
-      height: worldH * SCALE,
-      antialias: false,
-      resolution: 1,
-      autoDensity: true,
-      preference: 'webgl',
-    });
-    stageEl.appendChild(app.canvas);
+    await initPixiApp(
+      app,
+      {
+        background: '#000000',
+        width: worldW * SCALE,
+        height: worldH * SCALE,
+        antialias: false,
+        resolution: 1,
+        autoDensity: true,
+      },
+      { host: stageEl },
+    );
+    if (app.canvas.parentNode !== stageEl) stageEl.appendChild(app.canvas);
 
     world = new Container();
     world.scale.set(SCALE);

@@ -25,6 +25,13 @@ export const STORY_SUB = Object.freeze({
   CRAWL: 2,
   HOLD_END: 3,
   RESTART: 4,
+  /**
+   * Ours, not the ROM's: scroll from one storyboard panel to the next. The ROM
+   * had exactly one panel, so it went straight from HOLD to CRAWL and never
+   * needed this. With `storyPanels === 1` the sequence is byte-for-byte the
+   * original.
+   */
+  PANEL_IN: 5,
 });
 
 /** `TriforceGlowingColors` @ `Z_02.asm:1006`. */
@@ -57,12 +64,33 @@ export const STORY_SCROLL_IN_LINES = 0xf0 - STORY_START_VSCROLL + 8;
 export const CRAWL_LINES = 5 * 256 + 0x80;
 /** The final line is the exit check, not an emission — hence `DemoLineAttrs` is 175 long. */
 export const CRAWL_LINE_SLOTS = CRAWL_LINES / 8 - 1;
+/** One storyboard panel is one screen tall. */
+export const STORY_PANEL_HEIGHT = 240;
 /**
  * The crawl writes its first row at `$2900` — nametable B row 8 — while the
  * story image occupies nametable A. Nametable A row 0 is at world Y
  * `STORY_TOP_AT_START`, so B row 8 lands here.
  */
-export const CRAWL_FIRST_LINE_Y = STORY_TOP_AT_START + 240 + 8 * 8;
+export const CRAWL_FIRST_LINE_Y = STORY_TOP_AT_START + STORY_PANEL_HEIGHT + 8 * 8;
+
+/**
+ * World Y of the crawl's first row when the storyboard is more than one panel
+ * tall. The treasure list has to start below the last panel, otherwise it has
+ * already scrolled past by the time the crawl begins.
+ * @param {number} [panels]
+ */
+export function crawlFirstLineY(panels = 1) {
+  const n = Math.max(1, panels | 0);
+  return STORY_TOP_AT_START + STORY_PANEL_HEIGHT * n + 8 * 8;
+}
+
+/**
+ * Where the strip rests with `panel` (0-based) filling the screen.
+ * @param {number} panel
+ */
+export function panelRestY(panel) {
+  return STORY_SCROLL_IN_LINES + STORY_PANEL_HEIGHT * Math.max(0, panel | 0);
+}
 /**
  * `ProcessDemoLineItems` spawns at `ObjY = $EF` while the current nametable
  * line is composed at the bottom of the scroll. On our strip that is the same
@@ -137,6 +165,8 @@ export function createDemoState() {
     lineSlot: 0,
     textIndex: 0,
     itemRow: 0,
+    /** Storyboard panel currently resting on screen (0-based). */
+    panel: 0,
     lines: [],
     items: [],
     loops: 0,
@@ -212,6 +242,7 @@ function stepTitleFade(state, fadeDelays) {
       state.lineSlot = 0;
       state.textIndex = 0;
       state.itemRow = 0;
+      state.panel = 0;
       state.lines = [];
       state.items = [];
       return;
@@ -280,7 +311,8 @@ function emitCrawlLine(state, tables) {
     textIndex = state.textIndex;
     state.textIndex += 1;
   }
-  state.lines.push({ slot, y: CRAWL_FIRST_LINE_Y + slot * 8, textIndex });
+  const firstY = crawlFirstLineY(tables.storyPanels ?? 1);
+  state.lines.push({ slot, y: firstY + slot * 8, textIndex });
   state.lineSlot += 1;
 }
 
@@ -288,7 +320,7 @@ function emitCrawlLine(state, tables) {
  * Advance the attract sequence by one frame.
  *
  * @param {DemoState} state mutated in place
- * @param {{ lineAttrs: ArrayLike<number>, leftItemIds: ArrayLike<number>, rightItemIds: ArrayLike<number>, fadeDelays: ArrayLike<number> }} tables
+ * @param {{ lineAttrs: ArrayLike<number>, leftItemIds: ArrayLike<number>, rightItemIds: ArrayLike<number>, fadeDelays: ArrayLike<number>, storyPanels?: number }} tables
  * @returns {DemoState}
  */
 export function stepDemo(state, tables) {
@@ -314,11 +346,14 @@ export function stepDemo(state, tables) {
     return state;
   }
 
+  const storyPanels = Math.max(1, (tables.storyPanels ?? 1) | 0);
+
   switch (state.subphase) {
     case STORY_SUB.SCROLL_IN:
+    case STORY_SUB.PANEL_IN:
       if (odd) {
         state.contentY += 1;
-        if (state.contentY >= STORY_SCROLL_IN_LINES) {
+        if (state.contentY >= panelRestY(state.panel)) {
           state.subphase = STORY_SUB.HOLD;
           state.timer = 0;
         }
@@ -326,7 +361,15 @@ export function stepDemo(state, tables) {
       break;
     case STORY_SUB.HOLD:
       state.timer = (state.timer + 1) & 0xff;
-      if (state.timer === 0) state.subphase = STORY_SUB.CRAWL;
+      if (state.timer !== 0) break;
+      // More prologue to read? Scroll the next panel up. Otherwise the ROM's
+      // own next step, the treasure crawl.
+      if (state.panel + 1 < storyPanels) {
+        state.panel += 1;
+        state.subphase = STORY_SUB.PANEL_IN;
+      } else {
+        state.subphase = STORY_SUB.CRAWL;
+      }
       break;
     case STORY_SUB.CRAWL:
       if (odd) {

@@ -5,6 +5,7 @@ import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 import {
   FINAL_ITEM_ID_BASE,
   PHASE,
+  STORY_PANEL_HEIGHT,
   STORY_SUB,
   STORY_TOP_AT_START,
   TITLE_SUB,
@@ -86,12 +87,19 @@ export function createDemoUi(deps = {}) {
   storyLayer.visible = false;
   root.addChild(storyLayer);
 
-  /** ROM storyboard (`StoryTileAttrTransferBuf`) — not the raw demo BG sheet. */
+  /**
+   * The storyboard strip. `story/prologue.js` renders to a PNG that is a whole
+   * number of screens tall; the ROM's own `StoryTileAttrTransferBuf` render is
+   * exactly one. Either way the panel count falls out of the height, and the
+   * attract sequence scrolls through that many panels before the crawl.
+   */
+  let storyPanels = 1;
   if (deps.storyBg) {
     const storyBoard = new Sprite(deps.storyBg);
     storyBoard.x = 0;
     storyBoard.y = STORY_TOP_AT_START;
     storyLayer.addChild(storyBoard);
+    storyPanels = Math.max(1, Math.round(deps.storyBg.height / STORY_PANEL_HEIGHT));
   }
 
   const crawlTextLayer = new Container();
@@ -121,6 +129,7 @@ export function createDemoUi(deps = {}) {
       leftItemIds: data?.leftItemIds ?? [],
       rightItemIds: data?.rightItemIds ?? [],
       fadeDelays: data?.fadeDelays ?? [8, 8, 6, 5, 4, 3, 2, 2, 2, 0xc0, 6, 4, 0xc0, 3],
+      storyPanels,
     };
   }
 

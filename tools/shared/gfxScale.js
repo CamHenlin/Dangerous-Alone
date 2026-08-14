@@ -1,53 +1,50 @@
 /**
- * Active graphics mode: original NES art, or the enhanced 2x/256-colour set.
+ * Graphics scale. The game draws the original NES art, at 1x, only.
  *
- * The enhanced sheets are laid out exactly like the originals — same tile
- * order, same grid position — only every tile is 16x16 instead of 8x8. So the
- * entire runtime difference reduces to one number: how many sheet pixels a tile
- * occupies. Multiply every source rectangle by `scale()` and the same drawing
- * code serves both modes.
+ * This module used to select between the original art and an enhanced 2x set,
+ * and every drawing path still asks it how many sheet pixels a tile occupies.
+ * The enhanced mode has been withdrawn, so `scale()` is pinned at 1 and every
+ * source rectangle comes out in native NES units.
  *
- * Game-world coordinates never change. Link is still 16 NES pixels tall and
- * every hitbox, speed and screen bound stays in NES units; only the number of
- * device pixels used to draw them goes up. That separation is what keeps a
- * cosmetic overhaul from touching collision or timing. The bridge is Pixi's
- * texture `resolution`: a 32x32 texture at resolution 2 reports itself as 16x16
- * to the scene graph, so existing positioning code needs no edits at all.
+ * The indirection is kept rather than deleted because twelve modules call into
+ * it, and because the enhanced pipeline still lives in `tools/enhance/` — this
+ * is the single point that would re-enable it, not a change spread across the
+ * renderer.
  *
- * The mode is chosen once at boot from saved options. Changing it swaps every
- * loaded texture, so the play client reloads rather than trying to rebuild them
- * in place.
+ * Game-world coordinates never depended on this: Link is 16 NES pixels tall and
+ * every hitbox, speed and screen bound is in NES units regardless of scale.
  */
 
-/** @type {1 | 2} */
-let activeScale = 1;
+/** @type {1} */
+const activeScale = 1;
 
 export const GRAPHICS_MODES = Object.freeze({
   CLASSIC: 'classic',
-  ENHANCED: 'enhanced',
 });
 
-/** Native NES tile size. Enhanced art is a multiple of this. */
+/** Native NES tile size. */
 export const NES_TILE = 8;
 
 /**
- * @param {string} mode one of GRAPHICS_MODES
+ * Accepted and ignored: the game has one graphics mode. Kept so callers that
+ * still pass a saved option do not need to know that.
+ * @param {string} _mode
  */
-export function setGraphicsMode(mode) {
-  activeScale = mode === GRAPHICS_MODES.ENHANCED ? 2 : 1;
+export function setGraphicsMode(_mode) {
+  /* original art only */
 }
 
 /** @returns {string} the active mode id */
 export function graphicsMode() {
-  return activeScale === 2 ? GRAPHICS_MODES.ENHANCED : GRAPHICS_MODES.CLASSIC;
+  return GRAPHICS_MODES.CLASSIC;
 }
 
-/** @returns {number} sheet pixels per NES pixel: 1 classic, 2 enhanced */
+/** @returns {number} sheet pixels per NES pixel */
 export function scale() {
   return activeScale;
 }
 
-/** @returns {number} sheet pixels per tile edge: 8 classic, 16 enhanced */
+/** @returns {number} sheet pixels per tile edge */
 export function tilePx() {
   return NES_TILE * activeScale;
 }
@@ -60,9 +57,9 @@ export function px(n) {
   return n * activeScale;
 }
 
-/** @returns {string} public asset directory holding the active sheets */
+/** @returns {string} public asset directory holding the sheets */
 export function graphicsDir() {
-  return activeScale === 2 ? '/graphics2x' : '/graphics';
+  return '/graphics';
 }
 
 /**

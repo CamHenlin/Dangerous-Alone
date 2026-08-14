@@ -18,7 +18,7 @@ import {
 } from './bosses.js';
 import { gleeokHeadPos, initGleeok, stepGleeok } from './gleeok.js';
 import { consumeQSpeedPixels } from './objQSpeed.js';
-import { onTileBoundary, wandererDecideFacing } from './wandererAi.js';
+import { onTileBoundary, tickWandererTurnTimer, truncateWandererGridOffset, wandererDecideFacing } from './wandererAi.js';
 
 const DIRS8 = Object.freeze([
   DIR.RIGHT,
@@ -358,10 +358,9 @@ function stepDodongo(e, bounds, opts = {}) {
   const bodyShift = e.dir & DIR.LEFT ? 0 : 0x10;
   if (bodyShift) e.x += bodyShift;
 
-  if (onTileBoundary(e)) {
-    const rnd = () => (e.anim + e.id * 17 + (e.turnTimer ?? 0)) & 0xff;
-    wandererDecideFacing(e, opts.chase ?? null, rnd);
-  }
+  // Wanderer_TargetPlayer: tick → move → reface on square.
+  tickWandererTurnTimer(e);
+  const rnd = () => (e.anim + e.id * 17 + (e.turnTimer ?? 0)) & 0xff;
 
   // ObjQSpeedFrac $20 via MoveObject (0.5 px/frame average).
   e.qSpeedFrac = e.qSpeedFrac ?? 0x20;
@@ -378,6 +377,11 @@ function stepDodongo(e, bounds, opts = {}) {
       e.y = Math.max(bounds.minY, Math.min(bounds.maxY - 16, e.y));
       e.gridOffset = ((e.gridOffset ?? 0) + pixels) & 0xff;
     }
+  }
+
+  if (onTileBoundary(e)) {
+    truncateWandererGridOffset(e);
+    wandererDecideFacing(e, opts.chase ?? null, rnd);
   }
 
   if (bodyShift) e.x -= bodyShift;

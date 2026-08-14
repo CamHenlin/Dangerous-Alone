@@ -15,6 +15,7 @@ import { EXTRACTED_DIR } from '../shared/paths.js';
 import { ENHANCED_TILE_PX, enhanceTile } from './enhanceTile.js';
 
 export const AI_DIR = path.join(EXTRACTED_DIR, 'graphics_ai');
+/** Pixels per enhanced tile — indices into a typed array, not byte offsets. */
 const TILE_BYTES = ENHANCED_TILE_PX * ENHANCED_TILE_PX;
 
 /**
@@ -24,6 +25,9 @@ const TILE_BYTES = ENHANCED_TILE_PX * ENHANCED_TILE_PX;
 export function proceduralTileSource(banks) {
   return {
     id: 'procedural',
+    space() {
+      return 'row';
+    },
     /**
      * @param {string} sheetId
      * @param {number} index tile index within the sheet
@@ -50,25 +54,89 @@ export function proceduralTileSource(banks) {
  * @param {string} [dir]
  */
 export function aiTileSource(dir = AI_DIR) {
-  /** @type {Map<string, Uint8Array>} */
+  const manifestPath = path.join(dir, 'ai_manifest.json');
+  const aiManifest = fs.existsSync(manifestPath)
+    ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    : { sheets: {} };
+  /** @type {Map<string, Uint8Array|null>} */
+  const slotPlanes = new Map();
+  /** @type {Map<string, { data: Uint8Array|Uint16Array, space: string }>} */
   const planes = new Map();
+
+  /**
+   * Two on-disk formats. `.colour16` holds absolute master-palette indices —
+   * the model's own colours — and `.plane` holds (slot, shade) pairs
+   * that only make sense against a specific palette row. Which one a sheet has
+   * depends on the COLOUR_MODE it was generated under, so detect rather than
+   * assume.
+   */
+  function planeFor(sheetId) {
+    if (!planes.has(sheetId)) {
+      const wide = path.join(dir, `${sheetId}.colour16`);
+      const narrow = path.join(dir, `${sheetId}.plane`);
+      if (fs.existsSync(wide)) {
+        const buf = fs.readFileSync(wide);
+        planes.set(sheetId, {
+          data: new Uint16Array(buf.buffer, buf.byteOffset, buf.length / 2),
+          space: 'master',
+        });
+      } else if (fs.existsSync(narrow)) {
+        // 16-bit little-endian: a packed pixel is slot * SHADES + shade, and
+        // SHADES is 256, so this has not fitted in a byte since the shade went
+        // continuous. Reading it as bytes yields garbage, not an error.
+        const buf = fs.readFileSync(narrow);
+        planes.set(sheetId, {
+          data: new Uint16Array(buf.buffer, buf.byteOffset, buf.length / 2),
+          space: 'row',
+        });
+      } else {
+        planes.set(sheetId, null);
+      }
+    }
+    return planes.get(sheetId);
+  }
+
   return {
     id: 'ai',
+    /** @param {string} sheetId */
+    space(sheetId) {
+      return planeFor(sheetId)?.space ?? 'row';
+    },
+    /**
+     * Which palette row this sheet's absolute colours were generated under.
+     * Shifting a tile into a different row needs both ends of that delta.
+     * @param {string} sheetId
+     */
+    genRow(sheetId) {
+      return aiManifest.sheets?.[sheetId]?.genRow ?? 1;
+    },
+    /**
+     * The companion slot plane: which of the original 4 NES colours each pixel
+     * descends from, so a recolor knows which delta to apply to it.
+     * @param {string} sheetId
+     * @param {number} index
+     */
+    slots(sheetId, index) {
+      if (!slotPlanes.has(sheetId)) {
+        const f = path.join(dir, `${sheetId}.slot`);
+        slotPlanes.set(sheetId, fs.existsSync(f) ? new Uint8Array(fs.readFileSync(f)) : null);
+      }
+      const plane = slotPlanes.get(sheetId);
+      if (!plane) return null;
+      const off = index * TILE_BYTES;
+      if (off + TILE_BYTES > plane.length) return null;
+      return plane.subarray(off, off + TILE_BYTES);
+    },
     /**
      * @param {string} sheetId
      * @param {number} index
      */
     pixels(sheetId, index) {
-      let plane = planes.get(sheetId);
-      if (plane === undefined) {
-        const file = path.join(dir, `${sheetId}.4bpp`);
-        plane = fs.existsSync(file) ? new Uint8Array(fs.readFileSync(file)) : null;
-        planes.set(sheetId, plane);
-      }
-      if (!plane) return null;
+      const entry = planeFor(sheetId);
+      if (!entry) return null;
       const off = index * TILE_BYTES;
-      if (off + TILE_BYTES > plane.length) return null;
-      return plane.subarray(off, off + TILE_BYTES);
+      if (off + TILE_BYTES > entry.data.length) return null;
+      return entry.data.subarray(off, off + TILE_BYTES);
     },
   };
 }

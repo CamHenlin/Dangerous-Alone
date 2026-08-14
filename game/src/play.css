@@ -18,8 +18,9 @@
   image-rendering: crisp-edges;
   box-shadow: 0 0 0 2px #2b3348, 0 12px 40px rgba(0, 0, 0, 0.55);
   max-width: min(100%, calc(100vh - 160px) * 256 / 240);
-  height: auto;
-  width: auto;
+  /* Sizing comes from inline styles in resizeCanvas(); `auto` here fought
+     the first layout pass and could leave a 0×0 view until a DevTools resize. */
+  display: block;
 }
 
 .play-stage canvas.smooth {

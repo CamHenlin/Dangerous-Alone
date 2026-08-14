@@ -14,15 +14,18 @@ export const FLAME_MOVE_DIST = 0x10;
 export const FLAME_STAND_TIME = 0x3f;
 /** Damage points vs monsters (CheckMonsterBombOrFireCollision). */
 export const FLAME_DAMAGE = 0x10;
+/** QoL: dark rooms with a candle brighten after this many frames (~1s at 60fps). */
+export const AUTO_LIGHT_DELAY_FRAMES = 60;
 
 /**
  * @typedef {object} CandleRoomState
  * @property {boolean} usedCandle  blue already used this stay
  * @property {boolean} lit         room brightened this stay
+ * @property {number} autoLightTimer  frames until QoL auto-light (0 = idle)
  */
 
 export function createCandleRoomState() {
-  return { usedCandle: false, lit: false };
+  return { usedCandle: false, lit: false, autoLightTimer: 0 };
 }
 
 /**
@@ -32,6 +35,33 @@ export function createCandleRoomState() {
  */
 export function roomIsDark(room, state) {
   return Boolean(room?.floorItem?.dark) && !state.lit;
+}
+
+/**
+ * Start the QoL auto-light countdown when entering a dark room with a candle.
+ * Does not consume blue candle uses — that still requires wielding the flame.
+ * @param {CandleRoomState} state
+ * @param {object | null | undefined} room
+ * @param {{ candle?: number } | null | undefined} inv
+ */
+export function armDarkRoomAutoLight(state, room, inv) {
+  state.autoLightTimer = 0;
+  if (state.lit) return;
+  if (!room?.floorItem?.dark) return;
+  if ((inv?.candle ?? CANDLE.NONE) <= CANDLE.NONE) return;
+  state.autoLightTimer = AUTO_LIGHT_DELAY_FRAMES;
+}
+
+/**
+ * Tick QoL auto-light. Returns true when the room just brightened this frame.
+ * @param {CandleRoomState} state
+ */
+export function stepDarkRoomAutoLight(state) {
+  if (state.lit || (state.autoLightTimer ?? 0) <= 0) return false;
+  state.autoLightTimer -= 1;
+  if (state.autoLightTimer > 0) return false;
+  state.lit = true;
+  return true;
 }
 
 /**
@@ -55,6 +85,7 @@ export function tryUseCandle(inv, state, room) {
   // NES only runs the brightening fade in dark rooms; still “use” the candle elsewhere.
   if (room?.floorItem?.dark) {
     state.lit = true;
+    state.autoLightTimer = 0;
     return { ok: true, lit: true };
   }
   return { ok: true, lit: false, reason: 'Candle flame (room is already lit)' };

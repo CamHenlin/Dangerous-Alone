@@ -57,6 +57,13 @@ export function isSwordActive(sword) {
   return sword.phase > 0;
 }
 
+/** Abort a swing immediately (room transitions, cave Mode B, death). */
+export function cancelSword(sword) {
+  sword.phase = 0;
+  sword.timer = 0;
+  sword.dir = 0;
+}
+
 /**
  * @param {SwordState} sword
  * @param {number} facingDir

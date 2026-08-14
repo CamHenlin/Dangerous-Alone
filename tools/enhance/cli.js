@@ -26,7 +26,7 @@ const useAi = process.argv.includes('--ai');
 /**
  * Copy the FLUX sheets into the directory Enhanced mode serves.
  *
- * The `.4bpp` planes matter as much as the PNGs: dungeon rooms are composed at
+ * The `.plane` files matter as much as the PNGs: dungeon rooms are composed at
  * runtime from those, not from a baked image.
  */
 function installAiSheets() {
@@ -36,7 +36,7 @@ function installAiSheets() {
   fs.mkdirSync(ENHANCED_DIR, { recursive: true });
   let copied = 0;
   for (const file of fs.readdirSync(AI_DIR)) {
-    if (!file.endsWith('.png') && !file.endsWith('.4bpp')) continue;
+    if (!file.endsWith('.png') && !file.endsWith('.plane')) continue;
     fs.copyFileSync(path.join(AI_DIR, file), path.join(ENHANCED_DIR, file));
     copied += 1;
   }

@@ -17,7 +17,7 @@
  */
 
 import { decodeTileIndices } from './nes2bpp.js';
-import { SHADES, expandRowRgb } from './masterPalette.js';
+import { BASE_SHADE, SHADES, expandRowRgb } from './masterPalette.js';
 import { nesColor, rgbaFromNesIndices } from './nesPalette.js';
 import { scale, tilePx } from './gfxScale.js';
 
@@ -26,8 +26,9 @@ export function tileSize() {
   return tilePx();
 }
 
-/** Bytes per enhanced tile: one per pixel of a 16x16 square. */
-const ENHANCED_TILE_BYTES = 16 * 16;
+/** Pixels per enhanced tile. Each is 16-bit once the shade is continuous. */
+const ENHANCED_TILE_PIXELS = 16 * 16;
+const ENHANCED_TILE_BYTES = ENHANCED_TILE_PIXELS * 2;
 
 /**
  * Pixel values for one background tile — palette slots in classic, packed
@@ -42,7 +43,9 @@ export function bgTilePixels(tile, tileSources, patternBins) {
   const t = tile & 0xff;
   const enhanced = scale() === 2;
   const stride = enhanced ? ENHANCED_TILE_BYTES : 16;
-  const blank = () => new Uint8Array(enhanced ? ENHANCED_TILE_BYTES : 64);
+  const blank = () => (enhanced
+    ? new Uint16Array(ENHANCED_TILE_PIXELS).fill(BASE_SHADE)
+    : new Uint8Array(64));
 
   for (const source of Object.values(tileSources)) {
     if (t < source.tileStart || t > source.tileEndInclusive) continue;
@@ -51,8 +54,13 @@ export function bgTilePixels(tile, tileSources, patternBins) {
     const offset = (t - source.tileStart) * stride;
     if (offset + stride > bin.length) return blank();
     const bytes = bin.subarray(offset, offset + stride);
-    // Enhanced data is already one byte per pixel; classic needs unpacking.
-    return enhanced ? bytes : decodeTileIndices(bytes);
+    if (!enhanced) return decodeTileIndices(bytes);
+    // Enhanced planes are little-endian 16-bit (slot * SHADES + shade).
+    const out = new Uint16Array(ENHANCED_TILE_PIXELS);
+    for (let i = 0; i < ENHANCED_TILE_PIXELS; i += 1) {
+      out[i] = bytes[i * 2] | (bytes[i * 2 + 1] << 8);
+    }
+    return out;
   }
   return blank();
 }

@@ -35,6 +35,8 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | 19 | [Quality of life 2](./phase-19-quality-of-life-2.md) | Complete |
 | 20 | [Continuous-camera cleanup](./phase-20-streaming-cleanup.md) | Complete |
 | 21 | [Graphics overhaul (2× / 256 colour)](./phase-21-graphics-overhaul.md) | Shelved — original art ships |
+| 22 | [Story text expansion](./phase-22-story-text-expansion.md) | Complete |
+| 23 | [Multiplayer (1–4 players, split screen)](./phase-23-multiplayer.md) | TODO |
 | — | [Thorough review (fidelity audit)](./phase-thorough-review.md) | Complete |
 
 ## Shared docs
@@ -44,4 +46,4 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | [../rom-notes.md](../rom-notes.md) | Verified offsets, hashes, revision notes |
 | [../behavior-oracle.md](../behavior-oracle.md) | Cross-phase “must match original” checklist |
 | [../context/](../context/README.md) | Manual + walkthrough for later playability checks |
-| [../../story/](../../story/README.md) | Every line an NPC says — edit here, no re-extract (Phase 19) |
+| [../../story/](../../story/README.md) | Every word the game says — NPCs, item pickups, labyrinth entries, the ending. Edit here, no re-extract (Phases 19, 22) |

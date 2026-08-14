@@ -38,3 +38,8 @@ test('wood/white/magic swords use grade palettes', () => {
   assert.equal(itemDrawPalette(0x02, 0), 1); // white → SP1
   assert.equal(itemDrawPalette(0x03, 0), 2); // magic → SP2
 });
+
+test('wood/silver arrows use grade palettes (slot $02)', () => {
+  assert.equal(itemDrawPalette(0x08, 0), 0); // wood → SP0
+  assert.equal(itemDrawPalette(0x09, 0), 1); // silver → SP1
+});

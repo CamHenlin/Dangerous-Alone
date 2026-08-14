@@ -143,10 +143,11 @@ test('octorok turns instead of walking into solid tiles', () => {
   e.posFrac = 0x80;
   assert.equal(canEnemyMove(grid, e.x, e.y, DIR.LEFT), false);
   const xBefore = e.x;
+  const yBefore = e.y;
   stepEnemy(e, OW_ENEMY_BOUNDS, grid);
-  // Reverse away from the wall and continue moving that frame.
-  assert.equal(e.dir, DIR.RIGHT);
-  assert.ok(e.x > xBefore);
+  // Walker_GetNextAltDir tries perpendiculars first (UP/DOWN when facing LEFT).
+  assert.ok(e.dir === DIR.UP || e.dir === DIR.DOWN, `dir=${e.dir}`);
+  assert.ok(e.x !== xBefore || e.y !== yBefore, 'should still move this frame');
 });
 
 test('mid-stride walkers skip tile checks (NES gridOffset <> 0)', () => {
@@ -366,6 +367,7 @@ test('blocked vertical corridor picks a sideways exit', () => {
   assert.equal(canEnemyMove(grid, x, y, DIR.LEFT), true);
   assert.equal(canEnemyMove(grid, x, y, DIR.RIGHT), true);
 
+  // Walker_GetNextAltDir: perpendiculars first (LEFT/RIGHT when facing UP).
   const picked = pickUnblockedDir(grid, x, y, DIR.UP, 0);
   assert.ok(picked === DIR.LEFT || picked === DIR.RIGHT);
 
@@ -374,4 +376,78 @@ test('blocked vertical corridor picks a sideways exit', () => {
   e.timer = 100;
   stepEnemy(e, OW_ENEMY_BOUNDS, grid);
   assert.ok(e.dir === DIR.LEFT || e.dir === DIR.RIGHT);
+});
+
+test('pickUnblockedDir prefers perpendicular over reverse (Walker_GetNextAltDir)', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x26));
+  // Facing RIGHT into a wall; LEFT (reverse) and UP open; DOWN blocked.
+  // NES tries perpendiculars first → UP, not reverse LEFT.
+  // RIGHT probe from (0x80,$80): sampleX=$90 → col 18.
+  for (let r = 0; r < 22; r += 1) {
+    grid[r][18] = 0xd8;
+  }
+  // DOWN probe samples row 10.
+  for (let c = 0; c < 32; c += 1) {
+    grid[10][c] = 0xd8;
+  }
+  const x = 0x80;
+  const y = 0x80;
+  assert.equal(canEnemyMove(grid, x, y, DIR.RIGHT), false);
+  assert.equal(canEnemyMove(grid, x, y, DIR.UP), true);
+  assert.equal(canEnemyMove(grid, x, y, DIR.LEFT), true);
+  assert.equal(canEnemyMove(grid, x, y, DIR.DOWN), false);
+
+  // bit7 clear → first perp is UP (horizontal facing → ReverseDirections[0]=UP).
+  assert.equal(pickUnblockedDir(grid, x, y, DIR.RIGHT, 0, {}, () => 0x00), DIR.UP);
+  // bit7 set → first perp is DOWN (blocked) → other perp UP.
+  assert.equal(pickUnblockedDir(grid, x, y, DIR.RIGHT, 0, {}, () => 0x80), DIR.UP);
+});
+
+test('pickUnblockedDir returns 0 when fully boxed in', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0xd8));
+  // Open standing cell only — every move probe hits solid.
+  for (let r = 8; r <= 9; r += 1) {
+    for (let c = 15; c <= 16; c += 1) grid[r][c] = 0x26;
+  }
+  assert.equal(pickUnblockedDir(grid, 0x80, 0x80, DIR.RIGHT, 0), 0);
+});
+
+test('darknut turn timer ticks mid-tile (NES every-frame DEC)', () => {
+  const wide = {
+    minX: 0x20,
+    maxX: 0xe0,
+    minY: 0x50,
+    maxY: 0xc0,
+  };
+  const e = createEnemy({ objType: OBJ.BLUE_DARKNUT, x: 0x40, y: 0x80 });
+  e.dir = DIR.RIGHT;
+  e.turnTimer = 10;
+  e.gridOffset = 5; // mid-stride — old bug only ticked on boundaries
+  stepEnemy(e, wide, null, {
+    chase: { x: 0xa0, y: 0x80 },
+    rngByte: () => 0xff, // rate $80 < $FF → no chase reface
+  });
+  assert.equal(e.turnTimer, 9);
+});
+
+test('darknut refaces after landing on a square, not before the move', () => {
+  const wide = {
+    minX: 0x20,
+    maxX: 0xe0,
+    minY: 0x50,
+    maxY: 0xc0,
+  };
+  const e = createEnemy({ objType: OBJ.BLUE_DARKNUT, x: 0x80, y: 0x80 });
+  e.dir = DIR.RIGHT;
+  e.turnTimer = 0;
+  e.turnRate = 0xff;
+  e.gridOffset = 0x0f; // one pixel shy of a square
+  e.qSpeedFrac = 0x40; // exactly 1 px this frame
+  e.posFrac = 0;
+  const chase = { x: 0x80, y: 0xa0 }; // aligned in X → face DOWN after land
+  stepEnemy(e, wide, null, { chase, rngByte: () => 0x00 });
+  // Moved 1px right onto the square, then truncated + faced toward chase.
+  assert.equal(e.x, 0x81);
+  assert.equal(e.gridOffset, 0);
+  assert.equal(e.dir, DIR.DOWN);
 });

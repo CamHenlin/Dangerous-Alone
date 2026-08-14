@@ -71,6 +71,15 @@ export function isPassiveTile(tile) {
 }
 
 /**
+ * Stable key for a passive square (grave / Armos) while Link holds contact.
+ * @param {number} x
+ * @param {number} y
+ */
+export function passiveSquareKey(x, y) {
+  return `${x & 0xff},${y & 0xff}`;
+}
+
+/**
  * @param {{ x: number, y: number, alive?: boolean, objType?: number }[]} enemies
  * @param {number} x
  * @param {number} y
@@ -89,14 +98,25 @@ export function passiveObjectAt(enemies, x, y) {
  * Try to instantiate Armos / Flying Ghini from the tile Link is pushing into.
  * Call when gridOffset === 0 and input direction ≠ 0 (NES gates).
  *
+ * Pass `touchHold` (a Set of {@link passiveSquareKey}s) so one push only wakes
+ * one foe — clear the set when Link releases direction.
+ *
  * @param {{ x: number, y: number, dir: number, gridOffset?: number }} link
  * @param {number[][]} tileGrid
  * @param {number} inputDir
  * @param {import('./enemies.js').Enemy[]} enemies
  * @param {(spawn: object) => import('./enemies.js').Enemy | null} createEnemy
+ * @param {{ touchHold?: Set<string> }} [opts]
  * @returns {import('./enemies.js').Enemy | null}
  */
-export function trySpawnPassiveTileObject(link, tileGrid, inputDir, enemies, createEnemy) {
+export function trySpawnPassiveTileObject(
+  link,
+  tileGrid,
+  inputDir,
+  enemies,
+  createEnemy,
+  opts = {},
+) {
   if (!tileGrid || !inputDir) return null;
   if ((link.gridOffset ?? 0) !== 0) return null;
 
@@ -106,17 +126,23 @@ export function trySpawnPassiveTileObject(link, tileGrid, inputDir, enemies, cre
   const sample = linkCollisionSample(link.x, link.y, inputDir);
   const square = squareFromCollisionSample(sample.x, sample.y);
   if (square.row < 0 || square.col < 0) return null;
+
+  const key = passiveSquareKey(square.x, square.y);
+  const held = opts.touchHold;
+  // Still pressing into this square after a wake — one ghost/Armos per touch.
+  if (held?.has(key)) return null;
   if (passiveObjectAt(enemies, square.x, square.y)) return null;
 
   const objType = hit.tile >= 0xc0 ? ARMOS : FLYING_GHINI;
   const e = createEnemy({ objType, x: square.x, y: square.y });
   if (!e) return null;
 
+  // NES InitArmosOrFlyingGhini: ObjTimer=$3F fade while staying on the square.
+  e.armosFade = PASSIVE_FADE_FRAMES;
   if (objType === ARMOS) {
-    // NES: fade in immediately (ObjTimer=$3F); secret patches when timer hits 0.
     e.armosStatue = false;
-    e.armosFade = PASSIVE_FADE_FRAMES;
     e.gridOffset = 3; // InitArmosOrFlyingGhini grid align
   }
+  held?.add(key);
   return e;
 }

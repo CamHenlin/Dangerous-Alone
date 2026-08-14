@@ -22,7 +22,7 @@ import path from 'node:path';
 import { decodePatternBlock } from '../shared/nes2bpp.js';
 import { encodePngRgba } from '../shared/png.js';
 import { EXTRACTED_DIR } from '../shared/paths.js';
-import { SHADES, expandRowRgb } from '../shared/masterPalette.js';
+import { SHADES, expandRowRgb, masterPalette } from '../shared/masterPalette.js';
 import { owBgTileSheetIndex } from '../shared/owBgTiles.js';
 import {
   SQUARES_H,
@@ -109,15 +109,25 @@ export function renderEnhancedScreenRgba(screen, banks, paletteSet, source) {
       }
 
       const loc = owBgTileSheetIndex(screen.tileGrid[tr][tc]);
+      const sheetId = loc ? SHEET_BY_KEY[loc.sheetKey] : null;
       const pixels = loc
-        ? source.pixels(SHEET_BY_KEY[loc.sheetKey], loc.index, {
+        ? source.pixels(sheetId, loc.index, {
           seed: positionSeed(screen.mapIndex, tr, tc),
         })
         : null;
+      // A master-space tile already carries absolute colour, so the screen's
+      // palette row does not apply to it — that is the whole point of letting
+      // the model choose its own colours.
+      const master = sheetId && source.space?.(sheetId) === 'master';
 
       for (let y = 0; y < T; y += 1) {
         for (let x = 0; x < T; x += 1) {
-          const c = pixels ? colors[pixels[y * T + x] & MASK] : [0, 0, 0];
+          const v = pixels ? pixels[y * T + x] : 0;
+          const c = !pixels
+            ? [0, 0, 0]
+            : master
+              ? masterPalette()[v % MASTER_SIZE]
+              : colors[v & MASK];
           const o = ((tr * T + y) * width + (tc * T + x)) * 4;
           rgba[o] = c[0];
           rgba[o + 1] = c[1];

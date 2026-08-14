@@ -224,6 +224,7 @@ test('every clear condition reads a real inventory field', () => {
   inv.candle = 2;
   inv.magicShield = 1;
   inv.ring = 2;
+  inv.triforceOfPower = 1;
   for (const [name, fn] of Object.entries(CLEAR_CONDITIONS)) {
     assert.equal(fn(inv), true, `${name} should be met on a full file`);
   }

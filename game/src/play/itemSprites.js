@@ -26,9 +26,8 @@ const HIGH_SPRITE_BASE = 0x70;
 /** Anim_ItemFrameTiles (common_sprites $00–$6F). Horiz frames $82/$86 are
  *  outside the extract — rotate the vertical tile instead (same tip orientation). */
 const CHR = Object.freeze({
+  /** Swing / shot CHR for all sword tiers (HUD master icon is $48 separately). */
   SWORD_VERT: 0x20,
-  /** Master-sword HUD slot $20 → Anim_ItemFrameTiles @$27. */
-  MAGIC_SWORD_VERT: 0x48,
   ARROW_VERT: 0x28,
   /** Magical rod item / swing (Anim_ItemFrameTiles @$0F). */
   MAGIC_ROD: 0x4a,
@@ -237,12 +236,13 @@ export function createItemSprites(sheetTexture, opts = {}) {
    * @param {number} [swordTier] SWORD.WOOD / WHITE / MAGIC
    */
   function swordTexture(dir, swordTier = SWORD.WOOD) {
-    const pal = swordSpritePalette(swordTier);
-    // Swing uses $20 for all tiers; HUD master sword uses $48 — use $48 for magic
-    // so the blade reads differently once upgraded.
-    const tile =
-      swordTier >= SWORD.MAGIC ? CHR.MAGIC_SWORD_VERT : CHR.SWORD_VERT;
-    return orientedWeaponTexture(tile, dir, pal);
+    // NES UpdateSwordOrRod: all tiers swing tile $20; grade is palette only.
+    // Inventory / status-bar master sword icon ($48) stays in swordIcon().
+    return orientedWeaponTexture(
+      CHR.SWORD_VERT,
+      dir,
+      swordSpritePalette(swordTier),
+    );
   }
 
   /** Arrow slot frames $28 / $86 — tip along `dir`. */

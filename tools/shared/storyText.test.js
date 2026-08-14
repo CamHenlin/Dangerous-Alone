@@ -9,8 +9,10 @@ import { BOX_COLS, paginate } from './textBoxModel.js';
 import {
   buildShopPitch,
   caveStory,
+  itemStory,
   levelCompletionStory,
   levelDossier,
+  levelEntryStory,
   missedTreasures,
   normalizeEntry,
   personStory,
@@ -54,7 +56,9 @@ function allStoryStrings() {
     if (!level) continue;
     push(`levels[${level.level}].brief`, level.brief);
     push(`levels[${level.level}].onPiece`, level.onPiece);
+    push(`levels[${level.level}].onEnter`, level.onEnter);
   }
+  for (const [id, entry] of Object.entries(STORY.items ?? {})) push(`items[${id}]`, entry);
   for (const [id, line] of Object.entries(STORY.itemAdvice)) out.push({ where: `itemAdvice[${id}]`, text: line });
   out.push({ where: 'missedHeader', text: STORY.missedHeader });
   out.push({ where: 'missedFooter', text: STORY.missedFooter });
@@ -214,7 +218,7 @@ test('Grumble uses the hungry-goriya story line', () => {
   const res = personStory(7, 0x36);
   assert.equal(res.textId, 0x24);
   assert.match(res.pages[0] ?? '', /GRUMBLE/);
-  assert.match(res.pages[0] ?? '', /FEED ME/);
+  assert.match(res.pages.join(' '), /FEED ME/);
 });
 
 test('missedTreasures leads with the item that blocks progress', () => {
@@ -331,5 +335,94 @@ test('every dossier names the treasure that is actually on the floor', () => {
         `level ${level} dossier promises $${itemType.toString(16)} but no room holds it`,
       );
     }
+  }
+});
+
+test('an item introduces itself once, and unwritten items stay silent', () => {
+  const raft = itemStory(0x0c);
+  assert.ok(raft.pages.length > 0);
+  assert.match(raft.pages.join(' '), /RAFT/);
+
+  // The letter drops the medicine-shop pin the moment it is picked up.
+  const letter = itemStory(0x15);
+  assert.ok(letter.marks.some((m) => m.clears === 'potionShopOpen'));
+
+  // Rupees, keys and bomb refills are not story beats.
+  assert.deepEqual(itemStory(0x18).pages, []);
+  assert.deepEqual(itemStory(0x19).pages, []);
+  assert.deepEqual(itemStory(0x1b).pages, []); // the shard — the briefing has it
+});
+
+test('every item the story explains is one the game can actually grant', () => {
+  // grantRoomItem / cave ITEM codes. A blurb for an id nothing hands out is
+  // prose nobody will ever read.
+  const grantable = new Set([
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+    0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x22,
+  ]);
+  for (const id of Object.keys(STORY.items ?? {})) {
+    assert.ok(
+      grantable.has(Number(id)),
+      `items[$${Number(id).toString(16)}] is not an item any pickup path grants`,
+    );
+  }
+});
+
+test('every labyrinth introduces itself on first entry', () => {
+  for (let level = 1; level <= 9; level += 1) {
+    const entry = levelEntryStory(level);
+    assert.ok(entry.pages.length > 0, `level ${level} has no onEnter pages`);
+    assert.match(
+      entry.pages[0],
+      new RegExp(level === 9 ? 'DEATH MOUNTAIN' : `LABYRINTH ${level}`),
+      `level ${level} does not name itself on the first page`,
+    );
+  }
+  assert.deepEqual(levelEntryStory(99).pages, []);
+});
+
+test('the level 9 gatekeeper refuses rather than congratulates', () => {
+  // `filterLevel9EntranceGate` deletes person $4B once the Triforce is whole,
+  // so text $44 is only ever read by someone who is still short of 8 shards.
+  assert.equal(textIdForUnderworldPerson(9, 0x4b), 0x44);
+  const gate = personStory(9, 0x4b);
+  const said = gate.pages.join(' ');
+  assert.match(said, /CANNOT GO IN/);
+  assert.doesNotMatch(said, /YOU CARRY ALL 8/);
+});
+
+test('no level-specific entry is written for a text that labyrinth never shows', () => {
+  // Levels only ever spawn one person type each, so a `level:textId` key for a
+  // selector that level cannot reach is prose the player can never trigger.
+  const reachable = new Map();
+  for (let level = 1; level <= 9; level += 1) {
+    const ids = new Set();
+    for (let objType = 0x4b; objType <= 0x52; objType += 1) {
+      const id = textIdForUnderworldPerson(level, objType);
+      if (id != null) ids.add(id);
+    }
+    reachable.set(level, ids);
+  }
+  for (const key of Object.keys(STORY.persons.byLevelAndTextId)) {
+    const [level, textId] = key.split(':').map(Number);
+    assert.ok(
+      reachable.get(level)?.has(textId),
+      `persons.byLevelAndTextId["${key}"] cannot be reached in labyrinth ${level}`,
+    );
+  }
+});
+
+test('the missed-treasure audit stays one page per line', () => {
+  // These land after a dozen pages of briefing the player already read. Story
+  // prose may run two pages; the nagging at the tail may not.
+  const oneLiners = [
+    ...Object.entries(STORY.itemAdvice).map(([k, v]) => [`itemAdvice[${k}]`, v]),
+    ['missedHeader', STORY.missedHeader],
+    ['missedFooter', STORY.missedFooter],
+  ];
+  for (const [where, text] of oneLiners) {
+    const pages = paginate(text, { cols: BOX_COLS });
+    assert.equal(pages.length, 1, `${where} wraps to ${pages.length} pages`);
   }
 });

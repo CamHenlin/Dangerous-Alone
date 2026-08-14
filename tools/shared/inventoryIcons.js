@@ -94,8 +94,9 @@ export function bItemIcon(inv, id) {
       if (inv.bombs > 0 || inv.selectedB === B_ITEM.BOMB) return { tile: 0x34, pal: 1 };
       return null;
     case B_ITEM.BOW:
+      // NES DrawItemBySlot: wood arrow SP0, silver SP1 (slot $02 + value).
       if (!(inv.bow && inv.arrow)) return null;
-      return { tile: 0x28, pal: inv.arrow >= 2 ? 2 : 0 };
+      return { tile: 0x28, pal: inv.arrow >= 2 ? 1 : 0 };
     case B_ITEM.CANDLE:
       if (!inv.candle) return null;
       return { tile: 0x26, pal: inv.candle >= 2 ? 2 : 1 };

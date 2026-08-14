@@ -1,6 +1,7 @@
 import { Application, Sprite, Texture } from 'pixi.js';
 import { decodePatternBlock, renderTilesRgba } from '@shared/nes2bpp.js';
 import { GREY_PREVIEW, rgbaFromNesIndices } from '@shared/nesPalette.js';
+import { initPixiApp } from '@shared/pixiBoot.js';
 
 const sheetSelect = document.getElementById('sheetSelect');
 const paletteSelect = document.getElementById('paletteSelect');
@@ -189,15 +190,19 @@ async function init() {
   fillRowSelect(currentSheet()?.kind ?? 'background');
 
   app = new Application();
-  await app.init({
-    background: '#000000',
-    width: 128 * SCALE,
-    height: 128 * SCALE,
-    antialias: false,
-    autoDensity: true,
-    resolution: 1,
-  });
-  stageEl.appendChild(app.canvas);
+  await initPixiApp(
+    app,
+    {
+      background: '#000000',
+      width: 128 * SCALE,
+      height: 128 * SCALE,
+      antialias: false,
+      autoDensity: true,
+      resolution: 1,
+    },
+    { host: stageEl },
+  );
+  if (app.canvas.parentNode !== stageEl) stageEl.appendChild(app.canvas);
 
   sheetSelect.addEventListener('change', () => {
     fillRowSelect(currentSheet()?.kind ?? 'background');

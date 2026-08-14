@@ -276,6 +276,7 @@ function writePlayWorld({ tables, screens, start, outDir }) {
     tileGrid: startTileGrid,
     squares: start.squares,
     secrets: screenSecrets(start, tables, 1),
+    secretsQ2: screenSecrets(start, tables, 2),
     attrs: start.attrs,
     layoutId: start.layoutId,
   };
@@ -298,6 +299,7 @@ function writePlayWorld({ tables, screens, start, outDir }) {
         attrs: screen.attrs,
         tileGrid,
         secrets: screenSecrets(screen, tables, 1),
+        secretsQ2: screenSecrets(screen, tables, 2),
         image: `../overworld/screens/screen_${idHex}.png`,
       })}\n`,
     );

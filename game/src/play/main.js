@@ -1,4 +1,5 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { initPixiApp } from '@shared/pixiBoot.js';
 import {
   DIR,
   HUD_HEIGHT,
@@ -150,6 +151,7 @@ import {
   revealSecretTiles,
   secretAction,
   tilesForSecretMarker,
+  nudgeLinkOntoGraveAxis,
   tryPushGraveSecret,
   tryRevealSecrets,
 } from '@shared/owSecrets.js';
@@ -162,6 +164,7 @@ import { createOwHeartContainer } from '@shared/owHeartContainer.js';
 import { owBgTileSourceRect } from '@shared/owBgTiles.js';
 import { trySpawnPassiveTileObject } from '@shared/passiveTileObjects.js';
 import {
+  cancelSword,
   createSwordState,
   isSwordActive,
   stepSword,
@@ -283,7 +286,13 @@ import {
   tryBuyBombUpgrade,
 } from '@shared/bombUpgrade.js';
 import { personOfferWares } from '@shared/personWares.js';
-import { caveStory, levelCompletionStory, personStory } from '@shared/storyText.js';
+import {
+  caveStory,
+  itemStory,
+  levelCompletionStory,
+  levelEntryStory,
+  personStory,
+} from '@shared/storyText.js';
 import {
   activeDungeonHintMarks,
   activeMapMarks,
@@ -373,9 +382,11 @@ import {
 } from '@shared/pushBlock.js';
 import {
   FLAME_SLOTS,
+  armDarkRoomAutoLight,
   createCandleRoomState,
   createOwFlame,
   roomIsDark,
+  stepDarkRoomAutoLight,
   stepOwFlame,
   tryUseCandle,
 } from '@shared/candle.js';
@@ -410,6 +421,7 @@ import { createInput } from './input.js';
 import { createLinkFrames } from './linkSprite.js';
 import { createDeathUi } from './deathUi.js';
 import { createEndingUi } from './endingUi.js';
+import { skipEndingToEpilogue } from '@shared/endingSequence.js';
 import { createDemoUi } from './demoUi.js';
 import { createNameEntryUi } from './nameEntryUi.js';
 import { CONTINUE_HALF_HEARTS } from '@shared/continueMenu.js';
@@ -440,6 +452,7 @@ import {
   CAVE_WARE_Y,
   caveWareSlots,
   checkCaveExit,
+  clearCaveTransitState,
   createCaveTileGrid,
   roadStairUnderLink,
   wareUnderLink,
@@ -483,9 +496,7 @@ function screenUrlQ2(mapIndex) {
 }
 
 function bgUrl(mapIndex, quest = 1) {
-  // Enhanced screens are baked alongside the originals under a `2x` sibling
-  // directory, same filenames, so only the folder name changes here.
-  const dir = scale() === 2 ? 'screens2x' : 'screens';
+  const dir = 'screens';
   const id = mapIndex.toString(16).padStart(2, '0');
   // Q2 layout rooms may ship an overlay PNG; fall back to Q1 art if missing.
   if (quest === 2 && quest2NeedsLayoutOverlay(mapIndex)) {
@@ -503,18 +514,25 @@ async function main() {
   // being passed it, and the renderer resolution is fixed at init.
   setGraphicsMode(options.graphics);
 
+  setStatus('Starting renderer…');
   const app = new Application();
-  await app.init({
-    width: INTERNAL_W,
-    height: INTERNAL_H,
-    background: '#000000',
-    antialias: false,
-    resolution: scale(),
-    autoDensity: false,
-    preference: 'webgl',
-  });
+  // Mount canvas before GL init (off-DOM contexts are a common black-screen cause).
+  const rendererKind = await initPixiApp(
+    app,
+    {
+      width: INTERNAL_W,
+      height: INTERNAL_H,
+      background: '#000000',
+      antialias: false,
+      resolution: scale(),
+      autoDensity: false,
+      powerPreference: 'high-performance',
+    },
+    { host: stageEl },
+  );
   app.canvas.style.imageRendering = 'pixelated';
-  stageEl.appendChild(app.canvas);
+  // Already mounted by initPixiApp; keep a no-op append for idempotency.
+  if (app.canvas.parentNode !== stageEl) stageEl.appendChild(app.canvas);
 
   function applyDisplayOptions() {
     const filter = options.filter === 'smooth' ? 'auto' : 'pixelated';
@@ -541,7 +559,21 @@ async function main() {
   }
   applyDisplayOptions();
   window.addEventListener('resize', resizeCanvas);
+  // Opening DevTools also fires resize — observe the stage so the first
+  // layout pass is not the only chance to size the canvas.
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => {
+      resizeCanvas();
+      app.render();
+    }).observe(stageEl);
+  }
+  // Layout may not be final until after fonts/toolbar; remeasure next frame.
+  requestAnimationFrame(() => {
+    resizeCanvas();
+    app.render();
+  });
 
+  setStatus(`Loading graphics (${rendererKind})…`);
   const sheetUrls = {
     common: graphicsUrl('common_sprites.png'),
     misc: graphicsUrl('common_misc.png'),
@@ -596,7 +628,7 @@ async function main() {
   /** UW CHR bins for runtime room composition (walls/doors). */
   /** @type {Map<string, Uint8Array>} */
   const uwPatternBins = new Map();
-  const uwPatternExt = scale() === 2 ? '4bpp' : 'bin';
+  const uwPatternExt = 'bin';
   for (const id of ['common_background', 'underworld_bg', 'common_misc']) {
     try {
       const buf = await (await fetch(graphicsUrl(`${id}.${uwPatternExt}`))).arrayBuffer();
@@ -983,14 +1015,21 @@ async function main() {
   /** @type {import('pixi.js').Texture | null} */
   let storyBgTex = null;
   try {
-    titleBgTex = markScaled(await Assets.load(scale() === 2 ? '/play/title2x.png' : '/play/title.png'));
+    titleBgTex = markScaled(await Assets.load('/play/title.png'));
   } catch {
     console.warn('play/title.png missing — run: npm run extract -- demo');
   }
+  // The authored prologue (`npm run story:prologue`) wins over the ROM's own
+  // one-screen storyboard; deleting it restores the 1986 screen, the same way
+  // deleting a `story/` entry restores the 1986 line.
   try {
-    storyBgTex = markScaled(await Assets.load(scale() === 2 ? '/play/story2x.png' : '/play/story.png'));
+    storyBgTex = markScaled(await Assets.load('/play/prologue.png'));
   } catch {
-    console.warn('play/story.png missing — run: npm run extract -- demo');
+    try {
+      storyBgTex = markScaled(await Assets.load('/play/story.png'));
+    } catch {
+      console.warn('play/story.png missing — run: npm run extract -- demo');
+    }
   }
 
   const demoUi = createDemoUi({
@@ -1112,6 +1151,9 @@ async function main() {
   let pendingBriefingLevel = null;
   /** @type {Map<string, number>} */
   const gravePushHold = new Map();
+  /** Passive grave/Armos wakes already used this hold — clear on release. */
+  /** @type {Set<string>} */
+  const passiveTouchHold = new Set();
   const raftRide = createRaftRide();
   /** @type {import('pixi.js').Container | null} */
   let raftGfx = null;
@@ -1122,6 +1164,18 @@ async function main() {
   /** Per-level dungeon progress (survives exit / reload). */
   /** @type {Map<number, object>} */
   const dungeonProgress = new Map();
+  /**
+   * Story beats already spoken on this file — `item:<type>` and `level:<n>`.
+   * The bow is only explained the first time it is lifted; walking back into
+   * the Eagle does not re-introduce the Eagle.
+   * @type {Set<string>}
+   */
+  const toldStory = new Set();
+  /**
+   * A story box that had to wait because someone else was still talking.
+   * @type {{ pages: string[], marks: object[], kind: string, meta: object | null } | null}
+   */
+  let pendingStory = null;
   const saveStore = createSaveStore();
   const practiceStore = createPracticeStore();
   /** @type {number | null} */
@@ -1164,6 +1218,8 @@ async function main() {
 
   const endingUi = createEndingUi({
     commonBg: sheetTextures.commonBg,
+    // The epilogue's vine frame comes from the same bank as the prologue's.
+    demoBg: sheetTextures.demoBg ?? null,
     items,
     data: endingData,
   });
@@ -1434,6 +1490,16 @@ async function main() {
         marks: () => currentMapMarks(),
         say: (pages) => textBox.open(pages, { kind: 'debug' }),
         briefing: (level) => openLevelBriefing(level),
+        /**
+         * Jump to mode `$13`. Without an argument it plays from Zelda's line;
+         * `ending('epilogue')` skips the ROM beats and opens on the first
+         * storyboard page, which is otherwise an hour of play away.
+         */
+        ending: (from = 'start') => {
+          endingUi.begin({ quest: inv.quest, name: saveName, deaths: deathCount });
+          if (from === 'epilogue') skipEndingToEpilogue(endingUi.state);
+          return endingUi.phase;
+        },
         enterLevel: (levelId) => enterLevel(levelId),
         goRoom: (id, dir) => loadDungeonRoom(id, dir),
         goOw: (id, x = 0x78, y = 0x8d, dir = DIR.UP) =>
@@ -1687,7 +1753,8 @@ async function main() {
     owItemsTaken.clear();
     hintMarks.clear();
     dungeonProgress.clear();
-    textBox.close();
+    toldStory.clear();
+    closeDialogue();
     pendingBriefingLevel = null;
     Object.assign(inv, createInventory());
     const meta = applyLoadedSave(payload, {
@@ -1696,6 +1763,7 @@ async function main() {
       caveTaken,
       owItemsTaken,
       hintMarks,
+      toldStory,
       dungeonProgress,
     });
     saveName = meta.name ?? saveName;
@@ -1793,6 +1861,7 @@ async function main() {
       caveTaken,
       owItemsTaken,
       hintMarks,
+      toldStory,
       dungeonProgress,
     };
   }
@@ -2582,6 +2651,7 @@ async function main() {
     audio?.playSfx('item_taken');
     audio?.playFanfare('item');
     setStatus(`Got ${label}!`);
+    tellItemStory(picked);
     persistSave();
   }
 
@@ -2682,7 +2752,11 @@ async function main() {
       } else {
         applyQuest2AttrsToPack(pack);
       }
-      if (Array.isArray(pack.secrets) && pack.attrs?.ignoreSecretQ2) {
+      // Prefer quest-2 markers when present (extract writes both). Legacy packs
+      // only stored Q1 secrets — clear rooms this quest ignores.
+      if (Array.isArray(pack.secretsQ2)) {
+        pack.secrets = pack.secretsQ2;
+      } else if (Array.isArray(pack.secrets) && pack.attrs?.ignoreSecretQ2) {
         pack.secrets = [];
       }
     }
@@ -3108,9 +3182,10 @@ async function main() {
       }
 
       candleRoom = createCandleRoomState();
+      armDarkRoomAutoLight(candleRoom, room, inv);
       flames = [];
       statueState = createStatueState(room.layoutId ?? -1);
-      textBox.close();
+      closeDialogue();
 
       refreshDungeonRoomVisual();
       await ensureUwNeighbors();
@@ -3470,7 +3545,7 @@ async function main() {
       doorFrameLayer.visible = true;
       spawnedRooms = new Set();
       spawnClaims = new Set();
-      textBox.close();
+      closeDialogue();
       bg = null;
       roomSprite = null;
 
@@ -3606,6 +3681,7 @@ async function main() {
 
       titleEl.textContent = `Play — Level ${dungeon.level}`;
       candleRoom = createCandleRoomState();
+      armDarkRoomAutoLight(candleRoom, room, inv);
       flames = [];
       statueState = createStatueState(room.layoutId ?? -1);
       await ensureUwNeighbors();
@@ -3710,6 +3786,11 @@ async function main() {
     );
     audio?.playSfx('stairs');
     playDungeonMusic(levelId);
+    // Only on a real descent from the overworld — a save resumed inside the
+    // labyrinth is not the moment to introduce it.
+    if (!opts.spawnOverride && resumeRoom === dungeon.levelData.startRoom) {
+      tellLevelEntryStory(levelId);
+    }
   }
 
   function openCave(caveId) {
@@ -3731,6 +3812,9 @@ async function main() {
     if (bg) bg.visible = false;
     clearEnemies();
     bombs = [];
+    // Candle flames live on fxLayer and are only stepped in combat — leave
+    // them armed and a frozen orange blob hangs over the dweller forever.
+    flames = [];
     projectiles = [];
     mode = 'cave';
     playField.x = 0;
@@ -3739,9 +3823,9 @@ async function main() {
     link.x = CAVE_ENTER_SPAWN.x;
     link.y = CAVE_ENTER_SPAWN.y;
     link.dir = CAVE_ENTER_SPAWN.dir;
-    link.posFrac = 0;
-    link.gridOffset = 0;
-    link.moving = false;
+    // OW knockback / mid-swing sword never finish in Mode B (no stepCombat),
+    // and either one alone freezes Link on the mouth tile.
+    clearCaveTransitState({ link, inv, sword, cancelSword });
     caveInteractLatch = false;
     caveExitLatch = true; // ignore exit until Link walks further inside
     gambleAmounts = cave.kind === 'gamble' ? rollMoneyGameAmounts() : null;
@@ -3785,7 +3869,7 @@ async function main() {
       y: opts.y ?? caveReturn.y,
       dir: opts.dir ?? caveReturn.dir,
     };
-    textBox.close();
+    closeDialogue();
     invUi.close();
     world.y = 0;
     // Hide cave first — loadOverworldScreen may rebuild sprite caches, and
@@ -3940,6 +4024,8 @@ async function main() {
     } else {
       audio?.playSfx('rupee');
     }
+    // Shelf purchases get the same introduction a labyrinth floor would give.
+    tellItemStory(result.item, { interrupt: true });
   }
 
   function stepCave(inputMask) {
@@ -3954,6 +4040,8 @@ async function main() {
       return;
     }
     syncItemLiftSprite();
+    // Same gap as itemLiftTimer: shove is applied in stepCombat only.
+    applyShove();
     if (!isSwordActive(sword) && inv.shovePixels <= 0) {
       stepLink(link, caveTileGrid, inputMask);
     }
@@ -4079,7 +4167,7 @@ async function main() {
     holdingTriforceLift = false;
     liftItemType = null;
     syncItemLiftSprite();
-    textBox.close();
+    closeDialogue();
     invUi.close();
     world.y = 0;
     // NES Items RAM swaps per level — map/compass leave inventory on OW.
@@ -4195,9 +4283,8 @@ async function main() {
     if (!pages.length) return;
     applyStoryMarks(marks);
     textBox.open(pages, { kind: 'cave' });
-    // Cave physics keep running under the box; say how to clear it so a long
-    // shop pitch does not look like the game froze on the mouth tile.
-    setStatus('Press A / B / Start to continue');
+    // Mode B keeps physics running under the box (NES nametable crawl).
+    setStatus('A / B / Start closes text — you can still walk');
   }
 
   /**
@@ -4301,6 +4388,93 @@ async function main() {
   }
 
   /**
+   * Say what an item is, once, the first time it is taken.
+   *
+   * Called from every pickup path — labyrinth floor, cave gift, shop shelf,
+   * under an Armos — so one entry in `story/items.js` covers all of them. The
+   * box opens while Link is still holding the thing over his head: in a
+   * labyrinth the world is frozen under it, so the pose simply waits.
+   *
+   * @param {number | null | undefined} itemType ROM `Item_codes` value
+   * @param {{ interrupt?: boolean }} [opts] `interrupt` cuts off whoever is
+   *   currently talking instead of queueing behind them
+   * @returns {boolean} true when the box was opened
+   */
+  function tellItemStory(itemType, opts = {}) {
+    if (itemType == null) return false;
+    const key = `item:${itemType & 0xff}`;
+    if (toldStory.has(key)) return false;
+    const { pages, marks } = itemStory(itemType);
+    // Remember it either way: an item with no prose is still "introduced", so
+    // adding prose later cannot interrupt a run that is already past it.
+    toldStory.add(key);
+    if (!pages.length) return false;
+    // A shopkeeper is usually still mid-speech when Link steps onto the ware.
+    // He has had his say by then — the player is already buying.
+    if (opts.interrupt && textBox.active) closeDialogue();
+    return sayStory(pages, marks, 'item', { itemType: itemType & 0xff });
+  }
+
+  /**
+   * The first time Link stands inside a labyrinth, describe the labyrinth.
+   * @param {number} level
+   */
+  function tellLevelEntryStory(level) {
+    if (!Number.isFinite(level)) return false;
+    const key = `level:${level | 0}`;
+    if (toldStory.has(key)) return false;
+    toldStory.add(key);
+    const { pages, marks } = levelEntryStory(level);
+    if (!pages.length) return false;
+    return sayStory(pages, marks, 'levelEntry', { level });
+  }
+
+  /**
+   * Open a story box, or queue it behind one that is already talking.
+   *
+   * A shopkeeper is usually still mid-sentence when Link steps onto the ware
+   * he is selling, and a labyrinth old man can be talking when a floor item is
+   * taken. Dropping the second speech would lose it for good — these beats
+   * only ever fire once — so it waits for the box instead.
+   *
+   * @param {string[]} pages
+   * @param {object[]} marks
+   * @param {string} kind
+   * @param {object | null} [meta]
+   * @returns {boolean} true if it opened now rather than queueing
+   */
+  function sayStory(pages, marks, kind, meta = null) {
+    if (textBox.active || inv.dead) {
+      pendingStory = { pages, marks, kind, meta };
+      return false;
+    }
+    applyStoryMarks(marks);
+    textBox.open(pages, { kind, meta });
+    return true;
+  }
+
+  /**
+   * Shut the box without letting a queued beat leak into whatever comes next.
+   *
+   * Every forced close in this file is a mode change — a room load, a cave
+   * exit, death, a new file. A story waiting behind the box belonged to the
+   * situation being torn down, so it goes with it.
+   */
+  function closeDialogue() {
+    pendingStory = null;
+    textBox.close();
+  }
+
+  /** Open whatever was waiting behind the box that just closed. */
+  function drainPendingStory() {
+    const next = pendingStory;
+    pendingStory = null;
+    if (!next || inv.dead) return;
+    applyStoryMarks(next.marks);
+    textBox.open(next.pages, { kind: next.kind, meta: next.meta });
+  }
+
+  /**
    * The between-labyrinth briefing: what the shard means, where to go next,
    * and what treasure was left on the floor behind you.
    * @param {number} level
@@ -4320,10 +4494,15 @@ async function main() {
    */
   function onDialogueClosed(res) {
     if (res.kind === 'briefing') {
+      // The briefing walks Link out of the labyrinth; anything queued behind
+      // it would open over the overworld transition.
+      pendingStory = null;
       persistSave('level briefing');
       // NES EndGameMode12 → OW entrance after the Mode $12 ceremony.
       void exitDungeon();
+      return;
     }
+    drainPendingStory();
   }
 
   function refreshHud() {
@@ -4465,7 +4644,7 @@ async function main() {
     cancelScreenScroll();
     audio?.stopMusic();
     // Mode $11 owns the screen from here; an open textbox would halt it.
-    textBox.close();
+    closeDialogue();
     pendingBriefingLevel = null;
     snapshotDungeonProgress();
     if (activeSlot != null && playing) {
@@ -4682,7 +4861,6 @@ async function main() {
     ctx.drawImage(src, 0, 0);
     const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
     let changed = false;
-    const enhanced = scale() === 2;
     for (const job of jobs) {
       if (
         recolorBurnTreeSquareRgba(
@@ -4692,7 +4870,7 @@ async function main() {
           job.row,
           rowsRgb[job.from],
           rowsRgb[job.to],
-          { enhanced, nesPxScale: scale() },
+          { enhanced: false, nesPxScale: scale() },
         )
       ) {
         changed = true;
@@ -4730,6 +4908,7 @@ async function main() {
       const label = grantRoomItem(inv, ARMOS_BRACELET_ITEM);
       setStatus(`Armos drops the ${label}!`);
       refreshHud();
+      tellItemStory(ARMOS_BRACELET_ITEM);
     }
   }
 
@@ -5090,6 +5269,7 @@ async function main() {
       } else {
         audio?.playFanfare('item');
         setStatus(`Got ${label}!`);
+        tellItemStory(picked);
       }
     }
   }
@@ -5503,6 +5683,11 @@ async function main() {
       ensureLinkNotInSolid();
     }
     pinWallmasterCapture();
+
+    // QoL: owning a candle lights dark rooms ~1s after entry.
+    if (mode === 'dungeon' && stepDarkRoomAutoLight(candleRoom)) {
+      syncDarkOverlay();
+    }
   }
 
   function syncDarkOverlay() {
@@ -6022,13 +6207,16 @@ async function main() {
       syncLadderSprite();
       // CheckPassiveTileObjects — wake Armos / Flying Ghini from $BC–$C3.
       const face = moveMask & 0x0f;
-      if (face && link.gridOffset === 0) {
+      if (!face) {
+        passiveTouchHold.clear();
+      } else if (link.gridOffset === 0) {
         const spawned = trySpawnPassiveTileObject(
           link,
           screen.tileGrid,
           face,
           enemies,
           createEnemy,
+          { touchHold: passiveTouchHold },
         );
         if (spawned) {
           tagEnemyHomeRoom([spawned], roomId);
@@ -6096,16 +6284,28 @@ async function main() {
     resolveOwRoomCross(null);
 
     // Push graves / rocks: exact X + vertical hold $10.
+    // Nudge first — standing under either half of the 16×16 looks aligned but
+    // NES compares X equal (same gap as dungeon push blocks).
     if (inputMask && screen?.secrets?.length) {
+      const pushDir = pickSingleDir(inputMask) || (link.dir & (DIR.UP | DIR.DOWN));
+      const graveOpts = { bracelet: inv.bracelet };
+      nudgeLinkOntoGraveAxis(
+        screen.secrets,
+        owSecretsRevealed,
+        roomId,
+        link,
+        pushDir,
+        graveOpts,
+      );
       const pushed = tryPushGraveSecret(
         screen.secrets,
         owSecretsRevealed,
         roomId,
         link,
         screen.tileGrid,
-        link.dir,
+        pushDir,
         gravePushHold,
-        { bracelet: inv.bracelet },
+        graveOpts,
       );
       if (pushed.length) {
         for (const secret of pushed) {
@@ -6332,7 +6532,8 @@ async function main() {
     owItemsTaken.clear();
     hintMarks.clear();
     dungeonProgress.clear();
-    textBox.close();
+    toldStory.clear();
+    closeDialogue();
     pendingBriefingLevel = null;
     resetProfileToSecondQuest(inv);
     await loadOverworldScreen(worldIndex.startScreen, {
@@ -6359,7 +6560,8 @@ async function main() {
     owItemsTaken.clear();
     hintMarks.clear();
     dungeonProgress.clear();
-    textBox.close();
+    toldStory.clear();
+    closeDialogue();
     pendingBriefingLevel = null;
     Object.assign(inv, createInventory());
     resetRupeeRoll(rupeeRoll, inv.rupees ?? 0);
@@ -6379,6 +6581,7 @@ async function main() {
         caveTaken,
         owItemsTaken,
         hintMarks,
+        toldStory,
         dungeonProgress,
       });
       saveName = meta.name;
@@ -6636,9 +6839,15 @@ async function main() {
 
       // The world holds still while someone is talking, the same way the
       // submenu freezes it — nothing steps, nothing spawns, nothing hits Link.
-      // That includes caves: walking out mid-speech left the overlay on the
-      // overworld. Death outranks dialogue either way.
-      if (invUi.open || (textBox.active && !inv.dead)) {
+      // Cave Mode B is the exception: NES lets Link walk the shop while the
+      // nametable text crawls, and freezing here reads as a hard hang on enter
+      // (no foes to pause for). leaveCave always closes the box so walking out
+      // mid-speech cannot leave the overlay stranded on the overworld.
+      // Death outranks dialogue either way.
+      if (
+        invUi.open
+        || (textBox.active && !inv.dead && mode !== 'cave')
+      ) {
         continue;
       }
 

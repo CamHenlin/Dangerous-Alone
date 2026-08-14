@@ -95,12 +95,18 @@ export function storyTilePatternBytes(tile, commonBg, demoBg) {
 }
 
 /**
- * Render a 256×240 attract nametable to RGBA (opaque backdrop).
- * @param {Uint8Array} tiles 960 nametable tiles
- * @param {Uint8Array} attrs 64 attribute bytes
+ * Render an attract nametable to RGBA (opaque backdrop).
+ *
+ * Defaults to the NES screen, 256×240. `opts.rows` renders a taller strip —
+ * the authored prologue stacks several 30-row panels into one image so the
+ * attract sequence can scroll between them.
+ *
+ * @param {Uint8Array} tiles `32 * rows` nametable tiles
+ * @param {Uint8Array} attrs one palette row per 2×2 block
  * @param {Uint8Array|Buffer} commonBg
  * @param {Uint8Array|Buffer} demoBg
  * @param {readonly (readonly number[])[]} [paletteRows]
+ * @param {{ rows?: number }} [opts]
  * @returns {{ width: number, height: number, rgba: Uint8Array }}
  */
 export function renderDemoNametableRgba(
@@ -109,9 +115,11 @@ export function renderDemoNametableRgba(
   commonBg,
   demoBg,
   paletteRows = STORY_BG_PALETTE_ROWS,
+  opts = {},
 ) {
+  const totalRows = Math.max(1, opts.rows ?? 30);
   const width = 256;
-  const height = 240;
+  const height = totalRows * 8;
   const rgba = new Uint8Array(width * height * 4);
   /** @type {{ r: number, g: number, b: number, a: number }[][]} */
   const rowColors = paletteRows.map((row) =>
@@ -121,7 +129,7 @@ export function renderDemoNametableRgba(
     }),
   );
 
-  for (let row = 0; row < 30; row += 1) {
+  for (let row = 0; row < totalRows; row += 1) {
     for (let col = 0; col < 32; col += 1) {
       const tile = tiles[row * 32 + col] ?? 0;
       const indices = decodeTileIndices(storyTilePatternBytes(tile, commonBg, demoBg));

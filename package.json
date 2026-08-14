@@ -11,7 +11,8 @@
     "build": "vite build --config game/vite.config.js",
     "preview": "vite preview --config game/vite.config.js",
     "enhance": "node tools/enhance/cli.js",
-    "enhance:ai": "node tools/enhance/cli.js --ai"
+    "enhance:ai": "node tools/enhance/cli.js --ai",
+    "story:boards": "node tools/story/buildStoryboards.js"
   },
   "engines": {
     "node": ">=18"

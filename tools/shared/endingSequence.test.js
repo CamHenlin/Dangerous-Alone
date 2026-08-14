@@ -6,6 +6,9 @@ import {
   FLASH_COLORS,
   FLASH_FRAMES,
   FLASH_START,
+  EPILOGUE_CHAR_FRAMES,
+  EPILOGUE_HOLD_FRAMES,
+  EPILOGUE_INPUT_LOCK_FRAMES,
   PEACE_CHAR_FRAMES,
   PEACE_DELAY_FRAMES,
   PEACE_LONG_UNITS,
@@ -16,6 +19,7 @@ import {
   endingAcceptsStart,
   endingFlashColor,
   endingHeroesVisible,
+  epilogueAcceptsStart,
   stepEndingSequence,
 } from './endingSequence.js';
 
@@ -142,4 +146,81 @@ test('Start does nothing before the tableau', () => {
   assert.equal(endingAcceptsStart(state, true), false);
   runTo(state, ENDING_PHASE.CREDITS);
   assert.equal(endingAcceptsStart(state, true), false);
+});
+
+test('with no epilogue the peace beat still hands straight to the credits', () => {
+  const state = createEndingSequence();
+  const { frames } = runTo(state, ENDING_PHASE.CREDITS);
+  assert.ok(frames > 0);
+  assert.equal(state.phase, ENDING_PHASE.CREDITS);
+});
+
+test('epilogue pages type, hold, turn, and end in the credit roll', () => {
+  const content = { ...CONTENT, epilogue: ['ONE', 'TWO'] };
+  const state = createEndingSequence();
+  const entered = runTo(state, ENDING_PHASE.EPILOGUE, content);
+  assert.ok(entered.frames > 0, 'never reached the epilogue');
+  assert.equal(state.page, 0);
+  assert.equal(state.chars, 0);
+
+  // Page 0 types at its own rate, then the hold timer turns it.
+  for (let f = 0; f < EPILOGUE_CHAR_FRAMES * 'ONE'.length; f += 1) {
+    stepEndingSequence(state, content);
+  }
+  assert.equal(state.chars, 'ONE'.length);
+  for (let f = 0; f < EPILOGUE_HOLD_FRAMES; f += 1) stepEndingSequence(state, content);
+  assert.equal(state.page, 1);
+  assert.equal(state.chars, 0);
+
+  // The last page hands over rather than running off the end of the array.
+  const toCredits = runTo(state, ENDING_PHASE.CREDITS, content);
+  assert.ok(toCredits.frames > 0);
+  assert.ok(toCredits.events.some((e) => e.enteredCredits));
+});
+
+test('Start fills an epilogue page, then turns it', () => {
+  const content = { ...CONTENT, epilogue: ['A LONGER PAGE', 'SECOND'] };
+  const state = createEndingSequence();
+  runTo(state, ENDING_PHASE.EPILOGUE, content);
+
+  // Ignored while the page is brand new, so one press cannot eat two pages.
+  assert.equal(epilogueAcceptsStart(state, content.epilogue, true), null);
+  for (let f = 0; f < EPILOGUE_INPUT_LOCK_FRAMES; f += 1) {
+    stepEndingSequence(state, content);
+  }
+
+  const filled = epilogueAcceptsStart(state, content.epilogue, true);
+  assert.ok(filled);
+  assert.equal(state.chars, content.epilogue[0].length);
+  assert.equal(state.page, 0);
+
+  const turned = epilogueAcceptsStart(state, content.epilogue, true);
+  assert.equal(turned.turnedPage, true);
+  assert.equal(state.page, 1);
+
+  // No press, no effect.
+  assert.equal(epilogueAcceptsStart(state, content.epilogue, false), null);
+});
+
+test('Start on the last epilogue page enters the credits', () => {
+  // Long enough that the input lock expires while the page is still typing,
+  // so the first press fills and only the second one turns.
+  const content = { ...CONTENT, epilogue: ['THE ONLY PAGE THERE IS'] };
+  const state = createEndingSequence();
+  runTo(state, ENDING_PHASE.EPILOGUE, content);
+  for (let f = 0; f < EPILOGUE_INPUT_LOCK_FRAMES; f += 1) {
+    stepEndingSequence(state, content);
+  }
+  assert.ok(state.chars < content.epilogue[0].length, 'page typed too fast to fill');
+  epilogueAcceptsStart(state, content.epilogue, true); // fill
+  const res = epilogueAcceptsStart(state, content.epilogue, true); // turn
+  assert.equal(res.enteredCredits, true);
+  assert.equal(state.phase, ENDING_PHASE.CREDITS);
+});
+
+test('Link and Zelda are gone by the time the epilogue plays', () => {
+  const content = { ...CONTENT, epilogue: ['PAGE'] };
+  const state = createEndingSequence();
+  runTo(state, ENDING_PHASE.EPILOGUE, content);
+  assert.equal(endingHeroesVisible(state), false);
 });

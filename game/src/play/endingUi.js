@@ -6,8 +6,10 @@ import {
   endingAcceptsStart,
   endingFlashColor,
   endingHeroesVisible,
+  epilogueAcceptsStart,
   stepEndingSequence,
 } from '@shared/endingSequence.js';
+import { endingStory, flattenEndingLines } from '@shared/endingStory.js';
 import {
   creditsLinesForQuest,
   creditsRowY,
@@ -15,13 +17,17 @@ import {
 } from '@shared/endingText.js';
 import { nesColor } from '@shared/nesPalette.js';
 import { chrTileForItemId } from '@shared/itemFrame.js';
+import { BORDER_TILE, FRAME } from '@shared/storyboard.js';
 import { nesText, nesTile } from './nesFont.js';
+import { demoTile } from './demoFont.js';
 
 const SCREEN_W = 256;
 const SCREEN_H = 240;
 const TILE = 8;
 
 const WHITE = 0xfcfcfc;
+/** Mid green of `STORY_BG_PALETTE_ROWS[3]` (`$1A`), the vine's body colour. */
+const VINE_COLOR = 0x00a800;
 /** `CreditsAttrs` gives the border its own palette row; brick red is close. */
 const BRICK_TILE = 0xfa;
 const BRICK_COLOR = 0xd82800;
@@ -59,6 +65,9 @@ export function createEndingUi(deps = {}) {
   const fontImg = deps.commonBg
     ? /** @type {CanvasImageSource} */ (deps.commonBg.source.resource)
     : null;
+  const demoImg = deps.demoBg
+    ? /** @type {CanvasImageSource} */ (deps.demoBg.source.resource)
+    : null;
   const data = deps.data ?? null;
 
   const root = new Container();
@@ -83,20 +92,31 @@ export function createEndingUi(deps = {}) {
   tableau.visible = false;
   root.addChild(tableau);
 
+  /**
+   * The prologue's vine frame, drawn live around the epilogue pages so the two
+   * ends of the game are visibly the same kind of screen. Built once — only its
+   * visibility changes.
+   */
+  const epilogueFrame = new Container();
+  epilogueFrame.visible = false;
+  root.addChild(epilogueFrame);
+
   let sequence = createEndingSequence();
   let quest = 1;
   let lastTextKey = '';
-  /** Flat text of the two textboxes, used by the typewriter. */
+  /**
+   * Laid-out prose from `story/ending.js`, falling back to the ROM's own
+   * lines. Recomputed per run so an edit to the story file lands on reload.
+   */
+  let laid = { thanksLines: [], peaceLines: [], epiloguePages: [] };
+  /** Flat text of each textbox, used by the typewriter. */
   let thanksFlat = '';
   let peaceFlat = '';
+  /** @type {string[]} one flat string per epilogue page. */
+  let epilogueFlat = [];
 
   function clear(container) {
     container.removeChildren().forEach((c) => c.destroy({ children: true }));
-  }
-
-  /** Concatenate the laid-out runs so the typewriter sees one string. */
-  function flatten(lines) {
-    return (lines ?? []).map((l) => l.text).join('');
   }
 
   /**
@@ -194,6 +214,33 @@ export function createEndingUi(deps = {}) {
     }
   }
 
+  /**
+   * The vine box the epilogue pages sit in — the same geometry
+   * `tools/shared/storyboard.js` bakes into the prologue PNG.
+   *
+   * The prologue's frame is three shades of green because a baked nametable
+   * gets a real 4-colour palette row. Tinting a sprite can only do one, so this
+   * uses the vine's mid green; at 8px the difference does not read.
+   */
+  function buildEpilogueFrame() {
+    clear(epilogueFrame);
+    if (!demoImg) return;
+    const put = (col, row, tile) => {
+      epilogueFrame.addChild(demoTile(demoImg, tile, col * TILE, row * TILE, VINE_COLOR));
+    };
+    for (const row of [FRAME.topRow, FRAME.bottomRow]) {
+      put(FRAME.leftCol, row, BORDER_TILE.corner);
+      put(FRAME.rightCol, row, BORDER_TILE.corner);
+      for (let col = FRAME.leftCol + 1; col < FRAME.rightCol; col += 1) {
+        put(col, row, col % 2 ? BORDER_TILE.hA : BORDER_TILE.hB);
+      }
+    }
+    for (let row = FRAME.topRow + 1; row < FRAME.bottomRow; row += 1) {
+      put(FRAME.leftCol, row, row % 2 ? BORDER_TILE.vA : BORDER_TILE.vB);
+      put(FRAME.rightCol, row, row % 2 ? BORDER_TILE.vB : BORDER_TILE.vA);
+    }
+  }
+
   /** Submode 4: the triforce over Ganon's ashes on a black screen. */
   function buildTableau() {
     clear(tableau);
@@ -218,8 +265,10 @@ export function createEndingUi(deps = {}) {
   function begin(profile = {}) {
     sequence = createEndingSequence();
     quest = profile.quest === 2 ? 2 : 1;
-    thanksFlat = flatten(data?.thanksLines);
-    peaceFlat = flatten(data?.peaceLines);
+    laid = endingStory(data);
+    thanksFlat = flattenEndingLines(laid.thanksLines);
+    peaceFlat = flattenEndingLines(laid.peaceLines);
+    epilogueFlat = laid.epiloguePages.map(flattenEndingLines);
     lastTextKey = '';
     clear(textLayer);
     backdrop.clear();
@@ -228,7 +277,9 @@ export function createEndingUi(deps = {}) {
     tableau.visible = false;
     triforces.visible = false;
     buildCredits({ name: profile.name ?? 'LINK', deaths: profile.deaths ?? 0 });
+    buildEpilogueFrame();
     buildTableau();
+    epilogueFrame.visible = false;
     root.visible = true;
   }
 
@@ -261,41 +312,59 @@ export function createEndingUi(deps = {}) {
   function tick(pressed = {}, positions = {}) {
     if (!root.visible) return idleTick();
 
-    const events = stepEndingSequence(sequence, {
+    const content = {
       thanks: thanksFlat,
       peace: peaceFlat,
+      epilogue: epilogueFlat,
       scrollEnd: creditsEnd(),
-    });
+    };
+    let events = stepEndingSequence(sequence, content);
+    // Start fills the current epilogue page, then turns it. Consumed here so
+    // the same press cannot also skip the tableau further down.
+    const turned = epilogueAcceptsStart(sequence, epilogueFlat, Boolean(pressed.start));
+    if (turned) events = { ...events, ...turned };
+
     const phase = sequence.phase;
     const rolling = phase === ENDING_PHASE.CREDITS || phase === ENDING_PHASE.TABLEAU;
+    // The epilogue plays on the same black the credits use — Link and Zelda
+    // have already faded out by the time the peace timer hands over.
+    const dark = rolling || phase === ENDING_PHASE.EPILOGUE;
 
     if (phase === ENDING_PHASE.THANKS || phase === ENDING_PHASE.THANKS_HOLD) {
-      syncTextbox(`thanks:${sequence.chars}`, data?.thanksLines, sequence.chars);
+      syncTextbox(`thanks:${sequence.chars}`, laid.thanksLines, sequence.chars);
     } else if (isPeacePhase(phase)) {
-      syncTextbox(`peace:${sequence.chars}`, data?.peaceLines, sequence.chars);
+      syncTextbox(`peace:${sequence.chars}`, laid.peaceLines, sequence.chars);
+    } else if (phase === ENDING_PHASE.EPILOGUE) {
+      syncTextbox(
+        `epilogue:${sequence.page}:${sequence.chars}`,
+        laid.epiloguePages[sequence.page],
+        sequence.chars,
+      );
     } else if (rolling) {
       syncTextbox('none', [], 0);
     }
 
-    if (rolling) {
+    if (dark) {
       paintBlack();
-      syncCredits();
+      if (rolling) syncCredits();
     } else {
       paintFlash(endingFlashColor(sequence));
     }
     creditsLayer.visible = phase === ENDING_PHASE.CREDITS;
     tableau.visible = phase === ENDING_PHASE.TABLEAU;
+    epilogueFrame.visible = phase === ENDING_PHASE.EPILOGUE;
 
     const heroes = endingHeroesVisible(sequence);
     syncTriforces(heroes && phase !== ENDING_PHASE.THANKS, positions);
 
     return {
       heroesVisible: heroes,
-      worldVisible: !rolling,
+      worldVisible: !dark,
       playCharTune: events.playCharTune,
       startSong: events.startSong,
       silence: events.silence,
-      finished: endingAcceptsStart(sequence, Boolean(pressed.start)),
+      finished:
+        !turned && endingAcceptsStart(sequence, Boolean(pressed.start)),
     };
   }
 
@@ -335,6 +404,10 @@ export function createEndingUi(deps = {}) {
     },
     get phase() {
       return sequence.phase;
+    },
+    /** Exposed for tests / the `?debug=1` ending jump. */
+    get state() {
+      return sequence;
     },
   };
 }

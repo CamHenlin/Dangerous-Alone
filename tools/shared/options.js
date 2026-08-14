@@ -27,13 +27,11 @@ export const DEFAULT_OPTIONS = Object.freeze({
   filter: 'integer',
   fullscreen: false,
   /**
-   * Art set. `classic` is the original NES tiles, byte for byte, and is the
-   * default: neither enhanced set — procedural shading nor FLUX-generated
-   * tiles — improved on the original enough to justify shipping over it.
-   * `enhanced` loads whichever set `tools/enhance/cli.js` last built.
-   * Switching reloads the page, because every texture is built from the
-   * sheets at boot.
-   * @type {'enhanced' | 'classic'}
+   * Art set. The game draws the original NES tiles, byte for byte, and there
+   * is no longer an alternative: the enhanced sets were withdrawn. Kept as an
+   * option so saved settings from earlier builds still load, and so that
+   * re-enabling an art set is a change here rather than across the renderer.
+   * @type {'classic'}
    */
   graphics: 'classic',
 });
@@ -55,7 +53,10 @@ export function normalizeOptions(raw) {
     base.scale = /** @type {number | 'auto'} */ (o.scale);
   }
   if (o.filter === 'integer' || o.filter === 'smooth') base.filter = o.filter;
-  if (o.graphics === 'enhanced' || o.graphics === 'classic') base.graphics = o.graphics;
+  // Any saved value normalises to 'classic': a profile saved while the
+  // enhanced set existed must not leave the game pointing at art that is no
+  // longer served.
+  base.graphics = DEFAULT_OPTIONS.graphics;
   base.fullscreen = Boolean(o.fullscreen);
   if (o.binds && typeof o.binds === 'object') {
     const binds = /** @type {Record<string, unknown>} */ (o.binds);

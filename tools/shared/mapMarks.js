@@ -42,6 +42,8 @@ export const CLEAR_CONDITIONS = Object.freeze({
   magicShield: (inv) => Boolean(inv.magicShield),
   blueRing: (inv) => (inv.ring ?? 0) >= 1,
   redRing: (inv) => (inv.ring ?? 0) >= 2,
+  /** Ganon is dead — retires the Death Mountain pin the labyrinth-8 tip drops. */
+  triforceOfPower: (inv) => Boolean(inv.triforceOfPower),
 });
 
 /**

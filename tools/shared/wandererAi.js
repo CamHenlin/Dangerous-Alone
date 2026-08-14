@@ -1,6 +1,11 @@
 /**
  * NES Wanderer_TargetPlayer / UpdateCommonWanderer turn machine.
  * Turn rates from Update* (Octorok $70/$A0, Moblin $A0, Stalfos/Gibdo/Darknut $80, …).
+ *
+ * Frame order matches Z_04.asm Wanderer_TargetPlayer:
+ *   1. tick ObjTurnTimer every frame
+ *   2. Walker_Move (tile collision / alt-dir)
+ *   3. if ObjGridOffset & $0F == 0: truncate offset, then maybe reface
  */
 
 import { DIR } from './collision.js';
@@ -71,6 +76,24 @@ export function isGoriyaStyleFacing(objType) {
 }
 
 /**
+ * Decrement ObjTurnTimer every frame (Wanderer_TargetPlayer prologue).
+ * Must run even mid-tile — the NES ticks this before Walker_Move.
+ * @param {{ turnTimer?: number }} e
+ */
+export function tickWandererTurnTimer(e) {
+  if ((e.turnTimer ?? 0) > 0) e.turnTimer -= 1;
+}
+
+/**
+ * After Walker_Move: when low nibble is 0, force ObjGridOffset := 0
+ * (Wanderer_TargetPlayer `STA ObjGridOffset`).
+ * @param {{ gridOffset?: number }} e
+ */
+export function truncateWandererGridOffset(e) {
+  if (((e.gridOffset ?? 0) & 0x0f) === 0) e.gridOffset = 0;
+}
+
+/**
  * UpdateGoriya facing: on the longer axis, if distance < $51 then face the
  * chase target and set wantsToShoot.
  * @param {{ dir: number, wantsToShoot?: boolean, x: number, y: number }} e
@@ -111,23 +134,25 @@ export function goriyaDecideFacing(e, chase) {
 }
 
 /**
- * On tile boundary: maybe face chase target (Wanderer_TargetPlayer).
+ * On tile boundary after a move: maybe face chase target (Wanderer_TargetPlayer).
+ * Turn timer is ticked separately via {@link tickWandererTurnTimer} every frame.
  * @param {{ dir: number, turnTimer?: number, turnRate?: number, objType: number, x: number, y: number, wantsToShoot?: boolean }} e
  * @param {{ x: number, y: number } | null | undefined} chase
  * @param {() => number} randomByte
  * @returns {boolean} wantsToShoot
  */
 export function wandererDecideFacing(e, chase, randomByte) {
-  e.turnTimer = (e.turnTimer ?? 0) > 0 ? e.turnTimer - 1 : 0;
   e.wantsToShoot = false;
 
   const rate = e.turnRate ?? turnRateForType(e.objType);
+  // NES: ObjTurnRate >= Random+1,X (CMP / BCC → skip chase when rate < roll)
   const roll = randomByte() & 0xff;
   const canChase = Boolean(chase) && rate >= roll;
 
   if (canChase && chase) {
     const dx = Math.abs(chase.x - e.x);
     const dy = Math.abs(chase.y - e.y);
+    // Horizontal distance first: if dx < 9, face vertically (even if also dy < 9).
     if (dx < 9) {
       e.dir = chase.y < e.y ? DIR.UP : DIR.DOWN;
       e.turnTimer = randomByte() & 0xff;
@@ -142,7 +167,7 @@ export function wandererDecideFacing(e, chase, randomByte) {
     }
   }
 
-  if (e.turnTimer > 0) return false;
+  if ((e.turnTimer ?? 0) > 0) return false;
 
   // Perpendicular turn toward chase when timer expired.
   if (chase) {
