@@ -79,6 +79,11 @@ export function deathSequenceActive(state) {
   return state.phase !== DEATH_PHASE.DONE;
 }
 
+/** Co-op spin is over — regroup, skip the fade / GAME OVER the living did not earn. */
+export function coopDeathSpinDone(state) {
+  return !state || state.phase !== DEATH_PHASE.SPIN;
+}
+
 /** Direction Link faces this frame. */
 export function deathLinkDir(state) {
   return SPIN_ORDER[state.spinIndex % SPIN_ORDER.length];

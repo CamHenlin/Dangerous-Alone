@@ -162,6 +162,24 @@ test('statue layouts $23/$24 shoot fireballs', () => {
   assert.ok(shots.every((p) => p.kind === PROJ.FIREBALL));
 });
 
+test('statues aim at the nearest of several heroes', () => {
+  const far = { x: 0x10, y: 0x10 };
+  const close = { x: 0x70, y: 0xb0 };
+  const onlyClose = createStatueState(0x23);
+  onlyClose.timers.fill(1);
+  const both = createStatueState(0x23);
+  both.timers.fill(1);
+  const aimedClose = stepStatues(onlyClose, close);
+  const aimedBoth = stepStatues(both, [far, close]);
+  assert.equal(aimedClose.length, 2);
+  assert.equal(aimedBoth.length, 2);
+  assert.deepEqual(
+    aimedBoth.map((s) => [s.dirX, s.dirY]),
+    aimedClose.map((s) => [s.dirX, s.dirY]),
+    'a closer hero must win even when a distant one is listed first',
+  );
+});
+
 test('worm steps via stepEnemy', () => {
   const segs = expandWorm({ objType: MOLDORM, x: 0, y: 0 }, createEnemy);
   const bounds = { minX: 0x20, maxX: 0xe0, minY: 0x4d, maxY: 0xcd };

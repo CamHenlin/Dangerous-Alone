@@ -11,7 +11,16 @@ import {
 } from './dungeonDoors.js';
 import { createInventory, triforceCount } from './inventory.js';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+/** Files written before the party snapshot. Still loadable. */
+export const LEGACY_SAVE_VERSION = 1;
+
+/**
+ * @param {unknown} version
+ */
+export function acceptedSaveVersion(version) {
+  return version === SAVE_VERSION || version === LEGACY_SAVE_VERSION;
+}
 export const SLOT_COUNT = 3;
 export const SLOT_KEY_PREFIX = 'zelda_slot_';
 
@@ -247,6 +256,12 @@ export function serializeGameState(state) {
     /** Phase 22: one-shot story beats already spoken (`item:10`, `level:3`). */
     toldStory: toSortedArray(state.toldStory ?? []),
     dungeons: serializeDungeonProgress(state.dungeonProgress),
+    /**
+     * Everyone who was sitting down. Player one's hearts and pose are
+     * also on `inv` / `position`, so a reader that only knows version 1
+     * still gets a complete single-hero file.
+     */
+    party: Array.isArray(state.party) ? state.party : [],
   };
 }
 
@@ -282,7 +297,7 @@ export function createSaveStore(storage = globalThis.localStorage) {
       const raw = storage.getItem(slotStorageKey(slot));
       if (!raw) return null;
       const data = JSON.parse(raw);
-      if (!data || data.version !== SAVE_VERSION) return null;
+      if (!data || !acceptedSaveVersion(data.version)) return null;
       return data;
     } catch {
       return null;
@@ -382,6 +397,7 @@ export function applyLoadedSave(payload, target) {
       caveReturn: null,
       dungeon: null,
     },
+    party: Array.isArray(payload.party) ? payload.party : [],
   };
 }
 
@@ -517,7 +533,7 @@ export function resetGanonEncounterInStorage(storage = globalThis.localStorage) 
     if (!raw) continue;
     try {
       const payload = JSON.parse(raw);
-      if (payload?.version !== SAVE_VERSION) continue;
+      if (!acceptedSaveVersion(payload?.version)) continue;
       const { changed } = resetGanonEncounter(payload);
       if (!changed) continue;
       storage.setItem(key, JSON.stringify(payload));

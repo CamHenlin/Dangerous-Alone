@@ -286,3 +286,80 @@ test('resetGanonEncounterInStorage rewrites matching slots', () => {
   assert.equal(loaded.inv.triforceOfPower, 0);
   assert.equal(loaded.dungeons['1:9'].lastBoss, false);
 });
+
+test('a version-1 file still loads after the party bump', () => {
+  const storage = memoryStorage();
+  const inv = createInventory();
+  inv.sword = SWORD.WOOD;
+  storage.setItem(
+    'zelda_slot_0',
+    JSON.stringify({
+      version: 1,
+      name: 'LINK',
+      inv: snapshotInventory(inv),
+      position: { mode: 'overworld', roomId: 0x77, x: 0x40, y: 0x8d, dir: 1 },
+      owSecretsRevealed: [],
+      caveTaken: [],
+      dungeons: {},
+    }),
+  );
+  const store = createSaveStore(storage);
+  const loaded = store.load(0);
+  assert.ok(loaded);
+  assert.equal(loaded.version, 1);
+  const bags = {
+    inv: createInventory(),
+    owSecretsRevealed: new Set(),
+    caveTaken: new Set(),
+    dungeonProgress: new Map(),
+  };
+  const meta = applyLoadedSave(loaded, bags);
+  assert.equal(bags.inv.sword, SWORD.WOOD);
+  assert.deepEqual(meta.party, []);
+});
+
+test('a new save records the party beside the usual single-hero fields', () => {
+  const inv = createInventory();
+  const payload = serializeGameState({
+    name: 'LINK',
+    inv,
+    roomId: 0x77,
+    x: 10,
+    y: 20,
+    dir: 1,
+    party: [{ index: 1, halfHearts: 4, x: 30, y: 40, dir: 4, worldId: 'cave:29' }],
+  });
+  assert.equal(payload.version, SAVE_VERSION);
+  assert.equal(payload.party[0].halfHearts, 4);
+  assert.equal(payload.party[0].worldId, 'cave:29');
+});
+
+test('a continue still knows which world each hero was standing in', () => {
+  const inv = createInventory();
+  const payload = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'cave',
+    roomId: 0x77,
+    x: 0x78,
+    y: 0xb8,
+    dir: 8,
+    party: [
+      { index: 0, halfHearts: 6, x: 0x78, y: 0xb8, dir: 8, worldId: 'cave:29' },
+      { index: 1, halfHearts: 4, x: 0x40, y: 0x8d, dir: 1, worldId: 'overworld' },
+    ],
+  });
+  const target = {
+    inv: createInventory(),
+    owSecretsRevealed: new Set(),
+    caveTaken: new Set(),
+    owItemsTaken: new Set(),
+    hintMarks: new Set(),
+    toldStory: new Set(),
+    dungeonProgress: new Map(),
+  };
+  const meta = applyLoadedSave(payload, target);
+  assert.equal(meta.position.mode, 'cave');
+  assert.equal(meta.party[0].worldId, 'cave:29');
+  assert.equal(meta.party[1].worldId, 'overworld');
+});

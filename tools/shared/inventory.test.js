@@ -6,6 +6,7 @@ import {
   CANDLE_TIER,
   SWORD,
   addBombs,
+  addRupees,
   createInventory,
   cycleBItem,
   grantCaveExtras,
@@ -15,10 +16,27 @@ import {
   hasTriforce,
   healLink,
   heartDisplay,
+  ratchetRupeeCap,
+  stealMagicShield,
   stepLinkStatus,
   triforceCount,
   trySpendArrowShot,
 } from './inventory.js';
+import { createInventoryView } from './player.js';
+
+test('the rupee ceiling ratchets down to what you hold, not below the floor', () => {
+  const inv = createInventory();
+  inv.rupeeCapFloor = 255;
+  inv.rupeeCap = 510;
+  inv.rupees = 400;
+  ratchetRupeeCap(inv);
+  assert.equal(inv.rupeeCap, 400);
+  addRupees(inv, 10);
+  assert.equal(inv.rupees, 400, 'cannot pick up past the ratcheted ceiling');
+  addRupees(inv, -200);
+  assert.equal(inv.rupees, 200);
+  assert.equal(inv.rupeeCap, 255, 'then it rests on the party floor');
+});
 
 test('new game has no sword and 3 hearts', () => {
   const inv = createInventory();
@@ -147,6 +165,12 @@ test('trySpendArrowShot costs 1 rupee (NES WieldArrow)', () => {
   assert.equal(inv.rupees, 2);
   assert.deepEqual(trySpendArrowShot(inv), { ok: true });
   assert.equal(inv.rupees, 1);
+  inv.rupees = 300;
+  inv.rupeeCap = 300;
+  inv.rupeeCapFloor = 255;
+  assert.deepEqual(trySpendArrowShot(inv), { ok: true });
+  assert.equal(inv.rupees, 299);
+  assert.equal(inv.rupeeCap, 299, 'an arrow shot walks a ratcheted ceiling down');
 });
 
 test('bow pickup does not soft-grant arrows; shop arrows unlock B-slot', () => {
@@ -181,4 +205,18 @@ test('stepLinkStatus counts down itemLiftTimer', () => {
   assert.equal(inv.itemLiftTimer, 0);
   stepLinkStatus(inv);
   assert.equal(inv.itemLiftTimer, 0);
+});
+
+test('a like-like steal takes the shared shield, not the ally\'s legs', () => {
+  const shared = createInventory();
+  const p1 = createInventoryView(shared);
+  const p2 = createInventoryView(shared);
+  p1.magicShield = 1;
+  p1.paralyzed = 0;
+  p2.paralyzed = 0;
+  stealMagicShield(p2);
+  p2.paralyzed = 2;
+  assert.equal(p1.magicShield, 0, 'the bag is shared, so the shield is gone for everyone');
+  assert.equal(p1.paralyzed, 0, 'player one should still be able to walk');
+  assert.equal(p2.paralyzed, 2);
 });

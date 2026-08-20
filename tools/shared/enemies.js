@@ -448,7 +448,9 @@ export function createEnemy(spawn) {
     trapOriginY: trap ? (spawn.trapOriginY ?? 0) : undefined,
     captureTimer: 0,
     wallmasterGrab: false,
-    /** Set when capture slide finishes — play warps to dungeon entrance. */
+    /** Player index the closed hand is dragging (Phase 23). */
+    wallmasterVictim: undefined,
+    /** Set when capture slide finishes — that hero warps to the entrance. */
     wallmasterWarpPending: false,
     /** Dir toward nearest wall for the post-grab slide. */
     wallmasterRetreatDir: undefined,
@@ -1736,6 +1738,17 @@ function stepWallmaster(e, bounds, tileGrid, tileOpts, link) {
  */
 export function wallmasterIsCapturing(e) {
   return Boolean(e?.alive && e.objType === OBJ.WALLMASTER && e.wallmasterGrab);
+}
+
+/**
+ * True when this hand is dragging that player. A grab is personal: an ally
+ * standing in the same room must still walk, and must not ride the warp.
+ *
+ * @param {Enemy} e
+ * @param {number} playerIndex
+ */
+export function wallmasterHoldsPlayer(e, playerIndex) {
+  return wallmasterIsCapturing(e) && (e.wallmasterVictim ?? 0) === (playerIndex ?? 0);
 }
 
 

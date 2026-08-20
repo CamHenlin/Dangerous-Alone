@@ -35,7 +35,10 @@ export function tryBuyBombUpgrade(inv, linkX, linkY) {
   if (Math.abs(linkY - BOMB_UPGRADE_WARE.y) >= 6) return false;
   if ((inv.rupees ?? 0) < BOMB_UPGRADE_PRICE) return false;
   inv.rupees -= BOMB_UPGRADE_PRICE;
-  inv.maxBombs = (inv.maxBombs ?? 8) + BOMB_UPGRADE_STEP;
+  const bag = inv.bombBag ?? 8;
+  const party = Math.max(1, Math.round((inv.maxBombs ?? bag) / bag));
+  inv.bombBag = bag + BOMB_UPGRADE_STEP;
+  inv.maxBombs = inv.bombBag * party;
   inv.bombs = inv.maxBombs;
   return true;
 }

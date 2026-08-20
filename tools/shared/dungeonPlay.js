@@ -35,6 +35,7 @@ export {
   inKeyDoorBumpZone,
   linkInDoorwayCorridor,
   nearDoorway,
+  pastUwDoorLip,
   openRoomShutters,
   restoreClearedShutters,
   sealLastBossShutters,
@@ -86,6 +87,22 @@ export function dungeonRoomSpawn(_origin, _roomSize, fromDir) {
     return { x: DOORWAY_CENTER_X, y: 0xd8, dir: DIR.UP };
   }
   return { x: DOORWAY_CENTER_X, y: DOORWAY_CENTER_Y, dir: DIR.UP };
+}
+
+/**
+ * Where a Wallmaster dump (or a fresh descent) stands Link in the start room.
+ * `startY` is LevelInfo's entrance row; without it the south-door cavity is used.
+ *
+ * @param {{ startRoom: number, startY?: number }} level
+ */
+export function dungeonEntranceSpawn(level) {
+  const spawn = dungeonRoomSpawn(dungeonPlayOrigin(), { w: 256, h: 176 }, DIR.UP);
+  return {
+    roomId: level.startRoom & 0xff,
+    x: spawn.x,
+    y: level.startY ?? spawn.y,
+    dir: spawn.dir,
+  };
 }
 
 /**

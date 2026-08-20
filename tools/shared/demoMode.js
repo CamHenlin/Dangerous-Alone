@@ -271,8 +271,9 @@ function spawnCrawlItems(state, slot, tables) {
   const row = state.itemRow;
   const leftId = tables.leftItemIds[row];
   if (leftId == null) return;
-  // Same world-Y grid as crawl text (`CRAWL_FIRST_LINE_Y + slot*8`).
-  const y = CRAWL_FIRST_LINE_Y + slot * 8 - CRAWL_ITEM_ABOVE_LINE;
+  const firstY = crawlFirstLineY(tables.storyPanels ?? 1);
+  // Same world-Y grid as crawl text (`firstY + slot*8`).
+  const y = firstY + slot * 8 - CRAWL_ITEM_ABOVE_LINE;
   if (leftId >= FINAL_ITEM_ID_BASE) {
     state.items.push({ slot, y, x: ITEM_COLUMN_X.link, itemId: leftId });
     state.itemRow += 1;

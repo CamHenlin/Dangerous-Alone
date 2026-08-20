@@ -4,6 +4,7 @@ import {
   clearClockFreeze,
   clockFreezeActive,
   enemyIsClockFrozen,
+  shouldClearClock,
   tagVisibleEnemiesForClock,
 } from './clockFreeze.js';
 
@@ -17,6 +18,14 @@ test('tagVisibleEnemiesForClock only marks living visible foes', () => {
   assert.equal(foes[0].clockFrozen, true);
   assert.equal(foes[1].clockFrozen, undefined);
   assert.equal(foes[2].clockFrozen, undefined);
+});
+
+test('a clock picked up in one world is not expired by another', () => {
+  const foes = [{ alive: true, clockFrozen: true }];
+  assert.equal(shouldClearClock('overworld', 'overworld', foes), false);
+  assert.equal(shouldClearClock('overworld', 'cellar:1:127', foes), false);
+  assert.equal(shouldClearClock('overworld', 'overworld', []), true);
+  assert.equal(shouldClearClock(null, 'overworld', []), false);
 });
 
 test('clock ends when tagged foes die; clearClockFreeze wipes tags', () => {

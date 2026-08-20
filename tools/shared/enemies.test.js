@@ -21,6 +21,7 @@ import {
   stepEnemy,
   OW_ENEMY_BOUNDS,
   trySwordHitEnemy,
+  wallmasterHoldsPlayer,
   wallmasterIsCapturing,
 } from './enemies.js';
 import { SWORD } from './inventory.js';
@@ -319,6 +320,15 @@ test('buried leever ignores sword', () => {
   sword.dir = DIR.RIGHT;
   assert.equal(trySwordHitEnemy(e, sword, 0x80 - 20, 0x80, SWORD.WOOD), false);
   assert.equal(e.alive, true);
+});
+
+test("a wallmaster grab is one player's problem", () => {
+  const e = createEnemy({ objType: OBJ.WALLMASTER, x: 0x80, y: 0x80 });
+  e.wallmasterGrab = true;
+  e.wallmasterVictim = 1;
+  assert.equal(wallmasterIsCapturing(e), true);
+  assert.equal(wallmasterHoldsPlayer(e, 1), true);
+  assert.equal(wallmasterHoldsPlayer(e, 0), false);
 });
 
 test('wallmaster capture slides Link toward a wall before warp', () => {

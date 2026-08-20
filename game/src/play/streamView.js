@@ -1,31 +1,48 @@
 /**
  * Pixi helpers for continuous multi-room backgrounds (Phase 18).
+ *
+ * The view owns the scene graph only. Collision grids and room packs live in a
+ * `roomStore`, so the simulation can read tiles without a renderer and several
+ * views can draw the same rooms (Phase 23).
  */
 
 import { Container, Graphics, Sprite } from 'pixi.js';
 import { HUD_HEIGHT } from '@shared/collision.js';
 import { PLAY_H, PLAY_W, roomPlayOrigin } from '@shared/continuousCamera.js';
+import { createRoomStore } from '@shared/roomStore.js';
 
 /**
  * @typedef {object} StreamRoom
  * @property {number} roomId
- * @property {import('pixi.js').Container | import('pixi.js').Sprite} root
+ * @property {import('pixi.js').Container} root
  * @property {import('pixi.js').Sprite | null} sprite
  * @property {import('pixi.js').Graphics | null} fog
- * @property {number[][] | null} tileGrid
- * @property {object | null} pack screen/room payload
  */
 
 /**
  * Manage a set of room backgrounds positioned in anchor-local space.
  * @param {import('pixi.js').Container} parent
+ * @param {ReturnType<typeof createRoomStore>} [store] room data; a private one
+ *   is made for views with no simulation behind them (door frames)
  */
-export function createStreamView(parent) {
+export function createStreamView(parent, store = createRoomStore()) {
   const layer = new Container();
   parent.addChildAt(layer, 0);
 
   /** @type {Map<number, StreamRoom>} */
-  const rooms = new Map();
+  const views = new Map();
+
+  /** @param {number} id */
+  function ensureView(id) {
+    let entry = views.get(id);
+    if (!entry) {
+      const root = new Container();
+      layer.addChild(root);
+      entry = { roomId: id, root, sprite: null, fog: null };
+      views.set(id, entry);
+    }
+    return entry;
+  }
 
   /**
    * @param {number} roomId
@@ -34,20 +51,9 @@ export function createStreamView(parent) {
    */
   function upsert(roomId, texture, meta = {}) {
     const id = roomId & 0xff;
-    let entry = rooms.get(id);
-    if (!entry) {
-      const root = new Container();
-      layer.addChild(root);
-      entry = {
-        roomId: id,
-        root,
-        sprite: null,
-        fog: null,
-        tileGrid: null,
-        pack: null,
-      };
-      rooms.set(id, entry);
-    }
+    const fogged = Boolean(meta.fogged);
+    store.upsert(id, { tileGrid: meta.tileGrid, pack: meta.pack, fogged });
+    const entry = ensureView(id);
     if (texture) {
       if (!entry.sprite) {
         entry.sprite = new Sprite(texture);
@@ -55,11 +61,8 @@ export function createStreamView(parent) {
       } else {
         entry.sprite.texture = texture;
       }
-      entry.sprite.visible = !meta.fogged;
     }
-    if (meta.tileGrid) entry.tileGrid = meta.tileGrid;
-    if (meta.pack) entry.pack = meta.pack;
-    setFog(id, Boolean(meta.fogged));
+    setFog(id, fogged);
     return entry;
   }
 
@@ -68,8 +71,10 @@ export function createStreamView(parent) {
    * @param {boolean} fogged
    */
   function setFog(roomId, fogged) {
-    const entry = rooms.get(roomId & 0xff);
+    const id = roomId & 0xff;
+    const entry = views.get(id);
     if (!entry) return;
+    store.setFog(id, fogged);
     if (fogged) {
       if (!entry.fog) {
         entry.fog = new Graphics();
@@ -91,11 +96,17 @@ export function createStreamView(parent) {
    */
   function layout(anchorRoomId) {
     const anchor = roomPlayOrigin(anchorRoomId);
-    for (const entry of rooms.values()) {
+    for (const entry of views.values()) {
       const origin = roomPlayOrigin(entry.roomId);
       entry.root.x = origin.ox - anchor.ox;
       entry.root.y = HUD_HEIGHT + (origin.oy - anchor.oy);
     }
+  }
+
+  /** @param {StreamRoom} entry */
+  function destroyView(entry) {
+    layer.removeChild(entry.root);
+    entry.root.destroy({ children: true, texture: false, textureSource: false });
   }
 
   /**
@@ -103,48 +114,44 @@ export function createStreamView(parent) {
    */
   function pruneTo(keepIds) {
     const keep = new Set([...keepIds].map((id) => id & 0xff));
-    for (const [id, entry] of [...rooms.entries()]) {
+    for (const [id, entry] of [...views.entries()]) {
       if (keep.has(id)) continue;
-      layer.removeChild(entry.root);
-      entry.root.destroy({ children: true, texture: false, textureSource: false });
-      rooms.delete(id);
+      destroyView(entry);
+      views.delete(id);
     }
+    store.pruneTo(keep);
   }
 
   function clear() {
-    for (const entry of rooms.values()) {
-      layer.removeChild(entry.root);
-      entry.root.destroy({ children: true, texture: false, textureSource: false });
-    }
-    rooms.clear();
-  }
-
-  /** @returns {Map<number, number[][]>} */
-  function gridMap() {
-    /** @type {Map<number, number[][]>} */
-    const map = new Map();
-    for (const entry of rooms.values()) {
-      if (entry.tileGrid) map.set(entry.roomId, entry.tileGrid);
-    }
-    return map;
+    for (const entry of views.values()) destroyView(entry);
+    views.clear();
+    store.clear();
   }
 
   /**
    * @param {number} roomId
+   * @returns {StreamRoom | null}
    */
   function get(roomId) {
-    return rooms.get(roomId & 0xff) ?? null;
+    return views.get(roomId & 0xff) ?? null;
+  }
+
+  function destroy() {
+    clear();
+    layer.parent?.removeChild(layer);
+    layer.destroy({ children: true });
   }
 
   return {
     layer,
-    rooms,
+    store,
+    views,
     upsert,
     setFog,
     layout,
     pruneTo,
     clear,
-    gridMap,
     get,
+    destroy,
   };
 }

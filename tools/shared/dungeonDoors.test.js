@@ -21,6 +21,7 @@ import {
   linkInDoorwayCorridor,
   isDoorMarkedOpen,
   nearDoorway,
+  pastUwDoorLip,
   openDoorPair,
   openRoomShutters,
   tryBombDoors,
@@ -468,6 +469,42 @@ test('north DoorwayDir accepts walk columns $70/$80', () => {
   assert.equal(nearDoorway({ x: 0x80, y: 0x5d }, 'north'), true);
   assert.equal(nearDoorway({ x: 0x68, y: 0x5d }, 'north'), false);
   assert.equal(nearDoorway({ x: 0x70, y: 0x6d }, 'north'), false, 'floor row is not overflow');
+});
+
+test('pastUwDoorLip matches the NES screen-edge lips', () => {
+  assert.equal(pastUwDoorLip({ x: SCREEN_EDGE.right + 1, y: 0x8d }, 'east'), true);
+  assert.equal(pastUwDoorLip({ x: SCREEN_EDGE.right, y: 0x8d }, 'east'), false);
+  assert.equal(pastUwDoorLip({ x: -1, y: 0x8d }, 'west'), true);
+  assert.equal(pastUwDoorLip({ x: 0x78, y: SCREEN_EDGE.down + 1 }, 'south'), true);
+  assert.equal(pastUwDoorLip({ x: 0x78, y: SCREEN_EDGE.up - 1 }, 'north'), true);
+  const room = {
+    roomId: 0x53,
+    doors: { north: { type: 'open' }, south: { type: 'open' }, west: { type: 'open' }, east: { type: 'open' } },
+  };
+  assert.equal(
+    linkInDoorwayCorridor({ x: -0x13, y: 0x8d }, room),
+    true,
+    'west overflow after an east rebase is still a corridor',
+  );
+});
+
+test('an ally two tiles into the previous room is not this room\'s south corridor', () => {
+  const room = {
+    roomId: 0x66,
+    doors: {
+      north: { type: 'open' },
+      south: { type: 'open' },
+      west: { type: 'open' },
+      east: { type: 'open' },
+    },
+  };
+  // After a north rebase, a hero who stood ~2 tiles south of $76's north
+  // door sits at y≈$120 of $66 — past $DD on the door column, but not in
+  // $66's south cavity. Unbounded past-lip treated that as a corridor and
+  // clamped them onto the doorway.
+  const ally = { x: DOORWAY_CENTER_X, y: HUD_HEIGHT + 176 + 48 };
+  assert.equal(pastUwDoorLip(ally, 'south'), true);
+  assert.equal(linkInDoorwayCorridor(ally, room), false);
 });
 
 test('L1 $52: north key door exits from walk column $70', () => {

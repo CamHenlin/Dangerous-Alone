@@ -30,12 +30,12 @@ export const DOORWAY_AXIS_SLACK = 0;
 export const DOORWAY_NS_AXIS_SLACK = 8;
 
 /**
- * E/W DoorwayDir + exit: allow the `$9D` walk row as well as NES `$8D`.
- * Open door cavities place walkable `$24` on rows `$90–$9F`; players usually
- * approach on `$9D` and would otherwise freeze on the UW BoundByRoom lip
- * (`X<$21` / `X≥$D0`) with DoorwayDir still clear.
+ * E/W DoorwayDir + exit: cover the whole open-door cavity (`$90–$9F`), not
+ * only NES `$8D`. `$9D` is the usual walk row; `$9E`/`$9F` are still cavity
+ * tiles, and a one-pixel shove off `$9D` used to drop DoorwayDir and yank
+ * Link back to the BoundByRoom lip (`X≥$D0`) mid-door.
  */
-export const DOORWAY_EW_AXIS_SLACK = 0x10;
+export const DOORWAY_EW_AXIS_SLACK = 0x14;
 
 /**
  * N/S room exits allow a neighboring walk lane (±8). Door openings are 16px and
@@ -145,6 +145,53 @@ export function nearDoorway(link, side) {
 }
 
 /**
+ * How far past a NES `PlayerScreenEdge` lip still counts as "in that door".
+ *
+ * A leftover hero at `x=$-13` / `$-19` is still visually in the opening.
+ * An ally two tiles into the previous room is not — treating them as this
+ * room's south/east corridor is what clamped them onto the doorway.
+ */
+export const DOORWAY_LIP_OVERSHOOT = 0x20;
+
+/**
+ * True when Link has already stepped past that side's NES `PlayerScreenEdge`
+ * lip. `nearDoorway` can flicker off-axis for a frame while they are still
+ * visually in the opening; the clamp and corridor tests treat this as "still
+ * in the door" so they are not yanked back to `$F0` / `$DD`.
+ * @param {{ x: number, y: number }} link
+ * @param {string} side
+ */
+export function pastUwDoorLip(link, side) {
+  if (side === 'north') return link.y < SCREEN_EDGE.up;
+  if (side === 'south') return link.y > SCREEN_EDGE.down;
+  if (side === 'west') return link.x < SCREEN_EDGE.left;
+  if (side === 'east') return link.x > SCREEN_EDGE.right;
+  return false;
+}
+
+/**
+ * `pastUwDoorLip` with a bound: the leftover-at-lip overshoot, not a whole
+ * neighbouring cell on the door column.
+ * @param {{ x: number, y: number }} link
+ * @param {string} side
+ */
+export function inUwDoorLipOvershoot(link, side) {
+  if (!pastUwDoorLip(link, side)) return false;
+  if (side === 'north') return link.y >= SCREEN_EDGE.up - DOORWAY_LIP_OVERSHOOT;
+  if (side === 'south') return link.y <= SCREEN_EDGE.down + DOORWAY_LIP_OVERSHOOT;
+  if (side === 'west') return link.x >= SCREEN_EDGE.left - DOORWAY_LIP_OVERSHOOT;
+  if (side === 'east') return link.x <= SCREEN_EDGE.right + DOORWAY_LIP_OVERSHOOT;
+  return false;
+}
+
+function doorwayAxisOk(link, side) {
+  if (side === 'north' || side === 'south') {
+    return Math.abs(link.x - DOORWAY_CENTER_X) <= DOORWAY_NS_AXIS_SLACK;
+  }
+  return Math.abs(link.y - DOORWAY_CENTER_Y) <= DOORWAY_EW_AXIS_SLACK;
+}
+
+/**
  * NES skips tile collision while DoorwayDir ≠ 0. Continuous-camera QoL: only
  * passable doors (open / already unlocked) are corridors. Locked key, shutter,
  * and bombable faces stay under normal tile collision so they act as blocks.
@@ -156,12 +203,15 @@ export function nearDoorway(link, side) {
  */
 export function linkInDoorwayCorridor(link, room, opts = {}) {
   const block = opts.doorwayBlockSide ?? null;
-  if (block && nearDoorway(link, block)) return true;
+  if (block && (nearDoorway(link, block) || inUwDoorLipOvershoot(link, block))) return true;
   if (!room?.doors) return false;
   const state = opts.doorState ?? null;
   const roomId = room.roomId ?? 0;
   for (const side of ['north', 'south', 'west', 'east']) {
-    if (!nearDoorway(link, side)) continue;
+    const inCavity =
+      nearDoorway(link, side)
+      || (inUwDoorLipOvershoot(link, side) && doorwayAxisOk(link, side));
+    if (!inCavity) continue;
     const door = room.doors[side];
     const t = door?.type;
     if (!t || t === 'wall') continue;
@@ -216,22 +266,29 @@ export function clampUwDoorwayPath(link, room, opts = {}) {
   const roomIds = opts.roomIds ?? null;
   const onNs = Math.abs(link.x - DOORWAY_CENTER_X) <= DOORWAY_NS_AXIS_SLACK;
   const onEw = Math.abs(link.y - DOORWAY_CENTER_Y) <= DOORWAY_EW_AXIS_SLACK;
+  // Already past a NES lip: keep that seam open even if the axis slack
+  // flickers for a frame. Yanking back to $F0 / $DD is what left a hero
+  // visually inside the door with nowhere to go.
+  const pastNorth = link.y < SCREEN_EDGE.up;
+  const pastSouth = link.y > SCREEN_EDGE.down;
+  const pastWest = link.x < SCREEN_EDGE.left;
+  const pastEast = link.x > SCREEN_EDGE.right;
 
   let minX = SCREEN_EDGE.left;
   let maxX = SCREEN_EDGE.right;
   let minY = SCREEN_EDGE.up;
   let maxY = SCREEN_EDGE.down;
 
-  if (onNs && doorSideAllowsCross(room, state, 'north', roomIds)) {
+  if ((onNs || pastNorth) && doorSideAllowsCross(room, state, 'north', roomIds)) {
     minY = HUD_HEIGHT - PLAY_H;
   }
-  if (onNs && doorSideAllowsCross(room, state, 'south', roomIds)) {
+  if ((onNs || pastSouth) && doorSideAllowsCross(room, state, 'south', roomIds)) {
     maxY = HUD_HEIGHT + PLAY_H;
   }
-  if (onEw && doorSideAllowsCross(room, state, 'west', roomIds)) {
+  if ((onEw || pastWest) && doorSideAllowsCross(room, state, 'west', roomIds)) {
     minX = -PLAY_W;
   }
-  if (onEw && doorSideAllowsCross(room, state, 'east', roomIds)) {
+  if ((onEw || pastEast) && doorSideAllowsCross(room, state, 'east', roomIds)) {
     maxX = PLAY_W;
   }
 

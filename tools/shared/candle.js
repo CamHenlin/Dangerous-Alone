@@ -29,6 +29,64 @@ export function createCandleRoomState() {
 }
 
 /**
+ * Per-room candle stays for one place (a labyrinth, a cellar, the overworld).
+ * One `lit` flag for the whole world would undarken leftover `$02` when you
+ * light `$01`.
+ *
+ * @typedef {object} CandleStore
+ * @property {Map<number, CandleRoomState>} rooms
+ */
+export function createCandleStore() {
+  return { rooms: new Map() };
+}
+
+/** @param {unknown} value */
+export function asCandleStore(value) {
+  if (value && value.rooms instanceof Map) return /** @type {CandleStore} */ (value);
+  return createCandleStore();
+}
+
+/** @param {number | null | undefined} roomId */
+export function candleRoomId(roomId) {
+  return (roomId ?? 0) & 0xff;
+}
+
+/**
+ * The stay record for this cell, created empty if nobody has entered yet.
+ * @param {CandleStore} store
+ * @param {number | null | undefined} roomId
+ */
+export function candleForRoom(store, roomId) {
+  const rooms = store.rooms ?? (store.rooms = new Map());
+  const id = candleRoomId(roomId);
+  let s = rooms.get(id);
+  if (!s) {
+    s = createCandleRoomState();
+    rooms.set(id, s);
+  }
+  return s;
+}
+
+/**
+ * Start a stay in `roomId`. Someone already standing there: join their light.
+ * Empty: NES reset — dark, unused blue, auto-light armed if you own a candle.
+ *
+ * @param {CandleStore} store
+ * @param {number | null | undefined} roomId
+ * @param {object | null | undefined} pack
+ * @param {{ candle?: number } | null | undefined} inv
+ * @param {boolean} [occupied]
+ */
+export function beginCandleStay(store, roomId, pack, inv, occupied = false) {
+  if (occupied) return candleForRoom(store, roomId);
+  const s = createCandleRoomState();
+  const rooms = store.rooms ?? (store.rooms = new Map());
+  rooms.set(candleRoomId(roomId), s);
+  armDarkRoomAutoLight(s, pack, inv);
+  return s;
+}
+
+/**
  * Room needs the dark overlay.
  * @param {object | null | undefined} room
  * @param {CandleRoomState} state

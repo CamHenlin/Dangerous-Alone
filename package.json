@@ -7,6 +7,7 @@
   "scripts": {
     "extract": "node tools/extract/cli.js",
     "test": "node --test tools/**/*.test.js",
+    "test:browser": "node --test tools/browser/*.browsertest.js",
     "dev": "vite --config game/vite.config.js",
     "build": "vite build --config game/vite.config.js",
     "preview": "vite preview --config game/vite.config.js",
@@ -21,6 +22,7 @@
     "pixi.js": "^8.9.2"
   },
   "devDependencies": {
+    "playwright": "^1.61.1",
     "vite": "^6.3.5"
   }
 }

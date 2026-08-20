@@ -12,6 +12,7 @@ import {
   mazeLoopSpawn,
   orphanedEnemySpriteIds,
   releaseSpawnLatch,
+  roomFullyOffAllCameras,
   roomHasLivingEnemies,
   roomsNeedingSpawn,
   shiftPositions,
@@ -299,4 +300,63 @@ test('a visible neighbour cannot hold a room from clearing', () => {
   ];
   assert.equal(enemiesInRoom(foes, 0x45).some((e) => e.alive), false);
   assert.equal(enemiesInRoom(foes, 0x46).some((e) => e.alive), true);
+});
+
+// --- Phase 23: the room lifecycle answers to every camera, not just one. ---
+
+/** Room $44 sits at column 4, row 4 of the play map. */
+const ROOM_44_CAM = { worldCamX: 4 * 256, worldCamY: 4 * 176 };
+const ORIGIN_CAM = { worldCamX: 0, worldCamY: 0 };
+
+test('roomFullyOffAllCameras is false while any camera sees the room', () => {
+  assert.equal(roomFullyOffAllCameras(0x44, [ORIGIN_CAM]), true);
+  assert.equal(roomFullyOffAllCameras(0x44, [ORIGIN_CAM, ROOM_44_CAM]), false);
+  assert.equal(roomFullyOffAllCameras(0x00, [ORIGIN_CAM, ROOM_44_CAM]), false);
+});
+
+test('cullOffscreenEnemies keeps a foe whose home room another player can see', () => {
+  const foes = [{ alive: true, homeRoomId: 0x44, x: -300, y: 0x8d }];
+  const { kept, emptiedRooms } = cullOffscreenEnemies(foes, 0, 0, 8, {
+    cameras: [ORIGIN_CAM, ROOM_44_CAM],
+  });
+  assert.equal(kept.length, 1);
+  assert.equal(emptiedRooms.size, 0);
+  assert.equal(foes[0].alive, true);
+});
+
+test('releaseSpawnLatch holds while a second camera is still in the room', () => {
+  const held = new Set([0x44]);
+  releaseSpawnLatch(held, [0x44], 0, 0, 0x00, {
+    cameras: [ORIGIN_CAM, ROOM_44_CAM],
+  });
+  assert.equal(held.has(0x44), true, 'player 2 is standing in it');
+
+  const freed = new Set([0x44]);
+  releaseSpawnLatch(freed, [0x44], 0, 0, 0x00, { cameras: [ORIGIN_CAM] });
+  assert.equal(freed.has(0x44), false, 'nobody is looking any more');
+});
+
+test('roomsNeedingSpawn covers rooms only a second camera can see', () => {
+  const args = {
+    candidateRooms: [0x44],
+    currentRoomId: 0x00,
+    visited: new Set([0x44]),
+    spawnedRooms: new Set(),
+    clearedRooms: new Set(),
+    worldCamX: 0,
+    worldCamY: 0,
+  };
+  assert.deepEqual(roomsNeedingSpawn(args), []);
+  assert.deepEqual(
+    roomsNeedingSpawn({ ...args, cameras: [ORIGIN_CAM, ROOM_44_CAM] }),
+    [0x44],
+  );
+});
+
+test('an empty camera list falls back to the positional camera', () => {
+  const held = new Set([0x44]);
+  releaseSpawnLatch(held, [0x44], ROOM_44_CAM.worldCamX, ROOM_44_CAM.worldCamY, 0x00, {
+    cameras: [],
+  });
+  assert.equal(held.has(0x44), true);
 });

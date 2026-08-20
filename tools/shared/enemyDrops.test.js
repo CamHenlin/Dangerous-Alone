@@ -191,3 +191,12 @@ test('pickup delay and proximity', () => {
   assert.equal(dropTouchesTaker(item, 0x80, 0x80), true);
   assert.equal(dropTouchesTaker(item, 0x90, 0x80), false);
 });
+
+test('Link standing on a rupee still collects it from the right foot', () => {
+  const item = createDroppedItem(0x80, 0x8d, DROP_ITEM.RUPEE5);
+  item.lifetime = 0xee;
+  // NES |dx|<9 misses this; the sprites still overlap.
+  assert.equal(dropTouchesTaker(item, 0x80 - 12, 0x8d, 'link'), true);
+  assert.equal(dropTouchesTaker(item, 0x80 - 12, 0x8d, 'sword'), false);
+  assert.equal(dropTouchesTaker(item, 0x80 - 16, 0x8d, 'link'), false);
+});

@@ -207,7 +207,7 @@ export function createHud(deps = {}) {
     if (mode === 'dungeon' && s.dungeon?.levelData) {
       drawDungeonMinimap(mapGfx, s.dungeon.levelData, {
         visited: s.dungeon.visitedRooms,
-        currentRoomId: s.dungeon.room?.roomId ?? s.roomId,
+        currentRoomId: s.roomId ?? s.dungeon.room?.roomId,
         hasMap: Boolean(inv.map),
         hasCompass: Boolean(inv.compass),
         x: LAYOUT.mapX,
@@ -240,6 +240,9 @@ export function createHud(deps = {}) {
    * @param {number} [s.rupeesShown] rolling counter value; defaults to the total
    * @param {{ roomId: number, kind: string }[]} [s.mapMarks] Phase 19 radar marks
    * @param {number} [s.frame] free-running counter driving the mark pulse
+   * @param {boolean} [s.compact] print this hero's seat number (radar and
+   *   counters stay — they are per view, and two worlds cannot share one map)
+   * @param {number} [s.playerIndex] 0-based seat, printed when compact
    */
   function update(s) {
     lastState = s;
@@ -253,6 +256,14 @@ export function createHud(deps = {}) {
       placeText('-LIFE-', LAYOUT.lifeX, LAYOUT.lifeY, COL.life);
       mapGfx.clear();
       return;
+    }
+
+    // Seat number sits in the 16px margin above the map so it never covers
+    // the radar. The purse and radar used to move to the shared strip in
+    // company; that left every quadrant's bar empty, and a friend in a
+    // labyrinth lost their map because the strip can only show one place.
+    if (s.compact) {
+      placeText(String((s.playerIndex ?? 0) + 1), 8, 8, COL.text);
     }
 
     // Rupee / key / bomb — StatusBarStatics $F7 / $F9 / $61 @ col 11;
@@ -337,6 +348,22 @@ export function createHud(deps = {}) {
     releaseItemSprites,
     get dock() {
       return dock;
+    },
+    /** What the bar last painted — split-screen used to skip the radar. */
+    probe() {
+      const mode = lastState?.mode ?? null;
+      const hasInv = Boolean(lastState?.inv);
+      const map =
+        hasInv
+        && (mode === 'overworld' || mode === 'dungeon' || mode === 'cave');
+      return {
+        compact: Boolean(lastState?.compact),
+        counters: hasInv,
+        map,
+        mode,
+        roomId: lastState?.roomId ?? null,
+        playerIndex: lastState?.playerIndex ?? 0,
+      };
     },
     /** Re-apply last state after dock changes. */
     refresh() {

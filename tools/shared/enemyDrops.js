@@ -5,7 +5,7 @@
  */
 
 import { DIR } from './collision.js';
-import { addBombs, healLink } from './inventory.js';
+import { addBombs, addRupees, healLink } from './inventory.js';
 
 /** Damage type bit used when HelpDropCount hits $0A (bomb → bomb drop). */
 export const DROP_DAMAGE_BOMB = 0x08;
@@ -344,14 +344,29 @@ export function dropPickupReady(item) {
   return item.alive && item.lifetime < 0xf0;
 }
 
+/** 16×16 slot vs 16×16 Link — any sprite overlap, not NES top-left alignment. */
+const LINK_DROP_SLOT = 16;
+
 /**
- * TryTakeItem proximity (Link Y+3; |dx|<9, |dy|<9).
+ * TryTakeItem proximity.
+ *
+ * Sword / boom / arrow keep the ROM test (Link Y+3; |dx|<9, |dy|<9). Link's
+ * body uses the 16×16 slots: standing on a rupee with a foot still counts,
+ * which the 9px top-left box misses once the item sits on his right side.
+ *
  * @param {DroppedItem} item
  * @param {number} takerX
  * @param {number} takerY
+ * @param {'link' | 'sword' | 'boom' | 'arrow' | string} [kind]
  */
-export function dropTouchesTaker(item, takerX, takerY) {
+export function dropTouchesTaker(item, takerX, takerY, kind = 'link') {
   if (!dropPickupReady(item)) return false;
+  if (kind === 'link') {
+    return (
+      Math.abs(takerX - item.x) < LINK_DROP_SLOT
+      && Math.abs(takerY - item.y) < LINK_DROP_SLOT
+    );
+  }
   const dy = Math.abs(takerY + 3 - item.y);
   const dx = Math.abs(takerX - item.x);
   return dy < 9 && dx < 9;
@@ -370,10 +385,10 @@ export function grantDroppedItem(inv, itemId) {
       return { ok: n > 0 || inv.bombs > 0, label: 'Bombs' };
     }
     case DROP_ITEM.RUPEE1:
-      inv.rupees = Math.min(255, inv.rupees + 1);
+      addRupees(inv, 1);
       return { ok: true, label: 'Rupee' };
     case DROP_ITEM.RUPEE5:
-      inv.rupees = Math.min(255, inv.rupees + 5);
+      addRupees(inv, 5);
       return { ok: true, label: '5 Rupees' };
     case DROP_ITEM.HEART:
       healLink(inv, 2); // 1 heart

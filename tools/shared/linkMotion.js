@@ -200,6 +200,27 @@ export function createLinkState(x, y, dir = DIR.UP) {
 }
 
 /**
+ * Copy every motion field onto `target`. `x`/`y` are taken separately so a
+ * caller can map occupying-room local coords back onto the world anchor
+ * without dropping the walk cycle (`animFrame` / `animCounter`).
+ *
+ * @param {LinkState} target
+ * @param {LinkState} source
+ * @param {number} [x]
+ * @param {number} [y]
+ */
+export function writeLinkMotion(target, source, x = source.x, y = source.y) {
+  target.x = x;
+  target.y = y;
+  target.dir = source.dir;
+  target.posFrac = source.posFrac;
+  target.gridOffset = source.gridOffset;
+  target.animCounter = source.animCounter;
+  target.animFrame = source.animFrame;
+  target.moving = source.moving;
+}
+
+/**
  * @param {number[][]} tileGrid
  * @param {number} x
  * @param {number} y

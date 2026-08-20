@@ -22,7 +22,8 @@ export const BOOMERANG_STUN_FRAMES = 0xa0;
  * @property {boolean} hit
  * @property {boolean} [magic]
  * @property {boolean} [hostile]
- * @property {number} [ownerId]
+ * @property {number} [ownerId] enemy id, hostile throws only
+ * @property {number} [owner] player index, Link's throw
  */
 
 /**
@@ -30,9 +31,10 @@ export const BOOMERANG_STUN_FRAMES = 0xa0;
  * @param {number} linkY
  * @param {number} dir
  * @param {boolean} [magic]
+ * @param {number} [owner] player index of the thrower
  * @returns {Boomerang}
  */
-export function throwBoomerang(linkX, linkY, dir, magic = false) {
+export function throwBoomerang(linkX, linkY, dir, magic = false, owner = 0) {
   return {
     x: linkX + 4,
     y: linkY + 4,
@@ -44,7 +46,25 @@ export function throwBoomerang(linkX, linkY, dir, magic = false) {
     hit: false,
     hostile: false,
     magic: Boolean(magic),
+    owner,
   };
+}
+
+/**
+ * Where Link's boom flies back to this frame.
+ *
+ * `owner` is a player index. Passing the current hero's feet — whoever the
+ * world happened to step first — is what sent player two's throw to player one.
+ *
+ * @param {Boomerang} boom
+ * @param {readonly { index: number, x: number, y: number }[]} throwers
+ * @param {{ x: number, y: number } | null} [fallback]
+ * @returns {{ x: number, y: number } | null}
+ */
+export function boomerangReturnPos(boom, throwers, fallback = null) {
+  if (boom?.owner == null) return fallback;
+  const owner = throwers.find((p) => p.index === boom.owner);
+  return owner ? { x: owner.x, y: owner.y } : fallback;
 }
 
 /**
@@ -126,4 +146,18 @@ export function enemyBoomerangHitsLink(boom, linkX, linkY) {
 export function boomerangHits(boom, rect) {
   if (boom.phase === BOOM_PHASE.DONE) return false;
   return rectsOverlap({ x: boom.x, y: boom.y, w: 8, h: 8 }, rect);
+}
+
+/** In-flight player throws (hostile Goriya booms live in a separate list). */
+export function liveBoomerangs(list) {
+  return (list ?? []).filter((b) => b && b.phase !== BOOM_PHASE.DONE);
+}
+
+/**
+ * This hero's throw, if it is still in the air.
+ * @param {readonly Boomerang[] | null | undefined} list
+ * @param {number} index
+ */
+export function playerBoomerang(list, index) {
+  return liveBoomerangs(list).find((b) => b.owner === index) ?? null;
 }

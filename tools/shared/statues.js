@@ -2,6 +2,7 @@
  * UW statue fireballs (Z_04 UpdateStatues) — layouts $23 / $24.
  */
 
+import { nearestTarget } from './targeting.js';
 import { PROJ, shootFireball } from './projectiles.js';
 
 /** layoutId → statue pattern (0 = 4, 1 = 2). */
@@ -44,11 +45,13 @@ export function createStatueState(layoutId) {
 
 /**
  * @param {object} state
- * @param {{ x: number, y: number }} link
+ * @param {{ x: number, y: number } | readonly ({ x: number, y: number } | null | undefined)[]} link
+ *   one hero, or every living hero in this room — statues aim at the nearest
  * @returns {import('./projectiles.js').Projectile[]}
  */
 export function stepStatues(state, link) {
   if (!state) return [];
+  const heroes = Array.isArray(link) ? link : [link];
   /** @type {import('./projectiles.js').Projectile[]} */
   const out = [];
   const xs = POS_X[state.pattern];
@@ -59,9 +62,11 @@ export function stepStatues(state, link) {
     state.timers[i] = START_TIMERS[i] ?? 0x80;
     const x = xs[i];
     const y = ys[i];
-    // Skip if Link is within $18 on both axes.
-    if (Math.abs(link.x - x) < 0x18 && Math.abs(link.y - y) < 0x18) continue;
-    out.push(shootFireball(PROJ.FIREBALL, x, y, link.x, link.y, { x, y }));
+    const aim = nearestTarget(heroes, x, y);
+    if (!aim) continue;
+    // Skip if that hero is within $18 on both axes.
+    if (Math.abs(aim.x - x) < 0x18 && Math.abs(aim.y - y) < 0x18) continue;
+    out.push(shootFireball(PROJ.FIREBALL, x, y, aim.x, aim.y, { x, y }));
   }
   return out;
 }

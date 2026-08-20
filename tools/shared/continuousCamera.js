@@ -55,6 +55,107 @@ export function worldToLocal(worldX, worldPlayY) {
 }
 
 /**
+ * Which map cell this hero is standing in, given the world's streaming anchor
+ * and their anchor-local position. Two players can share one `roomId` and
+ * still occupy different cells; cameras and HUDs should ask this, not the
+ * anchor.
+ * @param {number} anchorRoomId
+ * @param {number} linkX
+ * @param {number} linkY
+ */
+export function occupyingRoom(anchorRoomId, linkX, linkY) {
+  const w = localToWorld(anchorRoomId, linkX, linkY);
+  return worldToLocal(w.x, w.y);
+}
+
+/**
+ * Anchor-local object coords expressed in `toRoomId`'s own local space.
+ * Same shift `main.js` uses when a leftover hero walks a neighbour cell.
+ * @param {number} anchorRoomId
+ * @param {number} toRoomId
+ * @param {number} x
+ * @param {number} y
+ */
+export function localInRoom(anchorRoomId, toRoomId, x, y) {
+  const a = roomPlayOrigin(anchorRoomId);
+  const b = roomPlayOrigin(toRoomId);
+  return { x: x + (a.ox - b.ox), y: y + (a.oy - b.oy) };
+}
+
+/**
+ * Which dungeon cell this hero should walk and collide in.
+ *
+ * `latchedId` is the last room they officially occupied (spawn, door cross).
+ * Keep it while their converted coords still sit in that cell's floor or the
+ * seam lip used to finish a stride — otherwise a hard cut (`goRoom`) leaves
+ * an ally's latch naming the old cell while their numbers now mean the new
+ * one, and `tileAtPlayPixel` clamps those off-grid samples onto the neighbour's
+ * west wall (ghost collision in the room you are looking at).
+ *
+ * @param {number} anchorRoomId
+ * @param {number} x
+ * @param {number} y
+ * @param {number | null | undefined} latchedId
+ */
+export function resolveUwOccupyingRoomId(anchorRoomId, x, y, latchedId) {
+  const here = occupyingRoom(anchorRoomId, x, y).roomId & 0xff;
+  if (latchedId == null) return here;
+  const latched = latchedId & 0xff;
+  if (latched === here) return here;
+  const local = localInRoom(anchorRoomId, latched, x, y);
+  if (canClaimAnchorCross(local.x, local.y)) return latched;
+  return here;
+}
+
+/**
+ * True when the position is inside the anchor room's 256×176 play rectangle.
+ * A hero left behind when someone else walked through a door sits outside it
+ * (negative Y after a south rebase, and so on) and must not be treated as
+ * still exiting that door — otherwise they steal the world's anchor back.
+ * @param {number} linkX
+ * @param {number} linkY
+ */
+export function inAnchorPlayArea(linkX, linkY) {
+  const playY = linkY - HUD_HEIGHT;
+  return linkX >= 0 && linkX < PLAY_W && playY >= 0 && playY < PLAY_H;
+}
+
+/**
+ * How far past a seam a hero may still rebase the world's anchor.
+ *
+ * `detectUwDoorCross` fires on the first pixel outside the play rectangle,
+ * but a stride can land there with `gridOffset !== 0` and only become a
+ * real exit on a later frame. The NES door cavity is deeper than one tile
+ * (east `$CF→$100` is 49px; south `$BD` to the seam is 51px). A 16px lip
+ * matched the `$F0` edge exactly — a hero standing just inside it (`x=$ED`)
+ * is at `x=$-13` after an ally's east rebase, drops DoorwayDir, and the
+ * solid door tiles freeze them in the opening. Anyone a full cell away
+ * (the reverse-cross trap) is still well outside this.
+ */
+export const ANCHOR_SEAM_LIP = 56;
+
+/**
+ * True when this hero may rebase the world's streaming anchor.
+ *
+ * Inside the play rectangle: they may walk out this frame. On the seam lip:
+ * they already stepped out mid-stride and the cross is still theirs. Deep in
+ * a neighbour: they live there; treating their position as an exit of the
+ * *current* room is what made one camera chase the other.
+ * @param {number} linkX
+ * @param {number} linkY
+ * @param {number} [lip]
+ */
+export function canClaimAnchorCross(linkX, linkY, lip = ANCHOR_SEAM_LIP) {
+  if (inAnchorPlayArea(linkX, linkY)) return true;
+  const playY = linkY - HUD_HEIGHT;
+  if (linkX >= -lip && linkX < 0 && playY >= 0 && playY < PLAY_H) return true;
+  if (linkX >= PLAY_W && linkX < PLAY_W + lip && playY >= 0 && playY < PLAY_H) return true;
+  if (linkX >= 0 && linkX < PLAY_W && playY >= -lip && playY < 0) return true;
+  if (linkX >= 0 && linkX < PLAY_W && playY >= PLAY_H && playY < PLAY_H + lip) return true;
+  return false;
+}
+
+/**
  * Camera top-left in play-space so Link stays centered when possible.
  * Link is treated as a 16×16 sprite; focus uses his center.
  *
@@ -111,6 +212,124 @@ export function cameraLocalForLink(roomId, linkX, linkY, map = {}) {
   };
 }
 
+/** The play map is 16 rooms across and 8 down, overworld and underworld alike. */
+export const PLAY_MAP = Object.freeze({ cols: 16, rows: 8 });
+
+/**
+ * Negate without producing `-0`. It draws identically, but it serialises
+ * differently from `0`, which would show up as a phantom golden-hash mismatch.
+ * @param {number} v
+ */
+const negate = (v) => (v === 0 ? 0 : -v);
+
+/**
+ * @typedef {object} CameraSolution
+ * @property {number} fieldX playfield offset (the camera, negated and rounded)
+ * @property {number} fieldY
+ * @property {boolean} tracks false when the world camera should be left alone
+ * @property {number} camLocalX camera relative to the anchor room
+ * @property {number} camLocalY
+ * @property {number} worldCamX camera in absolute play space
+ * @property {number} worldCamY
+ * @property {'none' | 'overworld' | 'dungeon'} layout stream to re-lay out
+ */
+
+/**
+ * Where the playfield sits this frame — the whole camera policy, with no
+ * renderer attached so each player's view can solve its own (Phase 23).
+ *
+ * Three regimes:
+ * - A cave draws at the origin and leaves the world camera untouched, because
+ *   there is no map to be positioned on.
+ * - A cellar sits on the dungeon grid but plays like a cave, so it pins to its
+ *   own room; otherwise Link on a side ladder peeks into the neighbours.
+ * - Everything else follows Link, clamped at the map rim.
+ *
+ * @param {object} opts
+ * @param {string} opts.mode 'overworld' | 'dungeon' | 'cave'
+ * @param {number} opts.roomId anchor room
+ * @param {number} opts.linkX
+ * @param {number} opts.linkY
+ * @param {boolean} [opts.pinned] the room plays like a cave (a cellar)
+ * @param {{ cols?: number, rows?: number }} [opts.map]
+ * @returns {CameraSolution}
+ */
+/**
+ * Where one player is looking: the play field's offset inside the room grid
+ * (`camLocal*`, what on-screen tests are measured against) and the same point
+ * in world pixels (`world*`, what room streaming is measured against).
+ *
+ * One per player rather than one per game — `adoptCameraSolution()` writes a
+ * fresh `solvePlayCamera()` result into it each frame.
+ */
+export function createCamera() {
+  return { camLocalX: 0, camLocalY: 0, worldCamX: 0, worldCamY: 0 };
+}
+
+/**
+ * Move a camera to a solved position, leaving the solution's render fields
+ * (`fieldX`, `layout`) to the caller.
+ * @param {ReturnType<createCamera>} cam mutated
+ * @param {CameraSolution} solution
+ */
+export function adoptCameraSolution(cam, solution) {
+  cam.camLocalX = solution.camLocalX;
+  cam.camLocalY = solution.camLocalY;
+  cam.worldCamX = solution.worldCamX;
+  cam.worldCamY = solution.worldCamY;
+  return cam;
+}
+
+export function solvePlayCamera({
+  mode,
+  roomId,
+  linkX,
+  linkY,
+  pinned = false,
+  map = PLAY_MAP,
+}) {
+  if (mode === 'cave') {
+    return {
+      fieldX: 0,
+      fieldY: 0,
+      tracks: false,
+      camLocalX: 0,
+      camLocalY: 0,
+      worldCamX: 0,
+      worldCamY: 0,
+      layout: 'none',
+    };
+  }
+  if (pinned) {
+    const origin = roomPlayOrigin(roomId);
+    return {
+      fieldX: 0,
+      fieldY: 0,
+      tracks: true,
+      camLocalX: 0,
+      camLocalY: 0,
+      worldCamX: origin.ox,
+      worldCamY: origin.oy,
+      layout: 'dungeon',
+    };
+  }
+  const cam = cameraLocalForLink(roomId, linkX, linkY, map);
+  /** @type {'none' | 'overworld' | 'dungeon'} */
+  let layout = 'none';
+  if (mode === 'overworld') layout = 'overworld';
+  else if (mode === 'dungeon') layout = 'dungeon';
+  return {
+    fieldX: negate(Math.round(cam.camX)),
+    fieldY: negate(Math.round(cam.camY)),
+    tracks: true,
+    camLocalX: cam.camX,
+    camLocalY: cam.camY,
+    worldCamX: cam.worldCamX,
+    worldCamY: cam.worldCamY,
+    layout,
+  };
+}
+
 /**
  * Rooms overlapping the camera view (plus a 1-screen margin for streaming).
  * @param {number} worldCamX
@@ -141,6 +360,25 @@ export function roomsForCamera(worldCamX, worldCamY, opts = {}) {
 }
 
 /**
+ * Rooms any of the cameras can see (plus the same margin).
+ * @param {Iterable<{ worldCamX?: number, worldCamY?: number }>} cameras
+ * @param {{ cols?: number, rows?: number, margin?: number }} [opts]
+ */
+export function roomsForCameras(cameras, opts = {}) {
+  const seen = new Set();
+  /** @type {number[]} */
+  const out = [];
+  for (const cam of cameras ?? []) {
+    for (const id of roomsForCamera(cam.worldCamX ?? 0, cam.worldCamY ?? 0, opts)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
  * True when the axis-aligned rect is completely outside the camera view.
  * @param {{ x: number, y: number, w?: number, h?: number }} rect local object space (Y includes HUD)
  * @param {number} camLocalX
@@ -157,6 +395,22 @@ export function rectFullyOffCamera(rect, camLocalX, camLocalY, pad = 0) {
     || view.y + h < HUD_HEIGHT - pad
     || view.y > HUD_HEIGHT + PLAY_H + pad
   );
+}
+
+/**
+ * True when no camera in the list can see the rect.
+ *
+ * One camera is the old test. Several is split screen: a foe on player two's
+ * half of the world must not be culled just because player one walked away.
+ *
+ * @param {{ x: number, y: number, w?: number, h?: number }} rect
+ * @param {Iterable<{ camLocalX?: number, camLocalY?: number }>} cameras
+ * @param {number} [pad]
+ */
+export function rectFullyOffEveryCamera(rect, cameras, pad = 0) {
+  const list = [...(cameras ?? [])];
+  if (!list.length) return rectFullyOffCamera(rect, 0, 0, pad);
+  return list.every((c) => rectFullyOffCamera(rect, c.camLocalX ?? 0, c.camLocalY ?? 0, pad));
 }
 
 /**
@@ -215,6 +469,19 @@ export function rebaseDelta(dir) {
   if (dir & DIR.UP) return { dx: 0, dy: PLAY_H };
   if (dir & DIR.DOWN) return { dx: 0, dy: -PLAY_H };
   return { dx: 0, dy: 0 };
+}
+
+/**
+ * Shift from `fromRoom`'s local space into `toRoom`'s. A one-step neighbor
+ * matches {@link rebaseDelta}; a hero leaving a cell that is not the world's
+ * streaming anchor needs the full origin difference.
+ * @param {number} fromRoomId
+ * @param {number} toRoomId
+ */
+export function rebaseDeltaToRoom(fromRoomId, toRoomId) {
+  const a = roomPlayOrigin(fromRoomId);
+  const b = roomPlayOrigin(toRoomId);
+  return { dx: a.ox - b.ox, dy: a.oy - b.oy };
 }
 
 /**

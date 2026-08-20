@@ -25,6 +25,8 @@ export const PUSH_TRAVEL = 0x10;
  * @property {number} pushTimer
  * @property {number} traveled
  * @property {boolean} complete  BlockPushComplete ≥ 1
+ * @property {number} [roomId]  Occupying cell this block belongs to
+ * @property {boolean} [heldThisFrame]  Someone shoved this face this frame
  */
 
 /**
@@ -77,6 +79,7 @@ export function createPushBlock(room, origin, floorTiles) {
   const x = origin.x + tile.col * 8;
   const y = origin.y + tile.row * 8;
   return {
+    roomId: room.roomId != null ? room.roomId & 0xff : undefined,
     x,
     y,
     homeX: x,
@@ -86,6 +89,7 @@ export function createPushBlock(room, origin, floorTiles) {
     pushTimer: 0,
     traveled: 0,
     complete: false,
+    heldThisFrame: false,
   };
 }
 
@@ -173,9 +177,10 @@ export function nudgeLinkOntoPushAxis(block, link, inputDir) {
  * @param {{ x: number, y: number, dir: number }} link
  * @param {number} inputDir
  * @param {boolean} roomCleared
+ * @param {{ persistTimer?: boolean }} [opts]
  * @returns {{ justCompleted: boolean }}
  */
-export function stepPushBlock(block, link, inputDir, roomCleared) {
+export function stepPushBlock(block, link, inputDir, roomCleared, opts = {}) {
   if (!block || block.state === PUSH_STATE.DONE) {
     return { justCompleted: false };
   }
@@ -202,7 +207,8 @@ export function stepPushBlock(block, link, inputDir, roomCleared) {
   }
 
   if (!linkPushingBlock(block, link, inputDir)) {
-    block.pushTimer = 0;
+    // An ally standing elsewhere must not wipe a hold in progress.
+    if (!opts.persistTimer) block.pushTimer = 0;
     return { justCompleted: false };
   }
 
@@ -215,6 +221,18 @@ export function stepPushBlock(block, link, inputDir, roomCleared) {
   block.state = PUSH_STATE.MOVING;
   block.traveled = 0;
   return { justCompleted: false };
+}
+
+/**
+ * Once per world per frame: drop holds nobody renewed last tick.
+ * @param {Iterable<PushBlock | null | undefined>} blocks
+ */
+export function beginPushBlockFrame(blocks) {
+  for (const b of blocks) {
+    if (!b || b.state !== PUSH_STATE.IDLE) continue;
+    if (!b.heldThisFrame) b.pushTimer = 0;
+    b.heldThisFrame = false;
+  }
 }
 
 /**

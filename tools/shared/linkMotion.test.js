@@ -19,6 +19,7 @@ import {
   snapToGridCellStart,
   stepLink,
   stepShove,
+  writeLinkMotion,
 } from './linkMotion.js';
 import { dungeonTileOpts, buildDungeonPlayGrid, dungeonPlayOrigin } from './dungeonPlay.js';
 import {
@@ -46,6 +47,32 @@ const romPath = path.join(ROOT, 'zelda.nes');
 function openGrid() {
   return Array.from({ length: 22 }, () => Array(32).fill(0x26));
 }
+
+test('writeLinkMotion copies the whole walk cycle, not just the pose', () => {
+  // Dungeon walking steps a local copy and writes it back. Dropping
+  // animFrame here is how a hero slides without alternating feet.
+  const src = createLinkState(0x40, 0x50, DIR.DOWN);
+  src.animFrame = 1;
+  src.animCounter = 2;
+  src.gridOffset = 4;
+  src.posFrac = 0x30;
+  src.moving = true;
+  const dst = createLinkState(0, 0, DIR.UP);
+  writeLinkMotion(dst, src, 0x80, 0x90);
+  assert.equal(dst.x, 0x80);
+  assert.equal(dst.y, 0x90);
+  assert.equal(dst.dir, DIR.DOWN);
+  assert.equal(dst.animFrame, 1);
+  assert.equal(dst.animCounter, 2);
+  assert.equal(dst.gridOffset, 4);
+  assert.equal(dst.posFrac, 0x30);
+  assert.equal(dst.moving, true);
+  assert.deepEqual(
+    Object.keys(createLinkState(0, 0)).sort(),
+    ['animCounter', 'animFrame', 'dir', 'gridOffset', 'moving', 'posFrac', 'x', 'y'],
+    'a new LinkState field must be copied by writeLinkMotion',
+  );
+});
 
 test('pickSingleDir prefers up then down then left then right', () => {
   assert.equal(pickSingleDir(DIR.UP | DIR.RIGHT), DIR.UP);

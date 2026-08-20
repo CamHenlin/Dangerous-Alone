@@ -1,5 +1,5 @@
 import { DIR } from '@shared/collision.js';
-import { DEFAULT_BINDS } from '@shared/options.js';
+import { DEFAULT_BINDS, padsForPlayer } from '@shared/options.js';
 
 const DIGIT_CODES = {
   Digit1: 1,
@@ -16,11 +16,14 @@ const DIGIT_CODES = {
  * Keyboard + Gamepad: dirs, A (sword), B (item), Start (inventory).
  * Bindings are remappable via setBinds().
  */
-export function createInput(initialBinds = DEFAULT_BINDS) {
+export function createInput(initialBinds = DEFAULT_BINDS, { padIndex: initialPadIndex = null } = {}) {
   /** @type {Record<string, string[]>} */
   let binds = Object.fromEntries(
     Object.entries(initialBinds).map(([k, v]) => [k, [...v]]),
   );
+
+  /** Claimed pad, or `null` to read every pad (the solo game). */
+  let padIndex = initialPadIndex;
 
   /** @type {Set<string>} */
   const keys = new Set();
@@ -85,8 +88,13 @@ export function createInput(initialBinds = DEFAULT_BINDS) {
     return mask;
   }
 
+  /** This player's pads: all of them alone, exactly one in company. */
+  function myPads() {
+    return padsForPlayer(navigator.getGamepads?.() ?? [], padIndex);
+  }
+
   function gamepadDirs() {
-    const pads = navigator.getGamepads?.() ?? [];
+    const pads = myPads();
     let mask = 0;
     for (const pad of pads) {
       if (!pad) continue;
@@ -106,7 +114,7 @@ export function createInput(initialBinds = DEFAULT_BINDS) {
   }
 
   function gamepadButton(index) {
-    const pads = navigator.getGamepads?.() ?? [];
+    const pads = myPads();
     for (const pad of pads) {
       if (pad?.buttons[index]?.pressed) return true;
     }
@@ -130,6 +138,20 @@ export function createInput(initialBinds = DEFAULT_BINDS) {
       return Object.fromEntries(
         Object.entries(binds).map(([k, v]) => [k, [...v]]),
       );
+    },
+    /**
+     * Who this device reads pads for. `null` is every pad — the solo game.
+     * @param {number|null} index
+     */
+    setPadIndex(index) {
+      padIndex = index;
+    },
+    getPadIndex() {
+      return padIndex;
+    },
+    /** Select is held right now — Start+Select leave, which is not an edge. */
+    holdingSelect() {
+      return anyBound(binds.select ?? []) || gamepadButton(8);
     },
     /** Currently held keyboard codes (for title-screen extras). */
     heldCodes() {

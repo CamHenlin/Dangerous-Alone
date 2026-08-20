@@ -6,6 +6,8 @@
  * clear secrets fire while the rest stay collectible until you leave.
  */
 
+import { addRupees } from './inventory.js';
+
 /** ObjType $35. */
 export const RUPEE_STASH = 0x35;
 
@@ -17,8 +19,11 @@ export const RUPEE_STASH_YS = Object.freeze([
   0x70, 0x80, 0x80, 0x90, 0x90, 0x90, 0x90, 0xa0, 0xa0, 0xb0,
 ]);
 
-/** |Link − rupee| threshold on ObjX/ObjY (UpdateRupeeStash). */
-export const RUPEE_STASH_TOUCH = 0x09;
+/**
+ * |Link − rupee| on ObjX/ObjY. The ROM used $09 from the top-left; we use the
+ * 16×16 slots so standing on a stash rupee still collects it.
+ */
+export const RUPEE_STASH_TOUCH = 0x10;
 
 /**
  * @param {number} objType
@@ -48,7 +53,7 @@ export function expandRupeeStash(origin = { x: 0, y: 0 }) {
 }
 
 /**
- * UpdateRupeeStash proximity: Abs(Link − Obj) < $09 on both axes (top-left).
+ * Stash rupee proximity: 16×16 slot overlap (same as Link taking a drop).
  * @param {{ x: number, y: number }} e
  * @param {number} linkX
  * @param {number} linkY
@@ -76,7 +81,7 @@ export function tryTakeRupeeStash(enemies, link, inv) {
     if (!rupeeStashTouchesLink(e, link.x, link.y)) continue;
     e.alive = false;
     e.hp = 0;
-    inv.rupees = Math.min(255, (inv.rupees ?? 0) + 1);
+    addRupees(inv, 1);
     // STA RoomObjCount #$00 — remaining pickups stay, clear count does not.
     let openedRoom = false;
     for (const o of enemies) {

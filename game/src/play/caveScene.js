@@ -276,7 +276,10 @@ export function createCaveScene(deps) {
   }
 
   function tick() {
-    if (!root.visible) return;
+    // Hidden interiors still live — two caves share the stage, and only the
+    // view being captured is visible. Skip the visible check or a friend's
+    // fires freeze until you look at them.
+    if (!cave) return;
     if (Math.random() < 0.15) paintFires();
   }
 
@@ -307,6 +310,15 @@ export function createCaveScene(deps) {
     fireSprites.length = 0;
   }
 
+  function destroy() {
+    close();
+    if (stairsTex && stairsTex !== Texture.EMPTY) {
+      stairsTex.destroy(true);
+      stairsTex = null;
+    }
+    root.destroy({ children: true, texture: false, textureSource: false });
+  }
+
   return {
     root,
     get open() {
@@ -322,5 +334,6 @@ export function createCaveScene(deps) {
     refreshWares,
     tick,
     close,
+    destroy,
   };
 }

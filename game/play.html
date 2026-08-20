@@ -22,8 +22,9 @@
       <main id="stage" class="play-stage"></main>
       <aside class="play-help">
         <p id="helpKeys">
-          Arrows/WASD move · Z/Space sword · X/C B-item · Enter inventory · F5/F9 practice · M mute · ,/. volume
+          Arrows/WASD move · Z/Space sword · X/C B-item · Enter inventory · H / spare Start joins · F5/F9 practice · M mute · ,/. volume
         </p>
+        <p id="joinHint" class="join-hint" hidden></p>
         <p id="posReadout">—</p>
       </aside>
     </div>
@@ -52,6 +53,28 @@
         </label>
         <button type="button" id="opt-fullscreen" class="opt-btn">Toggle fullscreen</button>
         <p class="opt-hint">Fullscreen needs a click each session (browser policy).</p>
+        <h3>Controllers</h3>
+        <p class="opt-hint">Each seat has its own keys and can claim a pad.</p>
+        <label class="opt-row">
+          Player
+          <select id="opt-player">
+            <option value="0">Player 1</option>
+            <option value="1">Player 2</option>
+            <option value="2">Player 3</option>
+            <option value="3">Player 4</option>
+          </select>
+        </label>
+        <label class="opt-row">
+          Gamepad
+          <select id="opt-pad">
+            <option value="all">All pads (solo)</option>
+            <option value="0">Pad 1</option>
+            <option value="1">Pad 2</option>
+            <option value="2">Pad 3</option>
+            <option value="3">Pad 4</option>
+            <option value="none">Keyboard only</option>
+          </select>
+        </label>
         <h3>Key bindings</h3>
         <p class="opt-hint">Click a row, then press a key (Esc cancels).</p>
         <div id="opt-binds" class="opt-binds"></div>

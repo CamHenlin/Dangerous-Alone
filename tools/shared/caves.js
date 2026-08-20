@@ -11,6 +11,7 @@ import {
   CANDLE_TIER,
   SWORD,
   addBombs,
+  addRupees,
   grantCandle,
   grantWoodenSword,
   healLink,
@@ -290,7 +291,7 @@ export function grantCaveItem(inv, itemId) {
       inv.ladder = 1;
       return 'Ladder';
     case ITEM.FIVE_RUPEE:
-      inv.rupees = Math.min(255, inv.rupees + 5);
+      addRupees(inv, 5);
       return '5 rupees';
     case ITEM.BLUE_RING:
       if (inv.ring < 1) inv.ring = 1;
@@ -302,7 +303,7 @@ export function grantCaveItem(inv, itemId) {
       if (!inv.letter) inv.letter = 1;
       return 'Letter';
     case ITEM.RUPEE:
-      inv.rupees = Math.min(255, inv.rupees + 1);
+      addRupees(inv, 1);
       return 'Rupee';
     case ITEM.KEY:
       inv.keys += 1;
@@ -523,7 +524,7 @@ export function tryGamble(inv, cave, slotIndex = 1, amountsOrRng = Math.random) 
       return { ok: false, reason: `Need ${MONEY_GAME_STAKE} rupees` };
     }
     if (amountsOrRng) {
-      inv.rupees = Math.min(255, inv.rupees + 20);
+      addRupees(inv, 20);
       return { ok: true, label: 'Won 20!', rupees: inv.rupees, delta: 20 };
     }
     inv.rupees -= 10;
@@ -546,7 +547,7 @@ export function tryGamble(inv, cave, slotIndex = 1, amountsOrRng = Math.random) 
   }
 
   const delta = amounts[slotIndex % 3] ?? 0;
-  inv.rupees = Math.max(0, Math.min(255, inv.rupees + delta));
+  addRupees(inv, delta);
   if (delta > 0) {
     return { ok: true, label: `Won ${delta}!`, rupees: inv.rupees, delta };
   }
@@ -603,7 +604,7 @@ export function tryMoblinGift(inv, cave, state = {}) {
   // Middle slot only (CavePrices+1). Skip $00/$FF filler from mis-indexed rows.
   const mid = cave.slots[1]?.price ?? 0;
   const amount = mid > 0 && mid < 255 ? mid : 30;
-  inv.rupees = Math.min(255, inv.rupees + amount);
+  addRupees(inv, amount);
   state.taken?.add(key);
   // Clear the floating rupee sprite (caveWareSlots keys by slot index).
   state.taken?.add(caveTakenKey(cave, 1, roomId));

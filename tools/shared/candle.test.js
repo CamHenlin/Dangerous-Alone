@@ -6,7 +6,11 @@ import {
   FLAME_MOVE_DIST,
   FLAME_STAND_TIME,
   armDarkRoomAutoLight,
+  asCandleStore,
+  beginCandleStay,
+  candleForRoom,
   createCandleRoomState,
+  createCandleStore,
   createOwFlame,
   roomIsDark,
   stepDarkRoomAutoLight,
@@ -21,6 +25,16 @@ test('dark room is dark until lit', () => {
   assert.equal(roomIsDark(room, state), true);
   state.lit = true;
   assert.equal(roomIsDark(room, state), false);
+});
+
+test('a dark leftover cell is dark even when the anchor is not', () => {
+  // The overlay has to follow the occupying room, not the streaming
+  // anchor, or a friend in $73 paints light over someone still in $01.
+  const state = createCandleRoomState();
+  const leftover = { floorItem: { dark: true } };
+  const anchor = { floorItem: { dark: false } };
+  assert.equal(roomIsDark(leftover, state), true);
+  assert.equal(roomIsDark(anchor, state), false);
 });
 
 test('blue candle lights once per room stay', () => {
@@ -108,4 +122,44 @@ test('flame walks $10 then stands $3F', () => {
   assert.equal(flame.timer, FLAME_STAND_TIME);
   for (let i = 0; i < FLAME_STAND_TIME; i += 1) stepOwFlame(flame);
   assert.equal(flame.alive, false);
+});
+
+test('lighting one dark cell does not light a leftover dark cell', () => {
+  const store = createCandleStore();
+  const a = { roomId: 0x01, floorItem: { dark: true } };
+  const b = { roomId: 0x02, floorItem: { dark: true } };
+  beginCandleStay(store, 0x01, a, { candle: CANDLE.BLUE });
+  beginCandleStay(store, 0x02, b, { candle: CANDLE.BLUE });
+  tryUseCandle({ candle: CANDLE.BLUE }, candleForRoom(store, 0x01), a);
+  assert.equal(roomIsDark(a, candleForRoom(store, 0x01)), false);
+  assert.equal(roomIsDark(b, candleForRoom(store, 0x02)), true);
+});
+
+test('joining an occupied stay keeps the light', () => {
+  const store = createCandleStore();
+  const room = { roomId: 0x01, floorItem: { dark: true } };
+  const first = beginCandleStay(store, 0x01, room, { candle: CANDLE.BLUE });
+  first.lit = true;
+  const joined = beginCandleStay(store, 0x01, room, { candle: CANDLE.BLUE }, true);
+  assert.equal(joined, first);
+  assert.equal(joined.lit, true);
+});
+
+test('re-entering an empty cell resets the stay', () => {
+  const store = createCandleStore();
+  const room = { roomId: 0x01, floorItem: { dark: true } };
+  const first = beginCandleStay(store, 0x01, room, { candle: CANDLE.BLUE });
+  first.lit = true;
+  first.usedCandle = true;
+  const again = beginCandleStay(store, 0x01, room, { candle: CANDLE.BLUE }, false);
+  assert.notEqual(again, first);
+  assert.equal(again.lit, false);
+  assert.equal(again.usedCandle, false);
+  assert.equal(again.autoLightTimer, AUTO_LIGHT_DELAY_FRAMES);
+});
+
+test('asCandleStore wraps a leftover room-state into a fresh store', () => {
+  const wrapped = asCandleStore(createCandleRoomState());
+  assert.equal(wrapped.rooms instanceof Map, true);
+  assert.equal(asCandleStore(wrapped), wrapped);
 });

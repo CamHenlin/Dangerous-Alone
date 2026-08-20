@@ -8,12 +8,33 @@ import {
   PLAY_W,
   foggedRooms,
   rectFullyOffCamera,
+  rectFullyOffEveryCamera,
   roomPlayOrigin,
   roomsForCamera,
 } from './continuousCamera.js';
-import { roomFullyOffCamera } from './multiRoomTiles.js';
+import { roomFullyOffAllCameras, roomFullyOffCamera } from './multiRoomTiles.js';
 
-export { foggedRooms, roomsForCamera, roomFullyOffCamera };
+export { foggedRooms, roomsForCamera, roomFullyOffCamera, roomFullyOffAllCameras };
+
+/**
+ * Read a camera list out of a call that may still be passing one camera.
+ *
+ * Room lifecycle is a property of the whole session, not of one player: with
+ * split screen every sweep has to ask all the cameras (Phase 23). Callers that
+ * pass a single `worldCamX` / `worldCamY` pair keep working unchanged.
+ *
+ * @param {number} worldCamX
+ * @param {number} worldCamY
+ * @param {{ cameras?: Iterable<import('./multiRoomTiles.js').WorldCamera> }} [opts]
+ * @returns {import('./multiRoomTiles.js').WorldCamera[]}
+ */
+function camerasFrom(worldCamX, worldCamY, opts = {}) {
+  if (opts.cameras) {
+    const list = [...opts.cameras];
+    if (list.length) return list;
+  }
+  return [{ worldCamX: worldCamX ?? 0, worldCamY: worldCamY ?? 0 }];
+}
 
 /**
  * Stable id for one ROM spawn slot inside a room (`roomId` high, `slotIndex` low).
@@ -142,11 +163,15 @@ export function shiftPositions(objs, dx, dy) {
  * sprite walked past the view edge — otherwise peek+chase empties a room
  * and a latch release would refill it mid-visit.
  *
+ * The sprite test is against the one camera whose anchor room these local
+ * coordinates belong to; the home-room test asks every camera, so a foe is not
+ * despawned out from under a player who can still see its room.
+ *
  * @param {object[]} enemies
  * @param {number} camLocalX
  * @param {number} camLocalY
  * @param {number} [pad]
- * @param {{ worldCamX?: number, worldCamY?: number }} [opts]
+ * @param {{ worldCamX?: number, worldCamY?: number, cameras?: Iterable<import('./multiRoomTiles.js').WorldCamera> }} [opts]
  * @returns {{ kept: object[], emptiedRooms: Set<number> }}
  */
 export function cullOffscreenEnemies(
@@ -156,8 +181,7 @@ export function cullOffscreenEnemies(
   pad = 8,
   opts = {},
 ) {
-  const worldCamX = opts.worldCamX ?? 0;
-  const worldCamY = opts.worldCamY ?? 0;
+  const cameras = camerasFrom(opts.worldCamX ?? 0, opts.worldCamY ?? 0, opts);
   const keepFn = typeof opts.keep === 'function' ? opts.keep : null;
   /** @type {object[]} */
   const kept = [];
@@ -172,10 +196,16 @@ export function cullOffscreenEnemies(
     liveByRoom.set(home, (liveByRoom.get(home) ?? 0) + 1);
   }
 
+  const localCams = cameras.map((c) => ({
+    camLocalX: c.camLocalX ?? camLocalX,
+    camLocalY: c.camLocalY ?? camLocalY,
+  }));
+  const offEvery = (e) => rectFullyOffEveryCamera(e, localCams, pad);
+
   for (const e of enemies) {
     if (!e) continue;
     if (!e.alive) {
-      if (!rectFullyOffCamera(e, camLocalX, camLocalY, pad)) kept.push(e);
+      if (!offEvery(e)) kept.push(e);
       continue;
     }
     // Callers can pin special states (Wallmaster capture slide) past the lip.
@@ -184,9 +214,8 @@ export function cullOffscreenEnemies(
       continue;
     }
     const home = e.homeRoomId ?? -1;
-    const homeStillVisible =
-      home >= 0 && !roomFullyOffCamera(home, worldCamX, worldCamY, pad);
-    if (rectFullyOffCamera(e, camLocalX, camLocalY, pad) && !homeStillVisible) {
+    const homeStillVisible = home >= 0 && !roomFullyOffAllCameras(home, cameras, pad);
+    if (offEvery(e) && !homeStillVisible) {
       const left = (liveByRoom.get(home) ?? 1) - 1;
       liveByRoom.set(home, left);
       if (left <= 0 && home >= 0) emptiedRooms.add(home);
@@ -233,6 +262,8 @@ export function orphanedEnemySpriteIds(enemies, spriteIds) {
  * @param {Set<number>} opts.clearedRooms
  * @param {number} opts.worldCamX
  * @param {number} opts.worldCamY
+ * @param {Iterable<import('./multiRoomTiles.js').WorldCamera>} [opts.cameras] every
+ *   active view; a room in sight of any of them is a candidate
  * @param {Set<number>} [opts.forceRespawn]
  */
 export function roomsNeedingSpawn({
@@ -243,8 +274,10 @@ export function roomsNeedingSpawn({
   clearedRooms,
   worldCamX,
   worldCamY,
+  cameras,
   forceRespawn = new Set(),
 }) {
+  const views = camerasFrom(worldCamX, worldCamY, { cameras });
   /** @type {number[]} */
   const need = [];
   const cur = currentRoomId & 0xff;
@@ -252,12 +285,7 @@ export function roomsNeedingSpawn({
     const rid = id & 0xff;
     if (!visited.has(rid) && rid !== cur) continue;
     if (spawnedRooms.has(rid) && !forceRespawn.has(rid)) continue;
-    if (
-      rid !== cur
-      && roomFullyOffCamera(rid, worldCamX, worldCamY, 0)
-    ) {
-      continue;
-    }
+    if (rid !== cur && roomFullyOffAllCameras(rid, views, 0)) continue;
     // Cleared rooms still get a spawn pass (filters keep persistents only).
     void clearedRooms;
     need.push(rid);
@@ -313,7 +341,7 @@ export function roomHasLivingEnemies(enemies, roomId) {
  * @param {number} worldCamX
  * @param {number} worldCamY
  * @param {number} [_currentRoomId]
- * @param {{ enemies?: Iterable<object>, spawnClaims?: Set<number> }} [opts]
+ * @param {{ enemies?: Iterable<object>, spawnClaims?: Set<number>, cameras?: Iterable<import('./multiRoomTiles.js').WorldCamera> }} [opts]
  */
 export function releaseSpawnLatch(
   spawnedRooms,
@@ -325,9 +353,10 @@ export function releaseSpawnLatch(
 ) {
   const enemies = opts.enemies;
   const spawnClaims = opts.spawnClaims;
+  const cameras = camerasFrom(worldCamX, worldCamY, opts);
   for (const id of [...roomIds]) {
     const rid = id & 0xff;
-    if (!roomFullyOffCamera(rid, worldCamX, worldCamY, 8)) continue;
+    if (!roomFullyOffAllCameras(rid, cameras, 8)) continue;
     if (enemies && roomHasLivingEnemies(enemies, rid)) continue;
     spawnedRooms.delete(rid);
     if (spawnClaims) clearSpawnClaimsForRoom(spawnClaims, rid);

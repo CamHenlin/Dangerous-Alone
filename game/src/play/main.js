@@ -1,9 +1,10 @@
-import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Application, Assets, Container, Graphics, RenderTexture, Sprite, Text, Texture } from 'pixi.js';
 import { initPixiApp } from '@shared/pixiBoot.js';
 import {
   DIR,
   HUD_HEIGHT,
   UW_FIRST_UNWALKABLE,
+  dirsAreOpposite,
   isOwWarpTile,
 } from '@shared/collision.js';
 import {
@@ -17,6 +18,7 @@ import {
   pickSingleDir,
   stepLink,
   stepShove,
+  writeLinkMotion,
 } from '@shared/linkMotion.js';
 import {
   formatCollisionReadout,
@@ -31,15 +33,26 @@ import {
 import {
   PLAY_H,
   PLAY_W,
-  cameraLocalForLink,
+  adoptCameraSolution,
+  createCamera,
   detectRoomCross,
   foggedRooms,
+  canClaimAnchorCross,
+  inAnchorPlayArea,
   localToWorld,
+  occupyingRoom,
+  resolveUwOccupyingRoomId,
   rebaseDelta,
+  rebaseDeltaToRoom,
   rectFullyOffCamera,
+  rectFullyOffEveryCamera,
   roomPlayOrigin,
+  roomsForCameras,
+  solvePlayCamera,
   worldToLocal,
 } from '@shared/continuousCamera.js';
+import { canvasCssScale } from '@shared/displayScale.js';
+import { QUAD_H, QUAD_W, emptyQuadrants, frameSize, quadrantOrigin } from '@shared/splitLayout.js';
 import {
   getLinkCollidingTileMulti,
   getMonsterCollidingTileMulti,
@@ -56,16 +69,16 @@ import {
   orphanedEnemySpriteIds,
   releaseSpawnLatch,
   roomHasLivingEnemies,
-  roomsForCamera,
   roomsNeedingSpawn,
   shiftPositions,
   tagEnemyHomeRoom,
-  uwEnemyBoundsForRoom,
 } from '@shared/roomStream.js';
+import { enemyMotionBounds, shotMotionBounds } from '@shared/enemyBounds.js';
 import {
   clearClockFreeze,
   clockFreezeActive,
   enemyIsClockFrozen,
+  shouldClearClock,
   tagVisibleEnemiesForClock,
 } from '@shared/clockFreeze.js';
 import {
@@ -75,6 +88,8 @@ import {
   markEnemiesAwaitingView,
   skipsSpawnCloud,
 } from '@shared/enemyViewActivation.js';
+import { createAudioBus } from '@shared/audioBus.js';
+import { createRoomStore } from '@shared/roomStore.js';
 import { tryTakeRupeeStash } from '@shared/rupeeStash.js';
 import {
   beginScreenScroll,
@@ -194,6 +209,7 @@ import {
   tryFireHitEnemy,
   trySwordHitEnemy,
   wakeArmos,
+  wallmasterHoldsPlayer,
   wallmasterIsCapturing,
 } from '@shared/enemies.js';
 import { trySpawnZora } from '@shared/zora.js';
@@ -224,6 +240,7 @@ import {
   stepDroppedItemLifetime,
   stepFairy,
   tryCreateDropFromKill,
+  createDroppedItem,
 } from '@shared/enemyDrops.js';
 import { itemDrawPalette } from '@shared/itemDrawPalette.js';
 import { createByteRng } from '@shared/rng.js';
@@ -231,6 +248,7 @@ import {
   PROJ,
   SHIELD_RESULT,
   bounceProjectile,
+  createProjectile,
   projectileTouchesLink,
   shootArrow,
   shootMagicRod,
@@ -248,7 +266,6 @@ import {
 } from '@shared/raft.js';
 import {
   bossRoarSfx,
-  enemyUsesUwRoomBounds,
   isBossType,
   isGanon,
   isGleeok,
@@ -257,7 +274,10 @@ import {
 import { sfxNamesForWeaponHit } from '@shared/combatSfx.js';
 import {
   BOOM_PHASE,
+  boomerangReturnPos,
   enemyBoomerangHitsLink,
+  liveBoomerangs,
+  playerBoomerang,
   stepBoomerang,
   throwBoomerang,
 } from '@shared/boomerang.js';
@@ -325,19 +345,18 @@ import {
   buildDungeonPlayGrid,
   clampUwDoorwayPath,
   createDoorState,
-  detectUwDoorCross,
   dirForSide,
   doorwayLatchCleared,
   dungeonFloorRect,
   closeShutterBehind,
   dungeonNeighbor,
   dungeonPlayOrigin,
+  dungeonEntranceSpawn,
   dungeonRoomSpawn,
   dungeonTileOpts,
   enteringRoomGridOffset,
   entrySideForFacing,
   inDoorway,
-  linkInDoorwayCorridor,
   nearDoorway,
   openRoomShutters,
   restoreClearedShutters,
@@ -345,7 +364,58 @@ import {
   tryBombDoors,
   tryUnlockFacingKeyDoor,
 } from '@shared/dungeonPlay.js';
+import { OPEN_UW_GRID, detectOwnedUwDoorCross, uwDoorMotionMode } from '@shared/uwDoorWalk.js';
 import { finalizeLevelMeta, roomToTileGrid } from '@shared/dungeons.js';
+import {
+  activePlayers,
+  createInventoryView,
+  createPlayer,
+} from '@shared/player.js';
+import { createPlayerFocus } from '@shared/playerFocus.js';
+import {
+  deathOutcome,
+  labyrinthForCellarAlly,
+  livingPlayers,
+  respawnAlly,
+  respawnBeside,
+  shouldFollowAllyWorld,
+  targetableLinks,
+  tryAutoRevive,
+} from '@shared/coopDeath.js';
+import {
+  canLeave,
+  createPadStartEdges,
+  fillJoiningHearts,
+  hostPadIndex,
+  hostPlayer,
+  joiningPads,
+  nextJoinIndex,
+  seatForJoiningPad,
+  snapToHost,
+} from '@shared/coopRoster.js';
+import { createStoryPager } from '@shared/storyPager.js';
+import { applyPartyCaps, shareHeartContainer } from '@shared/coopEconomy.js';
+import { BOMB_LINK_DAMAGE, bombHurtsHero } from '@shared/coopCombat.js';
+import { applyPartySnapshot, snapshotParty } from '@shared/partySave.js';
+import { sharedBarOrigin } from '@shared/sharedBar.js';
+import {
+  caveWorldId,
+  cellarWorldId,
+  createWorld,
+  createWorldRegistry,
+  dungeonWorldId,
+  isCellarWorldId,
+  overworldWorldId,
+  parseCellarWorldId,
+} from '@shared/worldRegistry.js';
+import { enemyTarget, nearestTarget } from '@shared/targeting.js';
+import {
+  coopDeathSpinDone,
+  createDeathSequence,
+  deathLinkDir,
+  stepDeathSequence,
+} from '@shared/deathSequence.js';
+import { dialogueAcceptsInput, dialogueFreezesHero, dialogueVisibleFor } from '@shared/dialogueView.js';
 import {
   createTriforceCeremony,
   startTriforceCeremony,
@@ -366,6 +436,7 @@ import {
   checkCellarExit,
   checkUwStairsEntry,
   isCellarRoom,
+  isCellarRoomId,
   streamableUwRooms,
 } from '@shared/dungeonCellar.js';
 import {
@@ -373,6 +444,7 @@ import {
   BLOCK_STAIRS_TILE,
   PUSH_STATE,
   createPushBlock,
+  beginPushBlockFrame,
   linkPushingBlock,
   nudgeLinkOntoPushAxis,
   pushBlockSquareTiles,
@@ -382,8 +454,10 @@ import {
 } from '@shared/pushBlock.js';
 import {
   FLAME_SLOTS,
-  armDarkRoomAutoLight,
-  createCandleRoomState,
+  asCandleStore,
+  beginCandleStay,
+  candleForRoom,
+  createCandleStore,
   createOwFlame,
   roomIsDark,
   stepDarkRoomAutoLight,
@@ -416,7 +490,13 @@ import {
   resolveZeroHeartContinue,
 } from '@shared/save.js';
 import { createPracticeStore } from '@shared/practiceSave.js';
-import { codeLabel, loadOptions, saveOptions } from '@shared/options.js';
+import {
+  DEFAULT_PLAYER_BINDS,
+  bindsForPlayer,
+  codeLabel,
+  loadOptions,
+  saveOptions,
+} from '@shared/options.js';
 import { createInput } from './input.js';
 import { createLinkFrames } from './linkSprite.js';
 import { createDeathUi } from './deathUi.js';
@@ -429,6 +509,7 @@ import { createItemSprites } from './itemSprites.js';
 import { createEnemySprites } from './enemySprites.js';
 import { enemySpriteOffset } from '@shared/bossSpriteLayouts.js';
 import { createHud } from './hud.js';
+import { createSharedBar } from './sharedBar.js';
 import { createInventoryUi } from './inventoryUi.js';
 import { createCaveScene } from './caveScene.js';
 import { createTextBox } from './textBox.js';
@@ -458,8 +539,9 @@ import {
   wareUnderLink,
 } from '@shared/caveRoom.js';
 
-const INTERNAL_W = 256;
-const INTERNAL_H = 240;
+/** Canvas size. One player is the ROM frame; more players grow it. */
+let INTERNAL_W = QUAD_W;
+let INTERNAL_H = QUAD_H;
 const TARGET_FPS = 60;
 /** TakeItem hold in a cave/cellar (`ItemLiftTimer` = $80). */
 const ITEM_LIFT_FRAMES = 0x80;
@@ -479,12 +561,6 @@ async function fetchJson(url) {
     throw new Error(`${url}: ${res.status} — run: npm run extract -- overworld`);
   }
   return res.json();
-}
-
-function integerScale(viewW, viewH) {
-  const sx = Math.floor(viewW / INTERNAL_W);
-  const sy = Math.floor(viewH / INTERNAL_H);
-  return Math.max(1, Math.min(sx, sy));
 }
 
 function screenUrl(mapIndex) {
@@ -507,6 +583,20 @@ function bgUrl(mapIndex, quest = 1) {
 
 async function main() {
   const worldIndex = await fetchJson('/play/world_index.json');
+  const urlParams = new URLSearchParams(window.location.search);
+  /**
+   * How many heroes to start with, until players can join from the title.
+   * Known before the renderer so a two-player boot is 512×544 from the first
+   * pixel, not a 256×240 canvas that later stretches.
+   */
+  const maxPlayers = DEFAULT_PLAYER_BINDS.length;
+  let playerCount = Math.min(
+    Math.max(1, Number(urlParams.get('players')) || 1),
+    maxPlayers,
+  );
+  const framePx = frameSize(playerCount);
+  INTERNAL_W = framePx.width;
+  INTERNAL_H = framePx.height;
 
   let options = loadOptions();
   // Must happen before the renderer is created and before any sheet URL is
@@ -545,15 +635,16 @@ async function main() {
     const pad = 32;
     const availW = stageEl.clientWidth - pad;
     const availH = stageEl.clientHeight - pad;
-    let scale;
-    if (options.scale === 'auto') {
-      scale = integerScale(availW, availH);
-      app.canvas.style.maxWidth = '';
-    } else {
-      // Fixed scale must ignore CSS max-width or aspect ratio distorts.
-      scale = Math.max(1, Math.min(6, Number(options.scale) || 1));
-      app.canvas.style.maxWidth = 'none';
-    }
+    const scale = canvasCssScale({
+      availW,
+      availH,
+      internalW: INTERNAL_W,
+      internalH: INTERNAL_H,
+      option: options.scale,
+    });
+    // Always win over the stylesheet. A 256×240 max-width used to squash the
+    // 512×544 co-op frame once the fitted width exceeded that NES-aspect cap.
+    app.canvas.style.maxWidth = 'none';
     app.canvas.style.width = `${INTERNAL_W * scale}px`;
     app.canvas.style.height = `${INTERNAL_H * scale}px`;
   }
@@ -593,10 +684,22 @@ async function main() {
   };
   /** @type {Record<string, import('pixi.js').Texture>} */
   const sheetTextures = {};
-  for (const [id, url] of Object.entries(sheetUrls)) {
-    const tex = await Assets.load(url);
-    tex.source.scaleMode = 'nearest';
-    sheetTextures[id] = tex;
+  const sheetEntries = Object.entries(sheetUrls);
+  let sheetsReady = 0;
+  try {
+    await Promise.all(
+      sheetEntries.map(async ([id, url]) => {
+        const tex = await Assets.load(url);
+        tex.source.scaleMode = 'nearest';
+        sheetTextures[id] = tex;
+        sheetsReady += 1;
+        setStatus(`Loading graphics (${sheetsReady}/${sheetEntries.length})…`);
+      }),
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setStatus(`Graphics failed: ${msg}`);
+    throw err;
   }
   /** Transparent 16×16 crack overlay for bombable OW/UW walls. */
   let bombCrackTex = /** @type {import('pixi.js').Texture | null} */ (null);
@@ -654,7 +757,7 @@ async function main() {
     // Link frames share the same SP0 row; drop before destroy.
     linkSprite.texture = Texture.EMPTY;
     hud.releaseItemSprites();
-    invUi.close();
+    closeAllMenus();
 
     if (mode === 'dungeon' && dungeon?.level) {
       enemySprites.setDungeonLevel(dungeon.level);
@@ -751,7 +854,7 @@ async function main() {
     syncUwBombCracks(entry, dungeon.room, false);
     roomSprite = entry.sprite;
     dungeonTileGrid = painted.tileGrid;
-    applyPushBlockRoomArt();
+    applyPushBlockRoomArt(dungeon.room.roomId);
   }
 
   /**
@@ -775,7 +878,7 @@ async function main() {
    */
   function syncOwBombCracks(entry, mapIndex) {
     if (!entry) return;
-    const secrets = entry.pack?.secrets ?? [];
+    const secrets = owRooms.pack(mapIndex)?.secrets ?? [];
     const placements = owBombCrackPlacements(secrets, owSecretsRevealed, mapIndex);
     syncBombCrackSprites(entry, bombCrackTex, placements);
   }
@@ -827,16 +930,18 @@ async function main() {
   }
 
   /**
-   * Patch a 16×16 UW square into the live room texture (play-area coords).
+   * Patch a 16×16 UW square into a streamed room texture (play-area coords).
    * Dest coords are NES screen units; the backing canvas is in sheet pixels
    * (`px()`), matching `patchOwBgSquare` / enhanced 2× textures.
    * @param {number} nesX screen X
    * @param {number} nesY screen Y (includes HUD)
    * @param {number} primary CHR base
+   * @param {number} [targetRoomId]
    */
-  function patchRoomSquareAt(nesX, nesY, primary) {
-    // The anchor room's own sprite — `roomSprite` is only an alias for it.
-    const spr = uwStream.get(roomId)?.sprite ?? roomSprite;
+  function patchRoomSquareAt(nesX, nesY, primary, targetRoomId = roomId) {
+    const id = targetRoomId & 0xff;
+    // The occupying cell's own sprite — `roomSprite` is only an alias for the anchor.
+    const spr = uwStream.get(id)?.sprite ?? ((id === (roomId & 0xff)) ? roomSprite : null);
     if (!spr || !dungeon) return;
     const level = dungeon.level ?? 1;
     const paletteSet = paletteById.get(`level_${level}`) ?? owPaletteSet;
@@ -867,28 +972,34 @@ async function main() {
    * @param {number} px
    * @param {number} py
    * @param {number} primary $B0 block or $74 floor
+   * @param {number} [targetRoomId]
    */
-  function setUwSquareAt(px, py, primary) {
+  function setUwSquareAt(px, py, primary, targetRoomId = roomId) {
     const [ul, ll, ur, lr] = pushBlockSquareTiles(primary);
     const tiles = [
       [ul, ur],
       [ll, lr],
     ];
+    const id = targetRoomId & 0xff;
+    const grid =
+      uwRooms.tileGrid(id)
+      ?? ((id === (roomId & 0xff)) ? dungeonTileGrid : null);
+    const writeFloor = id === (roomId & 0xff);
     for (let row = 0; row < 2; row += 1) {
       for (let col = 0; col < 2; col += 1) {
         const x = px + col * 8;
         const y = py + row * 8;
         const t = tiles[row][col];
-        if (floorTiles) {
+        if (writeFloor && floorTiles) {
           const floor = floorFrame();
           const c = Math.floor((x - floor.x) / 8);
           const r = Math.floor((y - floor.y) / 8);
           if (floorTiles[r]) floorTiles[r][c] = t;
         }
-        if (dungeonTileGrid) {
+        if (grid) {
           const c = Math.floor(x / 8);
           const r = Math.floor((y - HUD_HEIGHT) / 8);
-          if (dungeonTileGrid[r]) dungeonTileGrid[r][c] = t;
+          if (grid[r]) grid[r][c] = t;
         }
       }
     }
@@ -902,32 +1013,55 @@ async function main() {
    * play grid from the layout and would otherwise put the block back at home
    * (bombable doors / shutters call refresh after a push).
    */
-  function applyPushBlockRoomArt() {
-    if (!pushBlock || !(roomSprite ?? uwStream.get(roomId)?.sprite)) return;
-    if (pushBlock.state === PUSH_STATE.DONE || pushBlock.complete) {
-      setUwSquareAt(pushBlock.homeX, pushBlock.homeY, 0x74);
-      setUwSquareAt(pushBlock.x, pushBlock.y, 0xb0);
-      patchRoomSquareAt(pushBlock.homeX, pushBlock.homeY, 0x74);
-      patchRoomSquareAt(pushBlock.x, pushBlock.y, 0xb0);
-      if (dungeon?.room && pushSpawnsStairs(dungeon.room)) {
-        setUwSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE);
-        patchRoomSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE);
+  function applyPushBlockRoomArt(targetRoomId = roomId) {
+    const id = targetRoomId & 0xff;
+    const block = pushBlocks.get(id) ?? ((id === (roomId & 0xff)) ? pushBlock : null);
+    if (!block || !(uwStream.get(id)?.sprite ?? ((id === (roomId & 0xff)) ? roomSprite : null))) {
+      return;
+    }
+    if (block.state === PUSH_STATE.DONE || block.complete) {
+      setUwSquareAt(block.homeX, block.homeY, 0x74, id);
+      setUwSquareAt(block.x, block.y, 0xb0, id);
+      patchRoomSquareAt(block.homeX, block.homeY, 0x74, id);
+      patchRoomSquareAt(block.x, block.y, 0xb0, id);
+      const room = dungeon?.levelData?.rooms?.find((r) => (r.roomId & 0xff) === id);
+      if (room && pushSpawnsStairs(room)) {
+        setUwSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE, id);
+        patchRoomSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE, id);
       }
-    } else if (pushBlock.state === PUSH_STATE.MOVING) {
-      setUwSquareAt(pushBlock.homeX, pushBlock.homeY, 0x74);
-      patchRoomSquareAt(pushBlock.homeX, pushBlock.homeY, 0x74);
+    } else if (block.state === PUSH_STATE.MOVING) {
+      setUwSquareAt(block.homeX, block.homeY, 0x74, id);
+      patchRoomSquareAt(block.homeX, block.homeY, 0x74, id);
     }
     // IDLE: leave baked $B0 at home — no overlay until the push starts.
   }
 
+  /**
+   * One player's 256×240 picture: the world and the status bar that sits on it.
+   *
+   * Alone this is the stage. In company it is drawn once per player into a
+   * render texture, with that player's camera and that player's hearts, and
+   * the textures sit side by side. Title, inventory and death stay on the
+   * stage — they still cover the left quadrant until those UIs are rehomed.
+   */
+  const frame = new Container();
+  app.stage.addChild(frame);
   const world = new Container();
-  app.stage.addChild(world);
+  frame.addChild(world);
 
   /** Play-area layer offset by the continuous camera (caves/cellars keep identity). */
   const playField = new Container();
   world.addChild(playField);
-  const owStream = createStreamView(playField);
-  const uwStream = createStreamView(playField);
+  // Room data lives in the stores; the views above them only hold sprites, so
+  // collision lookups never go through the scene graph.
+  let owRooms = createRoomStore();
+  let uwRooms = createRoomStore();
+  let owStream = createStreamView(playField, owRooms);
+  let uwStream = createStreamView(playField, uwRooms);
+  const bootOwRooms = owRooms;
+  const bootOwStream = owStream;
+  const bootUwRooms = uwRooms;
+  const bootUwStream = uwStream;
 
   /**
    * Dark wash over UW room backgrounds until candle is used (this stay).
@@ -958,15 +1092,23 @@ async function main() {
     commonBg: sheetTextures.commonBg,
     misc: sheetTextures.misc,
   });
-
-  const invUi = createInventoryUi({
-    items,
+  const sharedBar = createSharedBar({
     commonBg: sheetTextures.commonBg,
-    overworldBg: sheetTextures.overworldBg,
+    misc: sheetTextures.misc,
   });
-  // Inventory under the HUD in z-order so the docked status bar stays on top.
-  app.stage.addChild(invUi.root);
-  app.stage.addChild(hud.root);
+
+  const invUis = Array.from({ length: maxPlayers }, () =>
+    createInventoryUi({
+      items,
+      commonBg: sheetTextures.commonBg,
+      overworldBg: sheetTextures.overworldBg,
+    }),
+  );
+  // One panel per seat, all in `frame`, so presentViews can show each
+  // player's copy in their quadrant. Solo still ticks player one's.
+  for (const ui of invUis) frame.addChild(ui.root);
+  const invUi = invUis[0];
+  frame.addChild(hud.root);
 
   /** @type {object | null} */
   let endingData = null;
@@ -996,7 +1138,7 @@ async function main() {
     misc: sheetTextures.misc,
     items,
     linkTexture: titleLinkTexture,
-    playSfx: (name) => audio?.playSfx(name),
+    playSfx: (name) => fx.playSfx(name),
   });
 
   const titleUi = createTitleUi({
@@ -1063,6 +1205,11 @@ async function main() {
     console.warn('Missing audio.json — run: npm run extract -- audio');
   }
 
+  // Every sound the simulation asks for goes through the bus, so a headless
+  // run can record it. Device control below (mute, volume) still talks to the
+  // device directly — that is the player's setting, not the game's noise.
+  const fx = createAudioBus(() => audio);
+
   function musicForMode() {
     if (!audio) return;
     // Mode $11/$08 owns audio (dying tune / game over); do not restart world BGM.
@@ -1078,6 +1225,18 @@ async function main() {
     } else if (mode === 'overworld' || mode === 'cave') {
       playOverworldMusic();
     }
+  }
+
+  /**
+   * The song follows the lowest-numbered living player. playMusic no-ops
+   * when that track is already up, so this is safe to call every frame.
+   */
+  function syncSessionMusic() {
+    if (!playing || deathUi.visible || titleUi.visible || demoUi.visible) return;
+    const host = livingPlayers(players)[0] ?? hostPlayer(players);
+    if (!host) return;
+    focus.on(host, () => musicForMode());
+    focus.to(players[0]);
   }
 
   /** Overworld BGM only when we are actually exploring the overworld/cave. */
@@ -1096,7 +1255,7 @@ async function main() {
 
   // Unlock AudioContext on first input (browser autoplay policy).
   const unlockAudio = () => {
-    void audio?.unlock().then(() => musicForMode());
+    void fx.unlock().then(() => musicForMode());
     window.removeEventListener('pointerdown', unlockAudio);
     window.removeEventListener('keydown', unlockAudio);
   };
@@ -1154,7 +1313,6 @@ async function main() {
   /** Passive grave/Armos wakes already used this hold — clear on release. */
   /** @type {Set<string>} */
   const passiveTouchHold = new Set();
-  const raftRide = createRaftRide();
   /** @type {import('pixi.js').Container | null} */
   let raftGfx = null;
   /** @type {import('pixi.js').Graphics | null} */
@@ -1193,6 +1351,15 @@ async function main() {
   let owWaterRgb = OW_WATER_RGB;
   /** NES `FrameCounter` — free-running, drives phase-gated animations. */
   let frameCounter = 0;
+  /**
+   * Simulated steps since boot, never wrapped.
+   *
+   * `frameCounter` is the NES's own 8-bit counter and rolls over every 256
+   * frames, which is fine for animation phase but useless for "has this
+   * already happened this frame" — 256 frames later the answer comes back
+   * wrong once.
+   */
+  let simTick = 0;
   /** Mode `$11` owns Link's visibility while the death sequence plays. */
   let deathLinkVisible = false;
   let playing = false;
@@ -1285,10 +1452,12 @@ async function main() {
    * @type {Set<number>}
    */
   let spawnClaims = new Set();
-  let camLocalX = 0;
-  let camLocalY = 0;
-  let worldCamX = 0;
-  let worldCamY = 0;
+  /**
+   * Player one's camera. Held here rather than in `players` because room
+   * streaming and on-screen tests read it long before the roster is built;
+   * `createPlayer()` below takes this same object (Phase 23).
+   */
+  let cam = createCamera();
   /** Monotonic token so overlapping stream fetches ignore stale results. */
   let streamFetchGen = 0;
 
@@ -1305,36 +1474,113 @@ async function main() {
     return enemySprites.textureForProjectile(p, mode);
   }
 
-  const caveScene = createCaveScene({
+  const caveSceneDeps = {
     spriteTex,
     items,
     enemySprites,
     commonBg: sheetTextures.commonBg,
     sheetTextures,
-  });
+  };
+  /**
+   * One interior per cave world. A single scene used to rebuild in place, so
+   * opening a shop while a friend was in a take-any destroyed their sprites
+   * and walking both dropped the GL context.
+   * @type {Map<string, ReturnType<typeof createCaveScene>>}
+   */
+  const caveScenes = new Map();
+  const caveLayer = new Container();
   // Behind Link in the world layer so the player stands in the cave.
-  world.addChildAt(caveScene.root, 0);
+  world.addChildAt(caveLayer, 0);
+
+  function caveView() {
+    const id = focus.current?.world?.id;
+    return id ? (caveScenes.get(id) ?? null) : null;
+  }
+
+  function ensureCaveScene(worldId) {
+    let scene = caveScenes.get(worldId);
+    if (!scene) {
+      scene = createCaveScene(caveSceneDeps);
+      scene.root.visible = false;
+      caveLayer.addChild(scene.root);
+      caveScenes.set(worldId, scene);
+    }
+    return scene;
+  }
+
+  function dropCaveScene(worldId) {
+    if (!worldId) return;
+    const scene = caveScenes.get(worldId);
+    if (!scene) return;
+    scene.destroy();
+    caveScenes.delete(worldId);
+  }
+
+  function showCaveSceneFor(p) {
+    const want = mode === 'cave' ? p?.world?.id : null;
+    for (const [id, scene] of caveScenes) {
+      scene.root.visible = id === want;
+    }
+  }
   // Phase 19: one dialogue box for every speaking part — cave dwellers,
   // underworld old men, and the between-labyrinth briefings.
   const textBox = createTextBox({
     commonBg: sheetTextures.commonBg,
-    playSfx: (name) => audio?.playSfx(name),
+    playSfx: (name) => fx.playSfx(name),
   });
   world.addChild(textBox.root);
-  const link = createLinkState(worldIndex.startX, worldIndex.startY, worldIndex.startDir);
+  /** Who the open box is talking to. Story beats (`levelEntry`, `briefing`) hold everyone. */
+  let talkingPlayer = null;
+  /** Per-player pages of a story beat; null when nobody is reading one. */
+  let storyPager = null;
+  /**
+   * The hero being simulated. Player one until the focus moves (Phase 23):
+   * `let` rather than `const` so a frame can be run as somebody else without
+   * rewriting the ~440 references that read it.
+   */
+  let link = createLinkState(worldIndex.startX, worldIndex.startY, worldIndex.startDir);
 
-  // Sword under Link (NES draws the blade behind the body for most of the swing).
-  const swordSprite = new Sprite(items.swordTexture(DIR.UP, SWORD.WOOD));
-  swordSprite.visible = false;
-  playField.addChild(swordSprite);
+  // Blades under the bodies (the NES draws the sword behind Link for most of
+  // the swing), with a layer each so any number of heroes keeps that order.
+  const bladeLayer = new Container();
+  playField.addChild(bladeLayer);
 
   /** Debug: solid UW tiles + look-ahead sample (enabled with ?debug=1 / ?coll=1). */
   const collDebugGfx = new Graphics();
   collDebugGfx.visible = false;
   playField.addChild(collDebugGfx);
 
-  const linkSprite = new Sprite(frames.textureFor(link.dir, link.animFrame));
-  playField.addChild(linkSprite);
+  const heroLayer = new Container();
+  playField.addChild(heroLayer);
+
+  /**
+   * The two sprites one hero is drawn with.
+   *
+   * A pair per player, in the shared layers above. They ride the focus with
+   * the hero that owns them, so every line that draws `linkSprite` keeps
+   * meaning "the hero being drawn" without knowing there are others.
+   */
+  function createHeroGfx(forLink, number = 1) {
+    const sword = new Sprite(items.swordTexture(DIR.UP, SWORD.WOOD));
+    sword.visible = false;
+    bladeLayer.addChild(sword);
+    const body = new Sprite(frames.textureFor(forLink.dir, forLink.animFrame));
+    heroLayer.addChild(body);
+    // A number over everyone but you, so two green tunics are not a guessing
+    // game. Hidden on the solo frame — there is nobody else to mark.
+    let tag = null;
+    const img = sheetTextures.commonBg?.source?.resource;
+    if (img) {
+      tag = nesText(img, String(number), 0, 0, 0xfcfcfc);
+      tag.visible = false;
+      heroLayer.addChild(tag);
+    }
+    return { sword, link: body, tag };
+  }
+
+  const p1Gfx = createHeroGfx(link, 1);
+  let swordSprite = p1Gfx.sword;
+  let linkSprite = p1Gfx.link;
 
   // Wallmaster closed hand draws over Link while sliding to the wall.
   const overLinkLayer = new Container();
@@ -1346,14 +1592,42 @@ async function main() {
   playField.addChild(doorFrameLayer);
   const uwDoorFrames = createStreamView(doorFrameLayer);
 
-  const input = createInput(options.binds);
-  const inv = createInventory();
-  const urlParams = new URLSearchParams(window.location.search);
+  /**
+   * The group's inventory: the bag, the purse, quest progress, the clock.
+   *
+   * Nothing reads this directly. Each hero gets a view onto it (`inv` below)
+   * that routes their own hearts, knockback and B slot to fields of their own
+   * and everything else here, so four players spend one purse (Phase 23).
+   */
+  const sharedInv = createInventory();
+  let inv = createInventoryView(sharedInv);
+  /**
+   * Which place the shared `inv.clock` is actually freezing. Tags live on
+   * that world's foes; a friend in a cellar must not expire them.
+   * @type {string | null}
+   */
+  let clockWorldId = null;
   const debugCollision = urlParams.get('debug') === '1' || urlParams.get('coll') === '1';
   const skipTitle =
     urlParams.get('skipTitle') === '1'
     || urlParams.get('slot') != null
     || urlParams.get('debug') === '1';
+
+  /**
+   * A device per player.
+   *
+   * Alone, player one keeps reading every key and every pad, which is the
+   * game as it has always been. In company each player gets their own keys
+   * and their own pad slot, or two heroes answer to one hand.
+   */
+  const inputs = Array.from({ length: maxPlayers }, (_, i) =>
+    createInput(bindsForPlayer(options, i), {
+      padIndex: playerCount > 1 ? i : null,
+    }),
+  );
+  /** Player one's device. The menus, the dialogue and the title read this. */
+  const input = inputs[0];
+  const padStartEdges = createPadStartEdges();
 
   /** @type {{ slots: number[], practice: boolean } | null} */
   let ganonResetResult = null;
@@ -1383,6 +1657,10 @@ async function main() {
     inv.selectedB = B_ITEM.BOW;
     inv.maxHalfHearts = 16;
     inv.halfHearts = 16;
+    // selectedB is per hero; the bag is already shared.
+    for (const p of players) {
+      if (p?.inv && p.inv !== inv) p.inv.selectedB = B_ITEM.BOW;
+    }
   }
 
   /**
@@ -1411,8 +1689,123 @@ async function main() {
           playing,
           busy,
           hasScreen: Boolean(screen),
-          invOpen: invUi.open,
+          invOpen: activePlayers(players).some((p) => menuUi(p).open),
+          menuPlayer: menuOwner()?.index ?? null,
           swordActive: isSwordActive(sword),
+          dialogue: textBox.active,
+          talking: talkingPlayer?.index ?? null,
+          /** Every hero in the party, in player order. */
+          heroes: players.map((p) => ({
+            x: p.link.x,
+            y: p.link.y,
+            dir: p.link.dir,
+            active: p.active,
+            dead: Boolean(p.inv?.dead),
+            halfHearts: p.inv?.halfHearts ?? 0,
+            maxHalfHearts: p.inv?.maxHalfHearts ?? 0,
+            paralyzed: p.inv?.paralyzed ?? 0,
+            world: p.world?.id ?? null,
+            swinging: isSwordActive(p.sword),
+            animFrame: p.link.animFrame,
+            animCounter: p.link.animCounter,
+            moving: p.link.moving,
+            gridOffset: p.link.gridOffset,
+            posFrac: p.link.posFrac,
+            uwOccRoomId: p.uwOccRoomId,
+            camLocalX: p.cam.camLocalX,
+            camLocalY: p.cam.camLocalY,
+            linkRoom: occupyingRoom(
+              p.world === focus.current?.world ? roomId : (p.world?.roomId ?? roomId),
+              p.link.x,
+              p.link.y,
+            ).roomId,
+            menu: menuUi(p).open,
+            menuPhase: menuUi(p).phase,
+            selectedB: p.inv?.selectedB ?? null,
+            swordVisible: Boolean(p.gfx?.sword?.visible),
+            swordGfx: p.gfx?.sword
+              ? {
+                  x: p.gfx.sword.x,
+                  y: p.gfx.sword.y,
+                  w: p.gfx.sword.texture?.width ?? 0,
+                }
+              : null,
+            bombsOut: (p.world?.bombs ?? []).filter((b) => b.phase !== 'done').length,
+            dark: heroSeesDark(p),
+            rafting: Boolean(p.raftRide?.active),
+            spinning: Boolean(p.deathSeq),
+          })),
+          projectiles: projectiles
+            .filter((p) => p.alive)
+            .map((p) => ({
+              kind: p.kind,
+              x: p.x,
+              y: p.y,
+              dir: p.dir,
+              friendly: Boolean(p.friendly),
+              bouncing: Boolean(p.bouncing),
+            })),
+          fxCount: fxLayer.children.length,
+          bombCount: bombs.filter((b) => b.phase !== 'done').length,
+          keys: sharedInv.keys ?? 0,
+          rupees: sharedInv.rupees ?? 0,
+          bombs: sharedInv.bombs ?? 0,
+          clock: Boolean(sharedInv.clock),
+          boomerang: (() => {
+            const boom = liveBoomerangs(boomerangs)[0];
+            return boom
+              ? {
+                  x: boom.x,
+                  y: boom.y,
+                  phase: boom.phase,
+                  owner: boom.owner ?? 0,
+                  dir: boom.dir,
+                }
+              : null;
+          })(),
+          boomerangs: liveBoomerangs(boomerangs).map((b) => ({
+            x: b.x,
+            y: b.y,
+            phase: b.phase,
+            owner: b.owner ?? 0,
+            dir: b.dir,
+          })),
+          uwStreamRooms: [...uwStream.views.keys()],
+          owStreamRooms: [...owStream.views.keys()],
+          story: storyPager
+            ? {
+                holding: storyPager.holding(),
+                pages: storyPager.pageCount,
+                finished: players.map((p) => storyPager.finished(p.index)),
+              }
+            : null,
+          ending: endingUi.visible,
+          cinematic: playerCount > 1 && !splitLayer.visible,
+          canvasW: INTERNAL_W,
+          canvasH: INTERNAL_H,
+          dark: heroSeesDark(hostPlayer(players) ?? players[0]),
+          candleLit: Boolean(candleStateAt(hostPlayer(players) ?? players[0]).lit),
+          raft: (() => {
+            const p = activePlayers(players).find((q) => q.raftRide?.active);
+            if (!p) return null;
+            const r = p.raftRide;
+            return { owner: p.index, x: r.x, y: r.y, state: r.state };
+          })(),
+          pushBlocks: [...pushBlocks.entries()]
+            .filter(([, b]) => b)
+            .map(([id, b]) => ({
+              roomId: id,
+              x: b.x,
+              y: b.y,
+              state: b.state,
+              complete: Boolean(b.complete),
+            })),
+          deadMenu: deathUi.visible,
+          sharedBar: sharedBar.root.visible,
+          compactHud: playerCount > 1,
+          hud: hud.probe(),
+          joinPrompts: joinPrompts.length,
+          joinHint: document.getElementById('joinHint')?.textContent ?? '',
         }),
         /**
          * Advance exactly `frames` 60Hz frames. Pixi drops an update whose
@@ -1442,6 +1835,52 @@ async function main() {
           }
         },
         /**
+         * Freeze / unfreeze the wall-clock advance. `step(n)` still works
+         * while frozen, which is what makes a run reproducible.
+         * @param {boolean} [on]
+         */
+        pause: (on = true) => {
+          framePaused = Boolean(on);
+          return framePaused;
+        },
+        paused: () => framePaused,
+        /** Room loads still in flight; a golden run drains this each frame. */
+        pendingLoads: () => pendingRoomLoads,
+        /** Which places are loaded, and where the focused player is standing. */
+        worlds: () => ({ live: worlds.ids(), current: focus.current?.world?.id ?? null }),
+        collectSave: () => collectSaveState(),
+        practiceSave: () => savePracticeState(),
+        practiceLoad: () => loadPracticeState(),
+        /**
+         * Step out into an empty world and straight back again.
+         *
+         * The swap that gives each player their own place is dead code at one
+         * player — the focus never moves, so nothing is ever saved or loaded
+         * and a golden run cannot tell a complete swap from an empty one. This
+         * makes the focus move on demand: if `loadWorldContext()` and
+         * `saveWorldContext()` between them carry everything, the world comes
+         * back indistinguishable, and if they miss a field it is left holding
+         * the scratch world's empty version of it.
+         */
+        visitScratchWorld: () => {
+          const me = focus.current;
+          const scratch = createPlayer({
+            index: -1,
+            link: createLinkState(0x11, 0x22, DIR.UP),
+            sword: createSwordState(),
+            inv: createInventoryView(sharedInv),
+            world: createWorld({ id: 'scratch' }),
+          });
+          // Borrowed, not built: the visit draws nothing, and lending the
+          // sprites keeps a debug hook from leaking a pair per call.
+          scratch.gfx = me.gfx;
+          // Read from inside the visit: `link` has to *be* the other hero
+          // while the focus is on them, not merely be restored afterwards.
+          const inside = focus.on(scratch, () => ({ x: link.x, y: link.y }));
+          focus.to(me);
+          return { world: me?.world?.id ?? null, inside };
+        },
+        /**
          * Streaming invariants, in one shot. `screenRoomId` must track
          * `roomId` (a stale `screen` breaks OW collision + cave warps) and
          * `spriteIds` must be a subset of `enemyIds` (a leaked sprite is a
@@ -1453,15 +1892,15 @@ async function main() {
           mode,
           roomId,
           screenRoomId: screen?.mapIndex ?? null,
-          camLocalX,
-          camLocalY,
-          worldCamX,
-          worldCamY,
+          camLocalX: cam.camLocalX,
+          camLocalY: cam.camLocalY,
+          worldCamX: cam.worldCamX,
+          worldCamY: cam.worldCamY,
           link: { x: link.x, y: link.y, dir: link.dir },
           spawnedRooms: [...spawnedRooms],
           spawnClaims: [...spawnClaims],
           streamRooms: [
-            ...(mode === 'dungeon' ? uwStream : owStream).rooms.keys(),
+            ...(mode === 'dungeon' ? uwRooms : owRooms).rooms.keys(),
           ],
           // Anchor must contain Link, and the collision grid must be the very
           // array the stream hands the multi-room tile probes.
@@ -1471,8 +1910,8 @@ async function main() {
           })(),
           gridAliased:
             mode === 'dungeon'
-              ? dungeonTileGrid === (uwStream.get(roomId)?.tileGrid ?? null)
-              : screen?.tileGrid === (owStream.get(roomId)?.tileGrid ?? null),
+              ? dungeonTileGrid === (uwRooms.tileGrid(roomId) ?? null)
+              : screen?.tileGrid === (owRooms.tileGrid(roomId) ?? null),
           enemyIds: enemies.map((e) => e.id),
           spriteIds: [...enemyGfx.keys()],
           enemies: enemies.map((e) => ({
@@ -1484,11 +1923,11 @@ async function main() {
             edge: Boolean(e.edgePending),
             x: e.x,
             y: e.y,
-            off: rectFullyOffCamera(e, camLocalX, camLocalY, 0),
+            off: rectFullyOffCamera(e, cam.camLocalX, cam.camLocalY, 0),
           })),
         }),
         marks: () => currentMapMarks(),
-        say: (pages) => textBox.open(pages, { kind: 'debug' }),
+        say: (pages) => openTextBox(pages, { kind: 'debug' }),
         briefing: (level) => openLevelBriefing(level),
         /**
          * Jump to mode `$13`. Without an argument it plays from Zelda's line;
@@ -1497,16 +1936,37 @@ async function main() {
          */
         ending: (from = 'start') => {
           endingUi.begin({ quest: inv.quest, name: saveName, deaths: deathCount });
+          presentCinematic();
           if (from === 'epilogue') skipEndingToEpilogue(endingUi.state);
           return endingUi.phase;
         },
-        enterLevel: (levelId) => enterLevel(levelId),
-        goRoom: (id, dir) => loadDungeonRoom(id, dir),
-        goOw: (id, x = 0x78, y = 0x8d, dir = DIR.UP) =>
-          loadOverworldScreen(id & 0xff, { x, y, dir }),
+        enterLevel: (levelId, index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index);
+          if (!p) return null;
+          return focus.on(p, () => enterLevel(levelId));
+        },
+        goRoom: (id, dir, index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index);
+          if (!p) return null;
+          return focus.on(p, () => loadDungeonRoom(id, dir));
+        },
+        goOw: (id, x = 0x78, y = 0x8d, dir = DIR.UP, index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index);
+          if (!p) return null;
+          return focus.on(p, () => loadOverworldScreen(id & 0xff, { x, y, dir }));
+        },
         /** Square-level view of a streamed OW room's collision grid. */
         squares: (id = roomId) => {
-          const grid = owStream.get(id)?.tileGrid;
+          const grid = owRooms.tileGrid(id);
           if (!grid) return null;
           const out = [];
           for (let r = 0; r < 11; r += 1) {
@@ -1521,7 +1981,7 @@ async function main() {
         revealed: () => [...owSecretsRevealed],
         /** Why Link is (or is not) allowed to move this frame. */
         moveProbe: () => {
-          const grids = owStream.gridMap();
+          const grids = owRooms.gridMap();
           const dirs = { up: DIR.UP, down: DIR.DOWN, left: DIR.LEFT, right: DIR.RIGHT };
           /** @type {Record<string, unknown>} */
           const can = {};
@@ -1538,7 +1998,7 @@ async function main() {
               swordActive: isSwordActive(sword),
               shovePixels: inv.shovePixels,
               itemLiftTimer: inv.itemLiftTimer ?? 0,
-              raftActive: raftRide.active,
+              raftActive: currentRaft().active,
               dead: inv.dead,
               undergroundExitType,
             },
@@ -1551,7 +2011,7 @@ async function main() {
         warpProbe: () => {
           if (mode !== 'overworld') return null;
           const probe = (px, py) =>
-            standingTileMulti(owStream.gridMap(), roomId, px, py);
+            standingTileMulti(owRooms.gridMap(), roomId, px, py);
           return {
             roomId,
             screenRoomId: screen?.mapIndex ?? null,
@@ -1593,7 +2053,7 @@ async function main() {
             entry: checkUwStairsEntry(link, dungeonTileGrid),
             cellarId: cellarForStairsRoom(level, dungeon.room.roomId),
             samples,
-            gridAliased: dungeonTileGrid === (uwStream.get(roomId)?.tileGrid ?? null),
+            gridAliased: dungeonTileGrid === (uwRooms.tileGrid(roomId) ?? null),
           };
         },
         cheats: debugCheats,
@@ -1602,6 +2062,393 @@ async function main() {
         refillRupees: () => debugRefillRupees(),
         killScreen: () => debugKillScreen(),
         killLink: () => debugKillLink(),
+        /** Drop one hero. Co-op respawns them; solo opens the continue menu. */
+        kill: (index = 0) => debugKillLink(index),
+        /** Drop everyone at once so the continue menu has someone to talk to. */
+        wipeParty: () => {
+          for (const p of activePlayers(players)) killLink(p.inv);
+          const last = hostPlayer(players);
+          if (last) focus.on(last, () => beginDeath());
+          focus.to(players[0]);
+        },
+        caps: () => ({
+          rupeeCap: sharedInv.rupeeCap ?? 255,
+          rupeeCapFloor: sharedInv.rupeeCapFloor ?? 255,
+          rupees: sharedInv.rupees ?? 0,
+          maxBombs: sharedInv.maxBombs,
+          bombBag: sharedInv.bombBag,
+          bombs: sharedInv.bombs ?? 0,
+        }),
+        grantHeart: () => {
+          grantRoomItem(inv, 0x1a);
+          onGrantedItem(0x1a);
+          return players.map((p) => ({
+            index: p.index,
+            max: p.inv.maxHalfHearts,
+            hh: p.inv.halfHearts,
+          }));
+        },
+        poseHero: (index, x, y, dir) => {
+          const p = players.find((q) => q.index === index);
+          if (!p?.link) return false;
+          p.link.x = x;
+          p.link.y = y;
+          if (dir != null) p.link.dir = dir;
+          p.link.posFrac = 0;
+          p.link.gridOffset = 0;
+          p.link.moving = false;
+          p.link.animCounter = 6;
+          p.link.animFrame = 0;
+          if (p.inv) {
+            p.inv.shovePixels = 0;
+            p.inv.shoveDir = 0;
+            p.inv.itemLiftTimer = 0;
+          }
+          const anchor =
+            p.world === focus.current?.world ? roomId : (p.world?.roomId ?? roomId);
+          p.uwOccRoomId = occupyingRoom(anchor, x, y).roomId;
+          p.uwDoorwayBlockSide = null;
+          if ((p.world?.mode ?? '') === 'dungeon') {
+            const store = candleStoreFor(p);
+            const occupied = activePlayers(players).some(
+              (q) => q !== p && q.world === p.world
+                && occupyingRoomIdOf(q) === (p.uwOccRoomId & 0xff),
+            );
+            beginCandleStay(store, p.uwOccRoomId, dungeonPackAt(p), p.inv, occupied);
+          }
+          return true;
+        },
+        /**
+         * Put a visible floor item under a hero so a play test can take it.
+         * @param {number} [index]
+         * @param {number} [itemType] default key `$19`
+         */
+        placeRoomItem: (index = 0, itemType = 0x19) => {
+          const p = players.find((q) => q.index === index && q.active);
+          if (!p?.link) return false;
+          return focus.on(p, () => {
+            roomItem = {
+              itemType,
+              effect: 0,
+              homeX: p.link.x,
+              homeY: p.link.y,
+              x: p.link.x,
+              y: p.link.y,
+              visible: true,
+              taken: false,
+              carried: false,
+            };
+            return true;
+          });
+        },
+        /**
+         * Drop a living foe in the current room so a play test can watch
+         * whether it follows through a door. Real rooms do this themselves;
+         * the hook is for rooms that spawn empty (old-man entrance, cleared).
+         * `player` plants in that hero's world (so an overworld test still
+         * works after player one has gone underground).
+         */
+        plantFoe: (opts = {}) => {
+          const go = () => {
+            const e = createEnemy({
+              objType: opts.objType ?? OBJ.RED_GORIYA,
+              x: opts.x ?? 0xc0,
+              y: opts.y ?? 0x8d,
+            });
+            if (!e) return null;
+            const home = (opts.home ?? roomId) & 0xff;
+            tagEnemyHomeRoom([e], home);
+            e.viewActivated = true;
+            e.alive = true;
+            if (opts.captureTimer != null) e.captureTimer = opts.captureTimer;
+            enemies.push(e);
+            spawnedRooms.add(home);
+            return { id: e.id, home: e.homeRoomId, x: e.x, y: e.y, objType: e.objType };
+          };
+          if (opts.player == null) return go();
+          const p = players.find((q) => q.index === opts.player && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const planted = focus.on(p, go);
+          if (held) focus.to(held);
+          return planted;
+        },
+        /**
+         * Put a floor drop under a hero so a play test can see whether the
+         * sprite follows that world's view, not only the pickup.
+         */
+        plantDrop: (opts = {}) => {
+          const go = () => {
+            const drop = createDroppedItem(
+              opts.x ?? link.x,
+              opts.y ?? link.y,
+              opts.itemId ?? DROP_ITEM.RUPEE1,
+            );
+            if (opts.lifetime != null) drop.lifetime = opts.lifetime;
+            drop.id = dropSpriteSeq++;
+            drops.push(drop);
+            syncDropSprites();
+            return { id: drop.id, x: drop.x, y: drop.y, itemId: drop.itemId };
+          };
+          if (opts.player == null) return go();
+          const p = players.find((q) => q.index === opts.player && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const planted = focus.on(p, go);
+          if (held) focus.to(held);
+          return planted;
+        },
+        /**
+         * Put a shot in a hero's world so a play test can see whether the
+         * sprite follows that view. Sword beams and enemy rocks both live on
+         * `projGfx`, which split-screen used to leave latched off.
+         */
+        plantShot: (opts = {}) => {
+          const go = () => {
+            const shot = createProjectile({
+              kind: opts.kind ?? PROJ.ROCK,
+              x: opts.x ?? link.x,
+              y: opts.y ?? link.y,
+              dir: opts.dir ?? DIR.LEFT,
+              speed: opts.speed ?? 0,
+              life: opts.life ?? 180,
+              friendly: Boolean(opts.friendly),
+            });
+            projectiles.push(shot);
+            syncEnemySprites();
+            return { id: shot.id, kind: shot.kind, x: shot.x, y: shot.y };
+          };
+          if (opts.player == null) return go();
+          const p = players.find((q) => q.index === opts.player && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const planted = focus.on(p, go);
+          if (held) focus.to(held);
+          return planted;
+        },
+        /**
+         * Per-world item sprites. After a split-screen present, a drop the
+         * overworld still holds must stay visible on that world and hidden
+         * on a cellar.
+         */
+        itemGfx: () =>
+          worlds.ids().map((id) => {
+            const w = worlds.get(id);
+            return {
+              id,
+              drops: (w?.drops ?? []).filter((d) => d.alive).length,
+              dropVisible: [...(w?.dropGfx?.values() ?? [])].filter((s) => s.visible)
+                .length,
+              shots: (w?.projectiles ?? []).filter((p) => p.alive).length,
+              shotVisible: [...(w?.projGfx?.values() ?? [])].filter((s) => s.visible)
+                .length,
+              pondHearts: (w?.pondHeartGfx ?? []).length,
+              pondVisible: (w?.pondHeartGfx ?? []).filter((s) => s.visible).length,
+            };
+          }),
+        /** What each quadrant actually painted — rafts used to stay latched on. */
+        viewGfx: () =>
+          players.map((p) => ({
+            index: p.index,
+            active: p.active,
+            raftVisible: Boolean(p.view?.raftVisible),
+            rafting: Boolean(p.raftRide?.active),
+            ladderVisible: Boolean(p.view?.ladderVisible),
+            whirlVisible: Boolean(p.view?.whirlVisible),
+            baitVisible: Boolean(p.view?.baitVisible),
+            liftVisible: Boolean(p.view?.liftVisible),
+            boomVisible: p.view?.boomVisible ?? 0,
+            bombCount: p.view?.bombCount ?? 0,
+            hudMap: Boolean(p.view?.hudMap),
+            hudCounters: Boolean(p.view?.hudCounters),
+            hudMode: p.view?.hudMode ?? null,
+          })),
+        /** Living foes in a hero's world (the live list if that world is in focus). */
+        foes: (index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index);
+          if (!p) return [];
+          const list =
+            p.world === focus.current?.world ? enemies : (p.world?.enemies ?? []);
+          return list
+            .filter((e) => e.alive)
+            .map((e) => ({
+              id: e.id,
+              x: e.x,
+              y: e.y,
+              home: e.homeRoomId ?? null,
+              objType: e.objType,
+              clockFrozen: Boolean(e.clockFrozen),
+            }));
+        },
+        /**
+         * Close a Wallmaster's hand on a hero so a play test can watch the
+         * dump without waiting for a crawl. The slide still runs; warp is
+         * the same finish as a real grab.
+         * @param {number} [index]
+         */
+        grabWallmaster: (index = 0) => {
+          const p = players.find((q) => q.index === index && q.active);
+          if (!p?.link) return null;
+          const e = createEnemy({
+            objType: OBJ.WALLMASTER,
+            x: p.link.x,
+            y: p.link.y,
+          });
+          if (!e) return null;
+          const home = occupyingRoom(
+            p.world === focus.current?.world ? roomId : (p.world?.roomId ?? roomId),
+            p.link.x,
+            p.link.y,
+          ).roomId;
+          tagEnemyHomeRoom([e], home);
+          e.viewActivated = true;
+          e.alive = true;
+          e.wallmasterGrab = true;
+          e.wallmasterVictim = index;
+          e.captureTimer = 1;
+          e.wallmasterRetreatDir = undefined;
+          e.wallmasterTilesCrossed = 0;
+          e.gridOffset = 0;
+          p.inv.paralyzed = 2;
+          p.inv.shovePixels = 0;
+          p.inv.shoveDir = 0;
+          enemies.push(e);
+          spawnedRooms.add(home);
+          return { id: e.id, victim: index, x: e.x, y: e.y };
+        },
+        plantBomb: (owner = 0, explode = false) => {
+          const p = players.find((q) => q.index === owner && q.active);
+          if (!p) return false;
+          focus.on(p, () => {
+            const bomb = placeBomb(p.link.x, p.link.y, p.link.dir);
+            bomb.owner = p.index;
+            if (explode) {
+              bomb.phase = 'explode';
+              bomb.timer = 8;
+              bomb.damaged = false;
+            }
+            bombs.push(bomb);
+          });
+          focus.to(players[0]);
+          return true;
+        },
+        /**
+         * Drop a stepladder sprite in a hero's world so a split-screen test
+         * can see whether it stays off an ally's other-world view.
+         */
+        plantLadder: (opts = {}) => {
+          const go = () => {
+            ladderObj = {
+              x: opts.x ?? link.x,
+              y: opts.y ?? link.y,
+              dir: opts.dir ?? DIR.RIGHT,
+              state: 1,
+            };
+            syncLadderSprite();
+            return { x: ladderObj.x, y: ladderObj.y };
+          };
+          if (opts.player == null) return go();
+          const p = players.find((q) => q.index === opts.player && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const planted = focus.on(p, go);
+          if (held) focus.to(held);
+          return planted;
+        },
+        plantWhirlwind: (opts = {}) => {
+          const go = () => {
+            whirlwind = createWhirlwind(opts.y ?? link.y);
+            whirlwind.x = opts.x ?? link.x;
+            syncWhirlwindSprite();
+            return { x: whirlwind.x, y: whirlwind.y };
+          };
+          if (opts.player == null) return go();
+          const p = players.find((q) => q.index === opts.player && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const planted = focus.on(p, go);
+          if (held) focus.to(held);
+          return planted;
+        },
+        plantBait: (opts = {}) => {
+          const go = () => {
+            bait = placeBait(opts.x ?? link.x, opts.y ?? link.y, opts.dir ?? link.dir);
+            syncToolSprites();
+            return { x: bait.x, y: bait.y, alive: bait.alive };
+          };
+          if (opts.player == null) return go();
+          const p = players.find((q) => q.index === opts.player && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const planted = focus.on(p, go);
+          if (held) focus.to(held);
+          return planted;
+        },
+        setHearts: (index, half, max) => {
+          const p = players.find((q) => q.index === index);
+          if (!p?.inv) return null;
+          if (max != null) p.inv.maxHalfHearts = max;
+          if (half != null) p.inv.halfHearts = half;
+          return { halfHearts: p.inv.halfHearts, maxHalfHearts: p.inv.maxHalfHearts };
+        },
+        startLift: (index = 0, itemType = 0x16) => {
+          const p = players.find((q) => q.index === index && q.active);
+          if (!p) return false;
+          const held = focus.current;
+          focus.on(p, () => {
+            p.inv.itemLiftTimer = ITEM_LIFT_FRAMES;
+            startItemLift(itemType);
+          });
+          if (held) focus.to(held);
+          return true;
+        },
+        /** Paint split-screen views without advancing the sim. */
+        present: () => presentViews(),
+        /**
+         * Arm a hero's B slot so a play test can throw without opening the
+         * submenu. `item` is a `B_ITEM` id (`'boomerang'`, `'bomb'`, …).
+         * @param {number} index
+         * @param {string} item
+         */
+        selectB: (index, item) => {
+          const p = players.find((q) => q.index === index);
+          if (!p?.inv) return null;
+          p.inv.selectedB = item;
+          return p.inv.selectedB;
+        },
+        openCave: (caveId, index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index);
+          if (!p) return null;
+          return focus.on(p, () => openCave(caveId));
+        },
+        leaveCave: (index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index);
+          if (!p) return null;
+          return focus.on(p, () => leaveCave());
+        },
+        persistSlot: () => {
+          persistSave('debug');
+          return activeSlot;
+        },
+        continuePlay: async (slot) => {
+          const n = slot ?? activeSlot ?? 0;
+          playing = false;
+          await beginPlay(n, 'continue');
+        },
+        join: (index = 1) => joinPlayer(index),
+        leave: (index = 1) => {
+          const p = players.find((q) => q.index === index);
+          return p ? leavePlayer(p) : false;
+        },
         /** Rewind Ganon + Zelda endgame (live + battery slot). */
         resetGanonFight: () => resetGanonFightLive(),
       },
@@ -1630,9 +2477,25 @@ async function main() {
       .slice(0, 4)
       .map(codeLabel)
       .join('/');
+    const p2 = bindsForPlayer(options, 1).start?.[0];
+    const join = p2 ? `${codeLabel(p2)} / spare Start joins` : 'spare Start joins';
     help.textContent = `${move} move · ${b.a.map(codeLabel).join('/')} sword · ${b.b
       .map(codeLabel)
-      .join('/')} B-item · ${b.start.map(codeLabel).slice(0, 2).join('/')} inv · M mute · ,/. volume`;
+      .join('/')} B-item · ${b.start.map(codeLabel).slice(0, 2).join('/')} inv · ${join} · M mute · ,/. volume`;
+  }
+
+  function refreshJoinHint() {
+    const el = document.getElementById('joinHint');
+    if (!el) return;
+    const next = nextJoinIndex(players, maxPlayers);
+    if (!playing || next < 0) {
+      el.hidden = true;
+      return;
+    }
+    const start = bindsForPlayer(options, next).start?.[0];
+    const key = start ? codeLabel(start) : 'Start';
+    el.hidden = false;
+    el.textContent = `Player ${next + 1}: press ${key} or a spare controller's Start to join`;
   }
 
   function snapshotDungeonProgress() {
@@ -1756,7 +2619,9 @@ async function main() {
     toldStory.clear();
     closeDialogue();
     pendingBriefingLevel = null;
+    focus.to(hostPlayer(players) ?? players[0]);
     Object.assign(inv, createInventory());
+    applyPartyCaps(sharedInv, activePlayers(players).length);
     const meta = applyLoadedSave(payload, {
       inv,
       owSecretsRevealed,
@@ -1773,7 +2638,10 @@ async function main() {
     deathUi.hide();
     dungeon = null;
     const healed = await restoreWorldFromSave(meta.position);
+    applyPartySnapshot(players, meta.party, { skipPose: [0] });
+    await restorePartyWorlds(meta.party, { includeHost: !healed });
     playing = true;
+    refreshJoinHint();
     setStatus(healed ? 'Practice load — 0 HP, reset to start' : 'Practice state loaded (F9)');
   }
 
@@ -1837,33 +2705,122 @@ async function main() {
     return healed;
   }
 
+  /**
+   * Put everyone back in the place the file remembered.
+   * `position` is always the host's restore (dungeon / OW doorstep); cave
+   * and cellar for the host live on `party[0].worldId`, because a solo
+   * continue from a cave historically dumped you on the mouth.
+   * @param {readonly object[] | undefined} party
+   * @param {{ includeHost?: boolean }} [opts]
+   */
+  async function restorePartyWorlds(party, opts = {}) {
+    if (!Array.isArray(party)) return;
+    for (const snap of party) {
+      if ((snap.index ?? 0) === 0 && !opts.includeHost) continue;
+      const p = players.find((q) => q.index === snap.index && q.active);
+      if (!p) continue;
+      const skipPose = (snap.index ?? 0) === 0;
+      await focus.on(p, () => settlePlayerInSavedWorld(p, snap, { skipPose }));
+    }
+    focus.to(players[0]);
+  }
+
+  /**
+   * @param {object} p
+   * @param {object} snap
+   */
+  function applySavedPose(p, snap) {
+    if (!p?.link) return;
+    if (snap.x != null) p.link.x = snap.x;
+    if (snap.y != null) p.link.y = snap.y;
+    if (snap.dir != null) p.link.dir = snap.dir;
+    p.link.posFrac = 0;
+    p.link.gridOffset = 0;
+    p.link.moving = false;
+  }
+
+  /**
+   * @param {object} p
+   * @param {object} snap
+   * @param {{ skipPose?: boolean }} [opts]
+   */
+  async function settlePlayerInSavedWorld(p, snap, opts = {}) {
+    const id = snap.worldId;
+    if (!id || id === p.world?.id) {
+      if (!opts.skipPose) applySavedPose(p, snap);
+      return;
+    }
+    if (id === overworldWorldId()) {
+      if (worlds.get(id)) movePlayerToWorld(p, id, { mode: 'overworld' });
+      applySavedPose(p, snap);
+      return;
+    }
+    const cellar = parseCellarWorldId(id);
+    if (cellar) {
+      if (!dungeon?.levelData || dungeon.level !== cellar.level) {
+        await enterLevel(cellar.level);
+        resumeAs(p);
+      }
+      if (!isCellarWorldId(p.world?.id)) {
+        await enterCellar(cellar.cellarRoomId, dungeon?.cellarSourceRoomId ?? roomId, {
+          x: snap.x,
+          y: snap.y,
+          dir: snap.dir,
+        });
+        resumeAs(p);
+      }
+      applySavedPose(p, snap);
+      return;
+    }
+    if (id.startsWith('dungeon:')) {
+      const level = Number(id.slice('dungeon:'.length));
+      if (worlds.get(id)?.dungeon) {
+        movePlayerToWorld(p, id, { mode: 'dungeon' });
+      } else if (Number.isFinite(level)) {
+        await enterLevel(level);
+        resumeAs(p);
+      }
+      applySavedPose(p, snap);
+      return;
+    }
+    if (id.startsWith('cave:')) {
+      const caveId = Number(id.slice('cave:'.length));
+      if (Number.isFinite(caveId)) openCave(caveId);
+      applySavedPose(p, snap);
+    }
+  }
+
   function collectSaveState() {
-    snapshotDungeonProgress();
-    return {
-      name: saveName,
-      deaths: deathCount,
-      inv,
-      mode,
-      roomId,
-      x: link.x,
-      y: link.y,
-      dir: link.dir,
-      caveReturn,
-      dungeon:
-        mode === 'dungeon' && dungeon
-          ? {
-              level: dungeon.level,
-              fromRoomId: dungeon.fromRoomId,
-              roomId: dungeon.room?.roomId ?? roomId,
-            }
-          : null,
-      owSecretsRevealed,
-      caveTaken,
-      owItemsTaken,
-      hintMarks,
-      toldStory,
-      dungeonProgress,
-    };
+    const host = hostPlayer(players) ?? players[0];
+    return focus.on(host, () => {
+      snapshotDungeonProgress();
+      return {
+        name: saveName,
+        deaths: deathCount,
+        inv,
+        mode,
+        roomId,
+        x: link.x,
+        y: link.y,
+        dir: link.dir,
+        caveReturn,
+        dungeon:
+          mode === 'dungeon' && dungeon
+            ? {
+                level: dungeon.level,
+                fromRoomId: dungeon.fromRoomId,
+                roomId: dungeon.room?.roomId ?? roomId,
+              }
+            : null,
+        owSecretsRevealed,
+        caveTaken,
+        owItemsTaken,
+        hintMarks,
+        toldStory,
+        dungeonProgress,
+        party: snapshotParty(players),
+      };
+    });
   }
 
   function persistSave(reason = '') {
@@ -1875,7 +2832,10 @@ async function main() {
 
   function setOptions(next) {
     options = next;
-    input.setBinds(options.binds);
+    for (let i = 0; i < inputs.length; i += 1) {
+      inputs[i].setBinds(bindsForPlayer(options, i));
+    }
+    syncPadAssignment();
     applyDisplayOptions();
     refreshHelpKeys();
   }
@@ -1891,7 +2851,9 @@ async function main() {
   });
 
   function debugRefillHearts() {
-    refillHearts(inv);
+    for (const p of players) {
+      if (p?.inv) refillHearts(p.inv);
+    }
     refreshHud();
     setStatus('Debug: hearts refilled');
   }
@@ -1910,7 +2872,7 @@ async function main() {
 
   function debugKillScreen() {
     const victims = enemies.filter((e) =>
-      shouldKillOnScreen(e, (foe) => rectFullyOffCamera(foe, camLocalX, camLocalY, 0)),
+      shouldKillOnScreen(e, (foe) => rectFullyOffCamera(foe, cam.camLocalX, cam.camLocalY, 0)),
     );
     for (const e of victims) {
       e.hp = 0;
@@ -1920,12 +2882,17 @@ async function main() {
     setStatus(victims.length ? `Debug: killed ${victims.length}` : 'Debug: no enemies on screen');
   }
 
-  function debugKillLink() {
-    if (!playing || !killLink(inv)) return;
+  function debugKillLink(index = focus.current?.index ?? 0) {
+    const p = players[index] ?? focus.current;
+    if (!playing || !p || !killLink(p.inv)) return false;
     debugUi.close();
-    refreshHud();
-    beginDeath();
+    focus.on(p, () => {
+      refreshHud();
+      beginDeath();
+    });
+    focus.to(players[0]);
     setStatus('Debug: Link killed');
+    return true;
   }
 
   const debugUi = createDebugUi({
@@ -1946,7 +2913,267 @@ async function main() {
     debugUi.open();
   });
   refreshHelpKeys();
-  const sword = createSwordState();
+  let sword = createSwordState();
+
+  /**
+   * The heroes (Phase 23). One today.
+   *
+   * `link` and `sword` are `const` and only ever mutated, so the record holds
+   * the very objects the closure locals point at and every existing reference
+   * keeps working. Ask this list rather than `link` wherever the answer should
+   * scale to four; the remaining direct references move over a subsystem at a
+   * time, with the goldens green throughout.
+   */
+  /**
+   * The places currently loaded. One today — the party is always together, so
+   * the overworld, a cave and a labyrinth take turns being the single live
+   * world. When players can split up, each occupied place is its own entry and
+   * the unoccupied ones are pruned.
+   */
+  const worlds = createWorldRegistry();
+  const players = [
+    createPlayer({
+      index: 0,
+      link,
+      sword,
+      inv,
+      cam,
+      world: worlds.enter(overworldWorldId(), {
+        mode: 'overworld',
+        roomId: worldIndex.startScreen,
+      }),
+    }),
+  ];
+  players[0].gfx = p1Gfx;
+
+  /**
+   * Everyone else, for as long as joining means asking for them up front.
+   *
+   * They start beside player one, in the same place, sharing the purse.
+   * Each has a camera of their own; with `?players=2` those cameras are
+   * drawn side by side. The one-player game never builds a second view.
+   */
+  for (let i = 1; i < playerCount; i += 1) {
+    const mate = createPlayer({
+      index: i,
+      link: createLinkState(link.x + i * 16, link.y, link.dir),
+      sword: createSwordState(),
+      inv: createInventoryView(sharedInv),
+      world: players[0].world,
+    });
+    mate.gfx = createHeroGfx(mate.link, i + 1);
+    players.push(mate);
+  }
+  applyPartyCaps(sharedInv, playerCount);
+
+  /**
+   * Split-screen pictures. Empty at one player — the `frame` stays on the
+   * stage and is the game as it has always been. At two or more the frame
+   * comes off the stage and is drawn into one texture per player.
+   */
+  const splitLayer = new Container();
+  app.stage.addChildAt(splitLayer, 0);
+  app.stage.addChild(sharedBar.root);
+
+  function attachPlayerView(p) {
+    if (p.view) return p.view;
+    const origin = quadrantOrigin(p.index, playerCount);
+    const rt = RenderTexture.create({
+      width: QUAD_W,
+      height: QUAD_H,
+      resolution: scale(),
+    });
+    rt.source.scaleMode = 'nearest';
+    const spr = new Sprite(rt);
+    spr.x = origin.x;
+    spr.y = origin.y;
+    splitLayer.addChild(spr);
+    p.view = { rt, spr };
+    return p.view;
+  }
+
+  function detachPlayerView(p) {
+    if (!p.view) return;
+    splitLayer.removeChild(p.view.spr);
+    p.view.spr.destroy();
+    p.view.rt.destroy(true);
+    p.view = null;
+  }
+
+  /** @type {Container[]} */
+  let joinPrompts = [];
+
+  function clearJoinPrompts() {
+    for (const c of joinPrompts) {
+      splitLayer.removeChild(c);
+      c.destroy({ children: true });
+    }
+    joinPrompts = [];
+  }
+
+  function createJoinPrompt(index, n) {
+    const root = new Container();
+    const bg = new Graphics().rect(0, 0, QUAD_W, QUAD_H).fill(0x000000);
+    root.addChild(bg);
+    const img = sheetTextures.commonBg?.source?.resource;
+    if (img) {
+      const title = nesText(img, String(index + 1), 0, 0, 0xfcfcfc);
+      title.x = 120;
+      title.y = 88;
+      const a = nesText(img, 'PRESS START', 0, 0, 0xfcfcfc);
+      a.x = 40;
+      a.y = 120;
+      const b = nesText(img, 'TO JOIN', 0, 0, 0xfcfcfc);
+      b.x = 72;
+      b.y = 136;
+      root.addChild(title, a, b);
+    }
+    const origin = quadrantOrigin(index, n);
+    root.x = origin.x;
+    root.y = origin.y;
+    splitLayer.addChild(root);
+    return root;
+  }
+
+  /**
+   * Drop split-screen for something that was authored against 256×240 —
+   * the ending, the continue menu. The party is still seated; the picture
+   * is just one screen that everyone watches.
+   */
+  function presentCinematic() {
+    splitLayer.visible = false;
+    sharedBar.show(false);
+    if (INTERNAL_W !== QUAD_W || INTERNAL_H !== QUAD_H) {
+      INTERNAL_W = QUAD_W;
+      INTERNAL_H = QUAD_H;
+      app.renderer.resize(INTERNAL_W, INTERNAL_H);
+      resizeCanvas();
+    }
+    if (frame.parent !== app.stage) app.stage.addChildAt(frame, 0);
+  }
+
+  /**
+   * Grow or shrink the canvas to match who is sitting down.
+   *
+   * One player is the ROM frame on the stage. Two or more take that frame
+   * off and draw it into a texture per hero. Coming back the other way puts
+   * the frame back so solo goldens stay on the same pixels.
+   */
+  function adoptSessionLayout() {
+    const n = activePlayers(players).length;
+    playerCount = n;
+    const px = frameSize(n);
+    INTERNAL_W = px.width;
+    INTERNAL_H = px.height;
+    app.renderer.resize(INTERNAL_W, INTERNAL_H);
+    resizeCanvas();
+    for (const p of players) detachPlayerView(p);
+    clearJoinPrompts();
+    splitLayer.visible = n > 1;
+    applyPartyCaps(sharedInv, n);
+    const barAt = sharedBarOrigin(n);
+    if (barAt) {
+      sharedBar.root.x = barAt.x;
+      sharedBar.root.y = barAt.y;
+      sharedBar.show(true);
+    } else {
+      sharedBar.show(false);
+    }
+    if (n <= 1) {
+      if (frame.parent !== app.stage) app.stage.addChildAt(frame, 0);
+      for (const p of players) {
+        if (p.gfx?.tag) p.gfx.tag.visible = false;
+      }
+      return;
+    }
+    if (frame.parent === app.stage) app.stage.removeChild(frame);
+    for (const p of activePlayers(players)) attachPlayerView(p);
+    for (const i of emptyQuadrants(
+      activePlayers(players).map((p) => p.index),
+      n,
+    )) {
+      joinPrompts.push(createJoinPrompt(i, n));
+    }
+    refreshJoinHint();
+  }
+  if (playerCount > 1) adoptSessionLayout();
+  refreshJoinHint();
+
+  function syncPadAssignment() {
+    const n = activePlayers(players).length;
+    const pads = navigator.getGamepads?.() ?? [];
+    const host = hostPadIndex(pads);
+    for (let i = 0; i < inputs.length; i += 1) {
+      const claimed = options.padSlots?.[i];
+      if (n <= 1 && i === 0) {
+        // Solo: every pad, same as the game has always been.
+        inputs[i].setPadIndex(claimed === undefined || claimed == null ? null : claimed);
+      } else if ((claimed == null || claimed === undefined) && i === 0) {
+        // In company, "every pad" would also walk player two's controller.
+        inputs[i].setPadIndex(host >= 0 ? host : 0);
+      } else {
+        inputs[i].setPadIndex(claimed === undefined ? i : claimed);
+      }
+    }
+  }
+
+  function hideHeroGfx(p) {
+    if (!p?.gfx) return;
+    p.gfx.link.visible = false;
+    p.gfx.sword.visible = false;
+    if (p.gfx.tag) p.gfx.tag.visible = false;
+  }
+
+  function joinPlayer(index) {
+    if (index < 0 || index >= maxPlayers || deathUi.visible) return null;
+    const host = hostPlayer(players);
+    if (!host) return null;
+    let p = players.find((q) => q.index === index);
+    if (p?.active) return null;
+    if (!p) {
+      focus.on(host, () => {
+        p = createPlayer({
+          index,
+          link: createLinkState(host.link.x, host.link.y, host.link.dir),
+          sword: createSwordState(),
+          inv: createInventoryView(sharedInv),
+          world: host.world,
+        });
+        p.gfx = createHeroGfx(p.link, index + 1);
+        players.push(p);
+      });
+      focus.to(players[0]);
+    } else {
+      p.active = true;
+      if (p.gfx) {
+        p.gfx.link.visible = true;
+        p.gfx.sword.visible = false;
+      }
+    }
+    snapToHost(p, host);
+    fillJoiningHearts(p.inv, host.inv);
+    p.active = true;
+    syncPadAssignment();
+    adoptSessionLayout();
+    setStatus(`Player ${index + 1} joined`);
+    refreshJoinHint();
+    return p;
+  }
+
+  function leavePlayer(p) {
+    if (!canLeave(players, p) || deathUi.visible) return false;
+    if (talkingPlayer === p) closeDialogue();
+    if (menuUi(p).open) closePlayerMenu(p);
+    p.active = false;
+    hideHeroGfx(p);
+    if (focus.current === p) focus.to(hostPlayer(players) ?? players[0]);
+    tearDownDroppedWorlds(worlds.prune(players));
+    syncPadAssignment();
+    adoptSessionLayout();
+    setStatus(`Player ${p.index + 1} left`);
+    refreshJoinHint();
+    return true;
+  }
   /** @type {import('@shared/bomb.js').Bomb[]} */
   let bombs = [];
   /** @type {import('@shared/enemies.js').Enemy[]} */
@@ -1957,16 +3184,25 @@ async function main() {
   let drops = [];
   const dropCounters = createDropCounters();
   const dropRng = createByteRng(0x21d7);
+  /**
+   * `dropRng` as an index picker (0..max-1).
+   *
+   * Edge spawns used to take `tryEdgeSpawn`'s `Math.random` default, which
+   * made the cell a streamed room's foes walk in from differ from one run of
+   * the same walk to the next. Everything else in the sim already draws from
+   * this one seeded stream; this was the only hole in it.
+   */
+  const pickRng = (max) => (max > 0 ? dropRng() % max : 0);
   let dropFrame = 0;
   /** Frames remaining where Digdogger hears the flute. */
   let flutePulse = 0;
   /** @type {Map<number, Sprite>} */
-  const dropGfx = new Map();
+  let dropGfx = new Map();
   /**
    * UW person pay-wares (bomb upgrade / money-or-life) + price labels.
    * @type {Map<string, import('pixi.js').Container>}
    */
-  const personWareGfx = new Map();
+  let personWareGfx = new Map();
   /** Room id whose person dialogue already opened this visit (`null` = none). */
   let personDialogueForRoom = /** @type {number | null} */ (null);
   /** Pond-fairy orbit hearts (UpdatePondFairy). */
@@ -1975,8 +3211,8 @@ async function main() {
   /** Link halted by pond fairy heal sequence (ObjState $40). */
   let pondFairyHalt = false;
   let dropSpriteSeq = 0;
-  /** @type {import('@shared/boomerang.js').Boomerang | null} */
-  let boomerang = null;
+  /** @type {import('@shared/boomerang.js').Boomerang[]} */
+  let boomerangs = [];
   /** @type {import('@shared/boomerang.js').Boomerang[]} */
   let enemyBooms = [];
   /** @type {import('@shared/bait.js').Bait | null} */
@@ -1990,9 +3226,9 @@ async function main() {
   /** @type {ReturnType<typeof createRoomItem>} */
   let roomItem = null;
   /** @type {Map<number, Sprite>} */
-  const enemyGfx = new Map();
+  let enemyGfx = new Map();
   /** @type {Map<number, Sprite>} */
-  const projGfx = new Map();
+  let projGfx = new Map();
   /** @type {Sprite | null} */
   let roomItemSprite = null;
   /** @type {Sprite | null} */
@@ -2010,9 +3246,6 @@ async function main() {
   let caveReturn = { roomId: worldIndex.startScreen, x: 0x78, y: 0x8d, dir: DIR.DOWN };
   /** @type {number[][] | null} */
   let caveTileGrid = null;
-  /** Last cave interact target key (`${caveId}:${slot}` | `'npc'` | false). */
-  let caveInteractLatch = /** @type {string | false} */ (false);
-  let caveExitLatch = false;
   /** @type {{ mapIndex: number, attrs: object, tileGrid: number[][], layoutId?: number } | null} */
   let screen = null;
   /** @type {{
@@ -2028,15 +3261,584 @@ async function main() {
    *   pushedRooms: Set<number>,
    * } | null} */
   let dungeon = null;
+
   /** @type {import('@shared/pushBlock.js').PushBlock | null} */
   let pushBlock = null;
+  /** @type {Map<number, import('@shared/pushBlock.js').PushBlock | null>} */
+  let pushBlocks = new Map();
   /** @type {number[][] | null} */
   let floorTiles = null;
+  /**
+   * Whose world the live variables above describe.
+   *
+   * Two kinds of state get swapped. A player's own place — `roomId`, its
+   * `screen`, the `caveReturn` pose — comes off the player. Everything that
+   * belongs to the place itself — the entity arrays, what has been spawned,
+   * the room's blocks and tiles, and the `mode` and `dungeon` that say which
+   * place it is — comes off `player.world`, so two players standing in the
+   * same labyrinth share one set of enemies rather than a copy each.
+   *
+   * A frame runs inside `focus.on(player, ...)`, so the 1000-odd references to
+   * these variables keep working and mean "the player being simulated".
+   * Nothing is copied unless the focus moves, which is what lets the rest of
+   * the game go on setting `mode` and `screen` from outside a frame — picking
+   * a save file, entering a cave, a room load resolving late.
+   *
+   * `WORLD_STATE_KEYS` is the same list in `worldRegistry.js`; a field that
+   * appears in one and not the other is a field that leaks between places.
+   *
+   * Anything that resumes while a *different* player holds the focus must
+   * capture `focus.current` and re-enter with it.
+   */
+  function loadWorldContext(p) {
+    const w = p.world;
+    mode = w.mode;
+    dungeon = w.dungeon;
+    enemies = w.enemies;
+    projectiles = w.projectiles;
+    drops = w.drops;
+    bombs = w.bombs;
+    flames = w.flames;
+    enemyBooms = w.enemyBooms;
+    boomerangs = w.boomerangs ?? [];
+    bait = w.bait;
+    whirlwind = w.whirlwind;
+    statueState = w.statueState;
+    ladderObj = w.ladderObj;
+    roomItem = w.roomItem;
+    spawnedRooms = w.spawnedRooms;
+    spawnClaims = w.spawnClaims;
+    pushBlock = w.pushBlock;
+    pushBlocks = w.pushBlocks ?? new Map();
+    floorTiles = w.floorTiles;
+    dungeonTileGrid = w.dungeonTileGrid;
+    caveTileGrid = w.caveTileGrid;
+    bindWorldGfx(w);
+    // rooms / stream / enemyGfx / projGfx / dropGfx / pondHeartGfx / personWareGfx — per-world Pixi, via bindWorldGfx
+    candleRoom = asCandleStore(w.candleRoom);
+    gambleAmounts = w.gambleAmounts ?? null;
+    gambleResolved = Boolean(w.gambleResolved);
+    flutePulse = w.flutePulse ?? 0;
+    personDialogueForRoom = w.personDialogueForRoom ?? null;
+    roomId = w.roomId;
+    screen = w.screen;
+    caveReturn = w.caveReturn;
+    link = p.link;
+    sword = p.sword;
+    inv = p.inv;
+    cam = p.cam;
+    linkSprite = p.gfx.link;
+    swordSprite = p.gfx.sword;
+  }
+  function saveWorldContext(p) {
+    const w = p.world;
+    w.mode = mode;
+    w.dungeon = dungeon;
+    w.enemies = enemies;
+    w.projectiles = projectiles;
+    w.drops = drops;
+    w.bombs = bombs;
+    w.flames = flames;
+    w.enemyBooms = enemyBooms;
+    w.boomerangs = boomerangs;
+    w.bait = bait;
+    w.whirlwind = whirlwind;
+    w.statueState = statueState;
+    w.ladderObj = ladderObj;
+    w.roomItem = roomItem;
+    w.spawnedRooms = spawnedRooms;
+    w.spawnClaims = spawnClaims;
+    w.pushBlock = pushBlock;
+    w.pushBlocks = pushBlocks;
+    w.floorTiles = floorTiles;
+    w.dungeonTileGrid = dungeonTileGrid;
+    w.caveTileGrid = caveTileGrid;
+    captureWorldGfx(w);
+    w.rooms = w.mode === 'overworld' ? owRooms : w.mode === 'dungeon' ? uwRooms : w.rooms;
+    w.stream = w.mode === 'overworld' ? owStream : w.mode === 'dungeon' ? uwStream : w.stream;
+    w.enemyGfx = enemyGfx;
+    w.projGfx = projGfx;
+    w.dropGfx = dropGfx;
+    w.pondHeartGfx = pondHeartGfx;
+    w.personWareGfx = personWareGfx;
+    w.candleRoom = candleRoom;
+    w.gambleAmounts = gambleAmounts;
+    w.gambleResolved = gambleResolved;
+    w.flutePulse = flutePulse;
+    w.personDialogueForRoom = personDialogueForRoom;
+    w.roomId = roomId;
+    w.screen = screen;
+    w.caveReturn = caveReturn;
+    // The hero objects are only ever mutated, never reassigned, so writing
+    // them back is a no-op today. Kept symmetrical so the record stays the
+    // truth about a player rather than a copy that can drift from one.
+    p.link = link;
+    p.sword = sword;
+    p.inv = inv;
+    p.cam = cam;
+  }
+
+  function streamInUse(stream) {
+    if (!stream) return false;
+    for (const id of worlds.ids()) {
+      if (worlds.get(id)?.stream === stream) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Each occupied place paints its own rooms. L1 `$73` and L4 `$73` must not
+   * share a store, or leftover neighbours from one labyrinth overwrite the
+   * other. The first overworld and the first dungeon reuse the boot streams
+   * so a solo playthrough still has exactly the scene graph it always had.
+   */
+  function ensureWorldGfx(w) {
+    if (!w) return;
+    const reuseOw = w.mode === 'overworld' && !w.stream && !streamInUse(bootOwStream);
+    const reuseUw = w.mode === 'dungeon' && !w.stream && !streamInUse(bootUwStream);
+    if (!w.enemyGfx) {
+      if (reuseOw) {
+        w.enemyGfx = enemyGfx;
+        w.projGfx = projGfx;
+        w.dropGfx = dropGfx;
+        w.pondHeartGfx = pondHeartGfx;
+        w.personWareGfx = personWareGfx;
+      } else {
+        w.enemyGfx = new Map();
+        w.projGfx = new Map();
+        w.dropGfx = new Map();
+        w.pondHeartGfx = [];
+        w.personWareGfx = new Map();
+      }
+    }
+    if (!w.pondHeartGfx) w.pondHeartGfx = [];
+    if (!w.personWareGfx) w.personWareGfx = new Map();
+    if (w.mode === 'cave') return;
+    if (w.rooms && w.stream) return;
+    if (reuseOw) {
+      w.rooms = bootOwRooms;
+      w.stream = bootOwStream;
+      return;
+    }
+    if (reuseUw) {
+      w.rooms = bootUwRooms;
+      w.stream = bootUwStream;
+      return;
+    }
+    w.rooms = createRoomStore();
+    w.stream = createStreamView(playField, w.rooms);
+    w.stream.layer.visible = false;
+  }
+
+  function bindWorldGfx(w) {
+    if (w.mode === 'overworld' && w.rooms) {
+      owRooms = w.rooms;
+      owStream = w.stream;
+    } else if (w.mode === 'dungeon' && w.rooms) {
+      uwRooms = w.rooms;
+      uwStream = w.stream;
+    }
+    if (w.enemyGfx) enemyGfx = w.enemyGfx;
+    if (w.projGfx) projGfx = w.projGfx;
+    if (w.dropGfx) dropGfx = w.dropGfx;
+    pondHeartGfx = w.pondHeartGfx ?? [];
+    if (!w.pondHeartGfx) w.pondHeartGfx = pondHeartGfx;
+    personWareGfx = w.personWareGfx ?? personWareGfx;
+    if (!w.personWareGfx) w.personWareGfx = personWareGfx;
+  }
+
+  function captureWorldGfx(w) {
+    if (w.mode === 'overworld') {
+      w.rooms = owRooms;
+      w.stream = owStream;
+    } else if (w.mode === 'dungeon') {
+      w.rooms = uwRooms;
+      w.stream = uwStream;
+    }
+    w.enemyGfx = enemyGfx;
+    w.projGfx = projGfx;
+    w.dropGfx = dropGfx;
+    w.pondHeartGfx = pondHeartGfx;
+    w.personWareGfx = personWareGfx;
+  }
+
+  function hideWorldSprites(w) {
+    if (!w) return;
+    for (const map of [w.enemyGfx, w.projGfx, w.dropGfx]) {
+      if (!map) continue;
+      for (const g of map.values()) {
+        if (g) g.visible = false;
+      }
+    }
+    for (const g of w.pondHeartGfx ?? []) {
+      if (g) g.visible = false;
+    }
+    for (const g of w.personWareGfx?.values() ?? []) {
+      if (g) g.visible = false;
+    }
+  }
+
+  function showWorldItemSprites(w) {
+    if (!w) return;
+    // Drops are shown by syncDropSprites so a sprite whose drop is gone
+    // cannot come back as an un-collectable ghost.
+    for (const map of [w.projGfx, w.personWareGfx]) {
+      for (const g of map?.values() ?? []) {
+        if (g) g.visible = true;
+      }
+    }
+    for (const g of w.pondHeartGfx ?? []) {
+      if (g) g.visible = true;
+    }
+  }
+
+  function presentWorldLayers() {
+    for (const id of worlds.ids()) {
+      const w = worlds.get(id);
+      if (w?.stream?.layer) w.stream.layer.visible = false;
+      if (w && w !== focus.current?.world) hideWorldSprites(w);
+    }
+    if (owStream?.layer) owStream.layer.visible = mode === 'overworld';
+    if (uwStream?.layer) uwStream.layer.visible = mode === 'dungeon';
+    showWorldItemSprites(focus.current?.world);
+  }
+
+  function tearDownWorldGfx(w) {
+    if (!w) return;
+    for (const map of [w.enemyGfx, w.projGfx, w.dropGfx]) {
+      if (!map) continue;
+      for (const g of map.values()) {
+        g.parent?.removeChild(g);
+        g.destroy({ texture: false, textureSource: false });
+      }
+      map.clear();
+    }
+    for (const g of w.pondHeartGfx ?? []) {
+      g.parent?.removeChild(g);
+      g.destroy({ texture: false, textureSource: false });
+    }
+    w.pondHeartGfx = [];
+    for (const g of w.personWareGfx?.values() ?? []) {
+      g.parent?.removeChild(g);
+      g.destroy({ children: true, texture: false, textureSource: false });
+    }
+    w.personWareGfx?.clear();
+    if (!w.stream) return;
+    if (w.stream === bootOwStream || w.stream === bootUwStream) {
+      w.stream.clear();
+      w.stream.layer.visible = false;
+      return;
+    }
+    w.stream.destroy();
+    w.stream = null;
+    w.rooms = null;
+  }
+
+  function tearDownDroppedWorlds(dropped) {
+    for (const w of dropped ?? []) tearDownWorldGfx(w);
+    if (owStream?.layer?.destroyed) {
+      owRooms = bootOwRooms;
+      owStream = bootOwStream;
+    }
+    if (uwStream?.layer?.destroyed) {
+      uwRooms = bootUwRooms;
+      uwStream = bootUwStream;
+    }
+  }
+
+  let candleRoom = createCandleStore();
+  const focus = createPlayerFocus({ load: loadWorldContext, save: saveWorldContext });
+  ensureWorldGfx(players[0].world);
+  focus.adopt(players[0]);
+
+  /**
+   * The dock object this hero is riding. Physical state on the Link, not
+   * the world: an ally on the pier must keep walking while you scroll.
+   */
+  function currentRaft() {
+    const p = focus.current;
+    if (p && !p.raftRide) p.raftRide = createRaftRide();
+    return p?.raftRide ?? createRaftRide();
+  }
+
+  /** The in-flight raft in this place, whoever is on it — for the sprite and rebase. */
+  function raftInWorld(world = focus.current?.world) {
+    for (const p of activePlayers(players)) {
+      if (p.world === world && p.raftRide?.active) return p.raftRide;
+    }
+    return null;
+  }
+
+  function clockWorldHere() {
+    return focus.current?.world?.id ?? null;
+  }
+
+  function clockIsHere() {
+    return Boolean(clockWorldId) && clockWorldId === clockWorldHere();
+  }
+
+  function endClockFreeze() {
+    clearClockFreeze(inv, enemies);
+    clockWorldId = null;
+  }
+
+  function endClockIfHere() {
+    if (!clockIsHere()) return;
+    endClockFreeze();
+  }
+
+  /**
+   * Dungeon pack this hero is standing in — leftover cells included.
+   * @param {object} p
+   */
+  function dungeonPackAt(p) {
+    const live = p.world === focus.current?.world;
+    const d = live ? dungeon : p.world?.dungeon;
+    if (!d) return null;
+    const occId = occupyingRoomIdOf(p);
+    return d.levelData?.rooms?.find((r) => (r.roomId & 0xff) === occId) ?? d.room;
+  }
+
+  /** Occupying cell of this hero, leftover included. */
+  function occupyingRoomIdOf(p) {
+    const live = p?.world === focus.current?.world;
+    const anchor = live ? roomId : (p?.world?.roomId ?? roomId);
+    if ((p?.world?.mode ?? '') === 'dungeon') {
+      return (p.uwOccRoomId ?? occupyingRoom(anchor, p.link.x, p.link.y).roomId) & 0xff;
+    }
+    return occupyingRoom(anchor, p.link.x, p.link.y).roomId & 0xff;
+  }
+
+  function candleStoreFor(p) {
+    const live = !p || p.world === focus.current?.world;
+    return asCandleStore(live ? candleRoom : p.world?.candleRoom);
+  }
+
+  function candleStateAt(p) {
+    return candleForRoom(candleStoreFor(p), occupyingRoomIdOf(p));
+  }
+
+  function roomOccupiedByOthers(roomIdWanted) {
+    const id = roomIdWanted & 0xff;
+    const here = focus.current?.world;
+    return activePlayers(players).some((q) => {
+      if (q === focus.current || q.world !== here) return false;
+      return occupyingRoomIdOf(q) === id;
+    });
+  }
+
+  /** NES reset of this cell unless an ally is already standing in it. */
+  function enterCandleRoom(id, pack) {
+    candleRoom = asCandleStore(candleRoom);
+    beginCandleStay(candleRoom, id, pack, inv, roomOccupiedByOthers(id));
+  }
+
+  /** Whether this hero's occupying cell is currently dark. */
+  function heroSeesDark(p) {
+    if ((p?.world?.mode ?? '') !== 'dungeon') return false;
+    return roomIsDark(dungeonPackAt(p), candleStateAt(p));
+  }
+
+  /**
+   * An `await` yields the thread, and another player's frame — or a late
+   * room load — may have moved the focus in the meantime. Anything that
+   * resumes has to put the world back to the player who started the work.
+   */
+  function resumeAs(me) {
+    if (me && focus.current !== me) focus.to(me);
+  }
+
+  /**
+   * Story beats hold the whole party; everything else is a private conversation.
+   * Cave speech is neither: NES lets you walk the shop while the text crawls.
+   */
+  function storyHoldsEveryone() {
+    if (storyPager?.holding()) return true;
+    const kind = textBox.kind;
+    return kind === 'briefing' || kind === 'levelEntry';
+  }
+
+  function dialogueWho(p) {
+    return {
+      story: storyHoldsEveryone(),
+      reader: p === talkingPlayer,
+      cave: p?.world?.mode === 'cave',
+    };
+  }
+
+  /** Who may page the box. A cave visitor must still be able to turn the page. */
+  function playerCanPageDialogue(p) {
+    return dialogueAcceptsInput(textBox.active, dialogueWho(p));
+  }
+
+  /** Who is frozen by the box. Cave speech crawls over walking. */
+  function playerIsFrozenByDialogue(p) {
+    return dialogueFreezesHero(textBox.active, dialogueWho(p));
+  }
+
+  function menuUi(p) {
+    return invUis[p?.index ?? 0] ?? invUis[0];
+  }
+
+  function menuOwner() {
+    return activePlayers(players).find((q) => menuUi(q).open) ?? null;
+  }
+
+  function closePlayerMenu(p) {
+    menuUi(p).close();
+  }
+
+  function closeAllMenus() {
+    for (const ui of invUis) ui.close();
+  }
+
+  function refreshOpenMenus() {
+    const here = focus.current;
+    for (const p of activePlayers(players)) {
+      const ui = menuUi(p);
+      if (!ui.open) continue;
+      focus.on(p, () => ui.refresh(p.inv, invView()));
+    }
+    if (here) focus.to(here);
+  }
+
+  function playerIsInMenu(p) {
+    return menuUi(p).open;
+  }
+
+  function openTextBox(pages, opts) {
+    talkingPlayer = focus.current;
+    const opened = textBox.open(pages, opts);
+    const kind = opts?.kind;
+    if (
+      opened
+      && (kind === 'briefing' || kind === 'levelEntry')
+      && activePlayers(players).length > 1
+    ) {
+      storyPager = createStoryPager(
+        activePlayers(players).map((p) => p.index),
+        textBox.state.pages.length,
+      );
+    } else {
+      storyPager = null;
+    }
+    return opened;
+  }
+
+  /**
+   * Move a player to another place: a labyrinth, a cave, back to the overworld.
+   *
+   * The old world keeps what was in it — saved before the live copy is wiped —
+   * and is then discarded if that player was the last one standing in it. At
+   * one player that is always, which is why this reproduces `clearEnemies()`
+   * exactly: leave the overworld and it dies behind you, come back and it is
+   * built fresh with its foes respawned, the way the ROM does it. With two
+   * players it is the difference between "you went into a cave" and "the
+   * overworld stopped existing".
+   *
+   * The sprite teardown inside `clearEnemies()` still has to run: those belong
+   * to the view, which is about to start showing somewhere else entirely.
+   *
+   * @param {object} p
+   * @param {string} id from `worldRegistry.js`
+   * @param {object} [opts] mode, for a world being entered for the first time
+   */
+  function worldOccupiedByOthers(worldOrId, except) {
+    const id = typeof worldOrId === 'string' ? worldOrId : worldOrId?.id;
+    if (!id) return false;
+    return activePlayers(players).some((q) => q !== except && q.world?.id === id);
+  }
+
+  /** Someone is still looking at the shared UW stream — a labyrinth or a cellar. */
+  function dungeonOccupiedByOthers(except) {
+    return activePlayers(players).some((q) => {
+      if (q === except) return false;
+      const id = String(q.world?.id ?? '');
+      return id.startsWith('dungeon:') || id.startsWith('cellar:');
+    });
+  }
+
+  /**
+   * Rooms other cameras in *this* labyrinth are still standing in. Each
+   * dungeon world has its own stream, so leftover cells in L1 must not keep
+   * L4's `$73` loaded.
+   */
+  function occupiedUnderworldRoomIds() {
+    /** @type {number[]} */
+    const ids = [];
+    const here = focus.current?.world;
+    for (const p of activePlayers(players)) {
+      if (p.world !== here) continue;
+      const id = String(p.world?.id ?? '');
+      if (!id.startsWith('dungeon:') && !id.startsWith('cellar:')) continue;
+      if (p.world?.roomId != null) ids.push(p.world.roomId & 0xff);
+      if (p.uwOccRoomId != null) ids.push(p.uwOccRoomId & 0xff);
+    }
+    return ids;
+  }
+
+  function movePlayerToWorld(p, id, opts = {}) {
+    if (p.world?.id === id) return p.world;
+    const from = p.world;
+    saveWorldContext(p);
+    // Sprites and the live arrays belong to the place being left. Tear them
+    // down only when nobody else is still standing there — otherwise the
+    // overworld a friend is walking would vanish the moment you ducked into
+    // a cave.
+    if (!worldOccupiedByOthers(from, p)) clearEnemies();
+    p.world = worlds.enter(id, opts);
+    ensureWorldGfx(p.world);
+    loadWorldContext(p);
+    tearDownDroppedWorlds(worlds.prune(players));
+    return p.world;
+  }
+
+  /**
+   * Everyone who was standing with this player goes where they went.
+   *
+   * One camera means one place, so a hero left behind in the world the others
+   * walked out of is invisible and unplayable — and the world they are still
+   * standing in cannot be pruned, so its foes never respawn on the way back.
+   * The party travels together until each player has a view of their own.
+   *
+   * Their record is enough: nobody else's context is live, and the world they
+   * are joining holds the foes and the room. Where they land is not known
+   * yet — the transition sets the leader's spawn after this — so they rally
+   * beside whoever they followed on the next frame.
+   *
+   * @param {object} lead the player who opened the door
+   * @param {object | null} from the world they all just left
+   */
+  function bringPartyAlong(lead, from) {
+    for (const p of activePlayers(players)) {
+      if (p === lead || p.world !== from) continue;
+      p.world = lead.world;
+      p.rally = true;
+    }
+  }
+
+  /** Put anyone who followed someone through a door back at their side. */
+  function rallyFollowers() {
+    const lead = players[0];
+    for (const p of activePlayers(players)) {
+      if (!p.rally || p === lead) continue;
+      p.rally = false;
+      // Exactly on them, not beside them: a tile to the left of a labyrinth
+      // doorway is a wall, and the two heroes walk apart on the first step
+      // anyway.
+      p.link.x = lead.link.x;
+      p.link.y = lead.link.y;
+      p.link.dir = lead.link.dir;
+      p.link.posFrac = 0;
+      p.link.gridOffset = 0;
+      p.link.moving = false;
+    }
+  }
+
   /** @type {Sprite | null} */
   let pushGfx = null;
   /** @type {Texture | null} */
   let pushBlockTex = null;
-  let candleRoom = createCandleRoomState();
   let busy = false;
   /** Invalidates in-flight overworld loads so they cannot restart OW music mid-dungeon/death. */
   let worldLoadGen = 0;
@@ -2075,7 +3877,7 @@ async function main() {
     clearPersonWareSprites();
     clearPondHeartSprites();
     pondFairyHalt = false;
-    clearClockFreeze(inv); // InvClock clears on room / screen change
+    endClockIfHere(); // InvClock clears on room / screen change
     if (roomItemSprite) {
       itemLayer.removeChild(roomItemSprite);
       roomItemSprite.destroy({ texture: false, textureSource: false });
@@ -2083,12 +3885,13 @@ async function main() {
     }
     roomItem = null;
     roomClearedLatch = false;
-    boomerang = null;
+    boomerangs = [];
     enemyBooms = [];
     bait = null;
     dungeonTileGrid = null;
     floorTiles = null;
     pushBlock = null;
+    pushBlocks = new Map();
     statueState = null;
     for (const s of boomSprites) s.visible = false;
     if (baitGfx) baitGfx.visible = false;
@@ -2120,7 +3923,7 @@ async function main() {
       // Safety: if the sprite is on-camera, never leave it inert/hidden.
       if (
         enemyAwaitingView(e)
-        && !rectFullyOffCamera(e, camLocalX, camLocalY, 0)
+        && !rectFullyOffEveryCamera(e, sessionCameras(), 0)
       ) {
         e.viewActivated = true;
         if (!skipsSpawnCloud(e) && (e.spawnCloud ?? 0) <= 0) e.spawnCloud = 0x10;
@@ -2188,6 +3991,7 @@ async function main() {
         || p.kind === PROJ.SILVER_ARROW;
       g.x = p.x + (weaponShot && !horiz && !magicShot ? 4 : 0);
       g.y = p.y + (weaponShot && horiz ? 3 : 0);
+      g.visible = true;
       // Sword/magic beams flash palette rows (FrameCounter & 3).
       if (p.kind === PROJ.SWORD_SHOT || magicShot) {
         g.alpha = 0.65 + 0.35 * (((p.life >> 1) & 3) / 3);
@@ -2233,12 +4037,20 @@ async function main() {
   /** Begin the TakeItem pose: item held $10 px above Link. */
   function startItemLift(itemType) {
     liftItemType = itemType;
+    const me = focus.current;
+    if (me) me.liftItemType = itemType;
     syncItemLiftSprite();
+  }
+
+  function currentLiftItemType() {
+    const me = focus.current;
+    if (me && 'liftItemType' in me) return me.liftItemType;
+    return liftItemType;
   }
 
   function itemLiftActive() {
     return (
-      liftItemType != null
+      currentLiftItemType() != null
       && (
         (inv.itemLiftTimer ?? 0) > 0
         || holdingTriforceLift
@@ -2248,19 +4060,24 @@ async function main() {
   }
 
   function syncItemLiftSprite() {
+    const type = currentLiftItemType();
     const active = itemLiftActive();
     if (!active) {
-      if (liftSprite) {
-        itemLayer.removeChild(liftSprite);
-        liftSprite.destroy({ texture: false, textureSource: false });
-        liftSprite = null;
+      if (liftSprite) liftSprite.visible = false;
+      const me = focus.current;
+      if (
+        me
+        && (inv.itemLiftTimer ?? 0) <= 0
+        && !holdingTriforceLift
+        && !triforceCeremonyActive(triforceCeremony)
+      ) {
+        me.liftItemType = null;
       }
-      liftItemType = null;
       return;
     }
     const drawn = items.itemTexture(
-      roomItemChrTile(liftItemType),
-      itemDrawPalette(liftItemType, dropFrame),
+      roomItemChrTile(type),
+      itemDrawPalette(type, dropFrame),
     );
     if (!liftSprite) {
       liftSprite = new Sprite(drawn.texture);
@@ -2268,27 +4085,26 @@ async function main() {
     } else {
       liftSprite.texture = drawn.texture;
     }
+    liftSprite.visible = true;
     liftSprite.x = link.x + (drawn.narrow ? 4 : 0);
     liftSprite.y = link.y - 0x10;
   }
 
   function enemyBounds() {
     if (mode === 'overworld' || mode === 'dungeon') {
-      return chaseBoundsForCamera(camLocalX, camLocalY);
+      return chaseBoundsForCamera(cam.camLocalX, cam.camLocalY);
     }
     return OW_ENEMY_BOUNDS;
   }
 
   /**
-   * Bosses stay in their home room's BoundByRoom; other foes may chase across
-   * seams via the camera pad.
+   * Dungeon foes stay in their home cell. Overworld wanderers may chase
+   * across a seam via the camera pad — that pad is what walked Goriyas
+   * through dungeon doors.
    * @param {{ objType: number, homeRoomId?: number | null }} e
    */
   function enemyBoundsFor(e) {
-    if (mode === 'dungeon' && enemyUsesUwRoomBounds(e.objType)) {
-      return uwEnemyBoundsForRoom(e.homeRoomId ?? roomId, roomId);
-    }
-    return enemyBounds();
+    return enemyMotionBounds(mode, e, roomId, cam);
   }
 
   function clearFxLayer() {
@@ -2349,7 +4165,7 @@ async function main() {
     for (const b of bombs) {
       if (b.phase === 'explode' && !b.damaged) {
         b.damaged = true;
-        audio?.playSfx('bomb');
+        fx.playSfx('bomb');
         for (const e of enemies) {
           if (e.edgePending || enemyAwaitingView(e)) continue;
           const wasAlive = e.alive;
@@ -2370,39 +4186,61 @@ async function main() {
             for (const side of opened) {
               refreshNeighborDoorVisual(dungeon.room.roomId, side);
             }
-            audio?.playSfx('door');
+            fx.playSfx('door');
             setStatus(`Bombed ${opened.join('/')} wall open`);
           }
         }
         if (mode === 'overworld') {
           applyOwSecretReveal('bomb', b.x, b.y);
         }
+        const held = focus.current;
+        for (const p of activePlayers(players)) {
+          if (!bombHurtsHero(b, p)) continue;
+          focus.on(p, () => hurtLinkFrom(0, BOMB_LINK_DAMAGE));
+        }
+        if (held) focus.to(held);
       }
     }
   }
 
-  function drawSwordBlade() {
-    const pos = swordDrawPos(sword, link.x, link.y);
+  /**
+   * Pose this hero's blade from their own swing, not the swapped `swordSprite`.
+   * Split-screen renders each view in turn and used to latch `visible` off of
+   * everyone except the viewer, so player two's sword never came back on.
+   * @param {object} p
+   */
+  function drawPlayerSword(p) {
+    const spr = p?.gfx?.sword;
+    if (!spr) return;
+    const pos = p.active ? swordDrawPos(p.sword, p.link.x, p.link.y) : null;
     if (!pos) {
-      swordSprite.visible = false;
+      spr.visible = false;
       return;
     }
-    swordSprite.texture = items.swordTexture(DIR.UP, inv.sword);
-    swordSprite.anchor.set(0.5, 0.5);
-    swordSprite.x = pos.x + 8;
-    swordSprite.y = pos.y + 8 + (mode === 'overworld' ? 2 : 0);
-    swordSprite.rotation = swordSpriteRotation(pos.angle);
-    swordSprite.visible = true;
+    const ow = (p.world?.mode ?? mode) === 'overworld';
+    spr.texture = items.swordTexture(DIR.UP, p.inv?.sword ?? 1);
+    spr.anchor.set(0.5, 0.5);
+    spr.x = pos.x + 8;
+    spr.y = pos.y + 8 + (ow ? 2 : 0);
+    spr.rotation = swordSpriteRotation(pos.angle);
+    spr.visible = true;
+  }
+
+  function drawSwordBlade() {
+    drawPlayerSword(focus.current ?? players[0]);
   }
 
   function continueAfterDeath() {
-    inv.dead = false;
-    inv.halfHearts = Math.min(CONTINUE_HALF_HEARTS, inv.maxHalfHearts ?? CONTINUE_HALF_HEARTS);
-    inv.invuln = 0;
-    inv.shovePixels = 0;
+    for (const p of activePlayers(players)) {
+      p.inv.dead = false;
+      p.inv.halfHearts = Math.min(CONTINUE_HALF_HEARTS, p.inv.maxHalfHearts ?? CONTINUE_HALF_HEARTS);
+      p.inv.invuln = 0;
+      p.inv.shovePixels = 0;
+    }
     deathUi.hide();
+    adoptSessionLayout();
     // Cut Tune1 $40 (game over) before the world song starts again.
-    audio?.stopSfx();
+    fx.stopSfx();
 
     // NES: die in a dungeon → continue at that dungeon's entrance; OW → start screen.
     if (mode === 'dungeon' && dungeon) {
@@ -2411,7 +4249,9 @@ async function main() {
       const fromRoomId = dungeon.fromRoomId;
       const fromAttrs = dungeon.fromAttrs ?? {};
       void (async () => {
+        const me = focus.current;
         await enterLevel(levelId, { fromRoomId, fromAttrs });
+        resumeAs(me);
         playDungeonMusic(levelId);
         persistSave('continue');
         setStatus(`Continue — Level ${levelId} entrance`);
@@ -2448,42 +4288,169 @@ async function main() {
   /** NES mode-9 cellars are single-screen; do not scroll into map neighbors. */
   function inUwCellar() {
     return Boolean(
-      mode === 'dungeon' && dungeon?.room && isCellarRoom(dungeon.room, dungeon.levelData),
+      mode === 'dungeon' && dungeon?.levelData && isCellarRoomId(roomId, dungeon.levelData),
     );
   }
 
+  /**
+   * Cameras looking at this place. A friend in a labyrinth has a dungeon
+   * camera whose numbers are not overworld rooms — mixing them in streams
+   * Moblin screens onto the start map and lets those foes chase a ghost.
+   */
+  function sessionCameras() {
+    const here = focus.current?.world;
+    return activePlayers(players)
+      .filter((p) => !here || p.world === here)
+      .map((p) => p.cam);
+  }
+
   function applyPlayCamera() {
-    if (mode === 'cave') {
-      playField.x = 0;
-      playField.y = 0;
-      return;
-    }
-    // Cellars sit on the dungeon map grid but play like caves: pin the view
-    // so Link on a side ladder cannot peek into adjacent top-down rooms.
-    if (inUwCellar()) {
-      camLocalX = 0;
-      camLocalY = 0;
-      const origin = roomPlayOrigin(roomId);
-      worldCamX = origin.ox;
-      worldCamY = origin.oy;
-      playField.x = 0;
-      playField.y = 0;
+    const solution = solvePlayCamera({
+      mode,
+      roomId,
+      linkX: link.x,
+      linkY: link.y,
+      pinned: inUwCellar(),
+    });
+    if (solution.tracks) adoptCameraSolution(cam, solution);
+    playField.x = solution.fieldX;
+    playField.y = solution.fieldY;
+    if (solution.layout === 'overworld') owStream.layout(roomId);
+    if (solution.layout === 'dungeon') {
       uwStream.layout(roomId);
       uwDoorFrames.layout(roomId);
+    }
+  }
+
+  /**
+   * The inventory panel and the world-slide that reveals it belong to this
+   * hero. Everyone else keeps a normal play picture — and may have a panel
+   * of their own in their quadrant.
+   */
+  function applyMenuChrome(p) {
+    const ui = menuUi(p);
+    for (const other of invUis) other.root.visible = false;
+    const show = ui.open;
+    ui.root.visible = show;
+    if (show) {
+      world.y = ui.worldSlideY();
+      hud.root.y = Math.round(ui.hudDockT() * (QUAD_H - HUD_HEIGHT));
+    } else {
+      world.y = 0;
+      hud.root.y = 0;
+    }
+  }
+
+  function lookingRoomId() {
+    if (mode === 'cave') return caveReturn?.roomId ?? roomId;
+    return occupyingRoom(roomId, link.x, link.y).roomId;
+  }
+
+  /**
+   * Point the playfield at this hero and, in company, draw that picture into
+   * their quadrant. Alone this is just `applyPlayCamera()` — no extra pass,
+   * no texture, the goldens stay on the same pixels.
+   */
+  function presentViews() {
+    if (playerCount <= 1) {
+      if (mode === 'overworld' || mode === 'dungeon') applyPlayCamera();
+      else {
+        playField.x = 0;
+        playField.y = 0;
+      }
+      showCaveSceneFor(focus.current ?? players[0]);
       return;
     }
-    const map = { cols: 16, rows: 8 };
-    const cam = cameraLocalForLink(roomId, link.x, link.y, map);
-    camLocalX = cam.camX;
-    camLocalY = cam.camY;
-    worldCamX = cam.worldCamX;
-    worldCamY = cam.worldCamY;
-    playField.x = -Math.round(camLocalX);
-    playField.y = -Math.round(camLocalY);
-    if (mode === 'overworld') owStream.layout(roomId);
-    if (mode === 'dungeon') {
-      uwStream.layout(roomId);
-      uwDoorFrames.layout(roomId);
+    for (const p of activePlayers(players)) {
+      focus.on(p, () => {
+        // One playfield, many places: show the layers that belong to this
+        // hero's world and hide the rest, so a cave and the overworld can
+        // share a scene graph without painting over each other.
+        presentWorldLayers();
+        doorFrameLayer.visible = mode === 'dungeon';
+        showCaveSceneFor(p);
+        if (bg) bg.visible = mode === 'overworld';
+        if (mode === 'overworld' || mode === 'dungeon') applyPlayCamera();
+        else {
+          playField.x = 0;
+          playField.y = 0;
+        }
+        syncDarkOverlay();
+        applyMenuChrome(p);
+        if (stubLabel && mode === 'dungeon' && dungeon?.room) {
+          const occ = occupyingRoom(roomId, link.x, link.y);
+          const pack =
+            dungeon.levelData?.rooms?.find((r) => (r.roomId & 0xff) === (occ.roomId & 0xff))
+            ?? dungeon.room;
+          stubLabel.text = dungeonStubText(pack);
+        }
+        // Bombs, flames and booms live on the shared playfield. Draw the
+        // set that belongs to this view's world, or player two's bomb sits
+        // in an array this pass never looks at.
+        syncEnemySprites();
+        drawBombs();
+        syncToolSprites();
+        syncRaftSprite();
+        syncLadderSprite();
+        syncWhirlwindSprite();
+        syncItemLiftSprite();
+        syncDropSprites();
+        refreshHud();
+        hud.pulseMap(uiFrame, currentMapMarks(), currentDungeonMapMarks(), {
+          roomId: lookingRoomId(),
+          mode,
+          dungeon,
+        });
+        if (p.view) {
+          p.view.raftVisible = Boolean(raftGfx?.visible);
+          p.view.ladderVisible = Boolean(ladderGfx?.visible);
+          p.view.whirlVisible = Boolean(whirlGfx?.visible);
+          p.view.baitVisible = Boolean(baitGfx?.visible);
+          p.view.liftVisible = Boolean(liftSprite?.visible);
+          p.view.boomVisible = boomSprites.filter((s) => s.visible).length;
+          p.view.bombCount = fxLayer.children.length;
+          const bar = hud.probe();
+          p.view.hudMap = bar.map;
+          p.view.hudCounters = bar.counters;
+          p.view.hudMode = bar.mode;
+        }
+        for (const other of players) {
+          const here = other.active && other.world === p.world;
+          if (other.gfx?.link && (!deathUi.visible || other !== p)) {
+            other.gfx.link.visible = here;
+          }
+          if (other.gfx?.sword) {
+            if (here) drawPlayerSword(other);
+            else other.gfx.sword.visible = false;
+          }
+          if (other.gfx?.tag) other.gfx.tag.visible = here && other !== p;
+        }
+        // A private conversation is only in the reader's quadrant. Story
+        // beats stay in every view — they are the story — and each reader
+        // sees their own page.
+        if (storyPager?.holding()) {
+          textBox.seekPage(storyPager.pageOf(p.index));
+          textBox.root.visible = !storyPager.finished(p.index);
+        } else {
+          textBox.root.visible = dialogueVisibleFor(textBox.active, {
+            story: storyHoldsEveryone(),
+            reader: p === talkingPlayer,
+          });
+        }
+        if (p.view?.rt) {
+          app.renderer.render({
+            container: frame,
+            target: p.view.rt,
+            clear: true,
+          });
+        }
+      });
+    }
+    focus.to(players[0]);
+    textBox.root.visible = textBox.active;
+    applyMenuChrome(menuOwner() ?? players[0]);
+    if (stubLabel && mode === 'dungeon' && dungeon?.room) {
+      stubLabel.text = dungeonStubText(dungeon.room);
     }
   }
 
@@ -2491,7 +4458,7 @@ async function main() {
    * @param {object} [base]
    */
   function continuousTileOpts(base = {}) {
-    const grids = mode === 'overworld' ? owStream.gridMap() : uwStream.gridMap();
+    const grids = mode === 'overworld' ? owRooms.gridMap() : uwRooms.gridMap();
     return {
       ...base,
       anchorRoomId: roomId,
@@ -2516,29 +4483,50 @@ async function main() {
     );
   }
 
-  /**
-   * @param {number} dir
-   */
-  function rebaseEntities(dir) {
-    const { dx, dy } = rebaseDelta(dir);
+  function worldEntitiesHere() {
+    const here = focus.current?.world;
     /** @type {({ x?: number, y?: number } | null | undefined)[]} */
     const objs = [
-      link,
+      // Only heroes in this place. A friend still on the overworld must not
+      // slide when someone walks through a dungeon door.
+      ...activePlayers(players).filter((p) => p.world === here).map((p) => p.link),
       ...enemies,
       ...projectiles,
       ...drops,
-      boomerang,
+      ...boomerangs,
       bait,
       ...bombs,
       ...flames,
       ...enemyBooms,
     ];
-    if (pushBlock) objs.push(pushBlock);
     if (ladderObj) objs.push(ladderObj);
-    if (raftRide.active) objs.push(raftRide);
+    const ride = raftInWorld(here);
+    if (ride) objs.push(ride);
     if (whirlwind) objs.push(whirlwind);
     if (roomItem) objs.push(roomItem);
-    shiftPositions(objs, dx, dy);
+    return objs;
+  }
+
+  /**
+   * @param {number} dir
+   */
+  function rebaseEntities(dir) {
+    const { dx, dy } = rebaseDelta(dir);
+    shiftPositions(worldEntitiesHere(), dx, dy);
+  }
+
+  /**
+   * Make `nextRoomId` the streaming anchor. One step from the current
+   * room is {@link rebaseEntities}; a hero leaving a cell they occupy
+   * while a friend holds the anchor needs the full origin shift.
+   * @param {number} nextRoomId
+   */
+  function rebaseToRoom(nextRoomId) {
+    const from = roomId & 0xff;
+    const to = nextRoomId & 0xff;
+    if (from === to) return;
+    const { dx, dy } = rebaseDeltaToRoom(from, to);
+    shiftPositions(worldEntitiesHere(), dx, dy);
   }
 
   /**
@@ -2565,30 +4553,56 @@ async function main() {
     return { x: x + (a.ox - b.ox), y: y + (a.oy - b.oy) };
   }
 
+  /**
+   * True for the first player to reach this piece of shared work in the world
+   * they are standing in, this frame.
+   *
+   * A place's enemies belong to the place, not to whoever is looking at it, so
+   * four players in one room must not step them four times. Rather than hoist
+   * the shared work out of the per-player step — which would reorder it
+   * against the movement and seam handling it is carefully sequenced with —
+   * it stays where it is and runs for whoever gets there first.
+   *
+   * @param {string} key
+   */
+  function firstInWorldThisFrame(key) {
+    const w = focus.current?.world;
+    if (!w) return true;
+    const seen = w.steppedAt ?? (w.steppedAt = {});
+    if (seen[key] === simTick) return false;
+    seen[key] = simTick;
+    return true;
+  }
+
   function cullStreamEnemies() {
     if (mode !== 'overworld' && mode !== 'dungeon') return;
-    const { kept } = cullOffscreenEnemies(enemies, camLocalX, camLocalY, 8, {
-      worldCamX,
-      worldCamY,
+    if (!firstInWorldThisFrame('cull')) return;
+    const { kept } = cullOffscreenEnemies(enemies, cam.camLocalX, cam.camLocalY, 8, {
+      worldCamX: cam.worldCamX,
+      worldCamY: cam.worldCamY,
+      cameras: sessionCameras(),
       // Capture slide walks into the wall / off the lip — never despawn mid-drag.
       keep: (e) => wallmasterIsCapturing(e),
     });
     enemies = kept;
-    releaseSpawnLatch(spawnedRooms, spawnedRooms, worldCamX, worldCamY, roomId, {
+    releaseSpawnLatch(spawnedRooms, spawnedRooms, cam.worldCamX, cam.worldCamY, roomId, {
       enemies,
       spawnClaims,
+      cameras: sessionCameras(),
     });
   }
 
-  /** Link is mid Wallmaster drag (halted; position owned by the hand). */
+  /** This hero is mid Wallmaster drag (halted; position owned by the hand). */
   function linkHeldByWallmaster() {
-    return enemies.some((e) => wallmasterIsCapturing(e));
+    const me = focus.current?.index ?? 0;
+    return enemies.some((e) => wallmasterHoldsPlayer(e, me));
   }
 
-  /** Keep Link glued to the closed hand after shove/solid systems run. */
+  /** Keep the caught hero glued to the closed hand after shove/solid systems run. */
   function pinWallmasterCapture() {
+    const me = focus.current?.index ?? 0;
     for (const e of enemies) {
-      if (!wallmasterIsCapturing(e)) continue;
+      if (!wallmasterHoldsPlayer(e, me)) continue;
       link.x = e.x;
       link.y = e.y;
       inv.paralyzed = 2;
@@ -2610,14 +4624,14 @@ async function main() {
    * @returns {boolean} true when pack + tileGrid are ready
    */
   function bindOwScreenFromStream(id) {
-    const entry = owStream.get(id & 0xff);
-    if (!entry?.pack || !entry.tileGrid) {
+    const room = owRooms.get(id & 0xff);
+    if (!room?.pack || !room.tileGrid) {
       screen = null;
       bg = null;
       return false;
     }
-    screen = { ...entry.pack, tileGrid: entry.tileGrid };
-    bg = entry.sprite ?? null;
+    screen = { ...room.pack, tileGrid: room.tileGrid };
+    bg = owStream.get(id & 0xff)?.sprite ?? null;
     return true;
   }
 
@@ -2641,15 +4655,21 @@ async function main() {
   /**
    * Touch-pickup for the OW room item (GameMode `$05` skips the lift pose).
    */
+  /** Heart containers raise every hero's max; the finder was already filled. */
+  function onGrantedItem(itemType) {
+    if (itemType === 0x1a) shareHeartContainer(players, focus.current);
+  }
+
   function tryPickupOwRoomItem() {
     const picked = tryPickupRoomItem(roomItem, link.x, link.y);
     if (picked == null) return;
     owItemsTaken.add(roomId & 0xff);
     const label = grantRoomItem(inv, picked);
+    onGrantedItem(picked);
     refreshHud();
-    invUi.refresh(inv, invView());
-    audio?.playSfx('item_taken');
-    audio?.playFanfare('item');
+    refreshOpenMenus();
+    fx.playSfx('item_taken');
+    fx.playFanfare('item');
     setStatus(`Got ${label}!`);
     tellItemStory(picked);
     persistSave();
@@ -2669,12 +4689,13 @@ async function main() {
       dropRoomEnemies(from);
     }
     // Clock only covers the foes that were visible at pickup.
-    clearClockFreeze(inv, enemies);
+    endClockIfHere();
     roomId = nextRoomId & 0xff;
     // Per-room fixtures are re-derived every time the binding lands, so a room
     // that was still streaming on the first pass still gets its pond state.
     const applyRoomState = () => {
-      candleRoom = createCandleRoomState();
+      candleRoom = asCandleStore(candleRoom);
+      beginCandleStay(candleRoom, roomId, null, inv, false);
       pondSecret = restorePondSecret(owSecretsRevealed, roomId);
       owWaterRgb = OW_WATER_RGB;
       syncOwRoomItem();
@@ -2697,8 +4718,8 @@ async function main() {
 
   /** True when a streamed OW room has collision + art ready to bind. */
   function owRoomReady(mapIndex) {
-    const entry = owStream.get(mapIndex & 0xff);
-    return Boolean(entry?.pack && entry?.tileGrid && entry?.sprite);
+    const room = owRooms.get(mapIndex & 0xff);
+    return Boolean(room?.pack && room?.tileGrid && owStream.get(mapIndex)?.sprite);
   }
 
   /**
@@ -2735,10 +4756,45 @@ async function main() {
    * Fetch + upsert one OW screen into the stream (secrets already revealed).
    * @param {number} mapIndex
    */
+  /**
+   * Room loads still in flight.
+   *
+   * A room's tiles arrive over `fetch`, so which frame it lands on depends on
+   * I/O timing — two runs of the same walk can stream a room one frame apart.
+   * That is invisible in play and fatal to a golden hash, so the harness
+   * drains this to zero at each frame boundary (`zeldaDebug.pendingLoads()`).
+   */
+  let pendingRoomLoads = 0;
+
+  /**
+   * @param {number} mapIndex
+   */
   async function ensureOwRoom(mapIndex) {
+    pendingRoomLoads += 1;
+    try {
+      return await loadOwRoom(mapIndex);
+    } finally {
+      pendingRoomLoads -= 1;
+    }
+  }
+
+  /**
+   * @param {number} rid
+   * @param {boolean} [fogged]
+   */
+  async function ensureUwRoom(rid, fogged = false) {
+    pendingRoomLoads += 1;
+    try {
+      return await loadUwRoom(rid, fogged);
+    } finally {
+      pendingRoomLoads -= 1;
+    }
+  }
+
+  async function loadOwRoom(mapIndex) {
     const id = mapIndex & 0xff;
     const existing = owStream.get(id);
-    if (existing?.tileGrid && existing?.sprite) return existing;
+    if (owRooms.tileGrid(id) && existing?.sprite) return existing;
 
     let pack = await fetchJson(screenUrl(id));
     if (inv.quest === 2) {
@@ -2820,7 +4876,7 @@ async function main() {
   async function ensureOwNeighbors() {
     const gen = ++streamFetchGen;
     applyPlayCamera();
-    const ids = roomsForCamera(worldCamX, worldCamY, { margin: 1 });
+    const ids = roomsForCameras(sessionCameras(), { margin: 1 });
     for (const id of ids) {
       if (gen !== streamFetchGen) return;
       await ensureOwRoom(id);
@@ -2847,14 +4903,14 @@ async function main() {
       claimLivingSpawnPoints(home, spawnClaims);
       return;
     }
-    const entry = owStream.get(id);
-    if (!entry?.pack) return;
-    const spawned = spawnOverworldEnemies(entry.pack.attrs, dir);
+    const room = owRooms.get(id);
+    if (!room?.pack) return;
+    const spawned = spawnOverworldEnemies(room.pack.attrs, dir);
     tagEnemyHomeRoom(spawned, id);
     // One living foe per ROM spawn point — blocks seam-edge double waves.
     const fresh = filterUnoccupiedSpawnPoints(spawned, enemies, spawnClaims);
     // Eject in the room's local space before rebasing into the anchor frame.
-    if (entry.tileGrid) ejectEnemiesFromSolid(fresh, entry.tileGrid);
+    if (room.tileGrid) ejectEnemiesFromSolid(fresh, room.tileGrid);
     markEnemiesAwaitingView(fresh);
     /** @type {typeof fresh} */
     const added = [];
@@ -2867,7 +4923,7 @@ async function main() {
       // Already on camera this frame → activate immediately (spawn runs before combat).
       if (
         !e.edgePending
-        && !rectFullyOffCamera(e, camLocalX, camLocalY, 0)
+        && !rectFullyOffEveryCamera(e, sessionCameras(), 0)
       ) {
         e.viewActivated = true;
         if (!skipsSpawnCloud(e)) e.spawnCloud = 0x10;
@@ -2885,15 +4941,16 @@ async function main() {
   function spawnVisibleOwRooms(dir = link.dir) {
     applyPlayCamera();
     // Spawn only rooms that intersect the view (tile stream still uses margin 1).
-    const candidates = roomsForCamera(worldCamX, worldCamY, { margin: 0 });
+    const candidates = roomsForCameras(sessionCameras(), { margin: 0 });
     const need = roomsNeedingSpawn({
       candidateRooms: candidates,
       currentRoomId: roomId,
       visited: new Set(candidates),
       spawnedRooms,
       clearedRooms: new Set(),
-      worldCamX,
-      worldCamY,
+      worldCamX: cam.worldCamX,
+      worldCamY: cam.worldCamY,
+      cameras: sessionCameras(),
     });
     for (const id of need) spawnOwRoomEnemies(id, dir);
   }
@@ -2902,18 +4959,18 @@ async function main() {
    * @param {number} rid
    * @param {boolean} [fogged]
    */
-  async function ensureUwRoom(rid, fogged = false) {
+  async function loadUwRoom(rid, fogged = false) {
     if (!dungeon?.levelData) return null;
     const id = rid & 0xff;
     const existing = uwStream.get(id);
-    if (existing?.tileGrid && (existing.sprite || fogged)) {
+    if (uwRooms.tileGrid(id) && (existing?.sprite || fogged)) {
       uwStream.setFog(id, fogged);
       // Keep frame visibility in sync when only fog toggles on a cached room.
       const frame = uwDoorFrames.get(id);
       if (frame?.sprite) frame.sprite.visible = !fogged;
       if (frame?.fog) frame.fog.visible = false;
       // Cracks are omitted while fogged; rebuild when the room becomes visible.
-      syncUwBombCracks(existing, existing.pack, fogged);
+      syncUwBombCracks(existing, uwRooms.pack(id), fogged);
       return existing;
     }
     const room = dungeon.levelData.rooms.find((r) => r.roomId === id);
@@ -2954,6 +5011,7 @@ async function main() {
     const entry = uwStream.upsert(id, tex, { tileGrid, pack: room, fogged });
     setUwDoorFrame(id, frameTex, fogged);
     syncUwBombCracks(entry, room, fogged);
+    applyPushBlockRoomArt(id);
     return entry;
   }
 
@@ -2964,26 +5022,26 @@ async function main() {
     // Cellars sit on the map grid but are stairs-only — never stream them as
     // neighbors, and never stream map-adjacent top-down rooms while inside one.
     const ids = streamableUwRooms(
-      roomsForCamera(worldCamX, worldCamY, { margin: 1, cols: 16, rows: 8 }),
+      roomsForCameras(sessionCameras(), { margin: 1, cols: 16, rows: 8 }),
       roomId,
       dungeon.levelData,
     );
+    const keep = [...new Set([...ids, ...occupiedUnderworldRoomIds()].map((id) => id & 0xff))];
     const fog = foggedRooms(ids, dungeon.visitedRooms, roomId);
-    for (const id of ids) {
+    for (const id of keep) {
       if (gen !== streamFetchGen) return;
       await ensureUwRoom(id, fog.has(id));
     }
     if (gen !== streamFetchGen) return;
-    uwStream.pruneTo(ids);
-    uwDoorFrames.pruneTo(ids);
-    for (const id of ids) {
+    uwStream.pruneTo(keep);
+    uwDoorFrames.pruneTo(keep);
+    for (const id of keep) {
       const fogged = fog.has(id) && id !== roomId;
       uwStream.setFog(id, fogged);
       const frame = uwDoorFrames.get(id);
       if (frame?.sprite) frame.sprite.visible = !fogged;
       if (frame?.fog) frame.fog.visible = false;
-      const entry = uwStream.get(id);
-      syncUwBombCracks(entry, entry?.pack, fogged);
+      syncUwBombCracks(uwStream.get(id), uwRooms.pack(id), fogged);
     }
     uwStream.layout(roomId);
     uwDoorFrames.layout(roomId);
@@ -3006,8 +5064,7 @@ async function main() {
       claimLivingSpawnPoints(home, spawnClaims);
       return;
     }
-    const entry = uwStream.get(id);
-    const room = entry?.pack ?? dungeon.levelData.rooms.find((r) => r.roomId === id);
+    const room = uwRooms.pack(id) ?? dungeon.levelData.rooms.find((r) => r.roomId === id);
     if (!room) return;
     let spawned = spawnDungeonEnemies(room, { x: 0, y: 0 }, dir);
     if (dungeon.clearedRooms.has(id)) {
@@ -3033,7 +5090,7 @@ async function main() {
     tagEnemyHomeRoom(spawned, id);
     const fresh = filterUnoccupiedSpawnPoints(spawned, enemies, spawnClaims);
     markEnemiesAwaitingView(fresh);
-    const grid = entry?.tileGrid ?? dungeonTileGrid;
+    const grid = uwRooms.tileGrid(id) ?? dungeonTileGrid;
     if (grid) ejectEnemiesFromSolid(fresh, grid, dungeonTileOpts(inv));
     /** @type {typeof fresh} */
     const added = [];
@@ -3050,7 +5107,7 @@ async function main() {
       }
       if (
         !e.edgePending
-        && !rectFullyOffCamera(e, camLocalX, camLocalY, 0)
+        && !rectFullyOffEveryCamera(e, sessionCameras(), 0)
       ) {
         e.viewActivated = true;
         if (!skipsSpawnCloud(e)) e.spawnCloud = 0x10;
@@ -3071,7 +5128,7 @@ async function main() {
     if (!dungeon) return;
     applyPlayCamera();
     const candidates = streamableUwRooms(
-      roomsForCamera(worldCamX, worldCamY, {
+      roomsForCameras(sessionCameras(), {
         margin: 0,
         cols: 16,
         rows: 8,
@@ -3085,8 +5142,9 @@ async function main() {
       visited: dungeon.visitedRooms,
       spawnedRooms,
       clearedRooms: dungeon.clearedRooms,
-      worldCamX,
-      worldCamY,
+      worldCamX: cam.worldCamX,
+      worldCamY: cam.worldCamY,
+      cameras: sessionCameras(),
     });
     for (const id of need) spawnUwRoomEnemies(id, dir);
   }
@@ -3097,6 +5155,7 @@ async function main() {
    * @param {{ nextRoomId: number, dir: number, unlocked?: boolean }} exit
    */
   async function softEnterDungeonRoom(exit) {
+    const me = focus.current;
     if (!dungeon?.levelData || busy || inv.dead) return;
     const level = dungeon.levelData;
     const room = level.rooms.find((r) => r.roomId === exit.nextRoomId);
@@ -3109,11 +5168,11 @@ async function main() {
       if (exit.unlocked) {
         refreshDungeonRoomVisual();
         refreshHud();
-        audio?.playSfx('door');
+        fx.playSfx('door');
         setStatus(`Unlocked door (${inv.keys} keys left)`);
       }
 
-      clearClockFreeze(inv, enemies);
+      endClockIfHere();
       roomId = exit.nextRoomId;
       personDialogueForRoom = null;
       dungeon.room = room;
@@ -3127,41 +5186,31 @@ async function main() {
       sealLastBossShutters(dungeon.doorState, level, dungeon.lastBossDefeated);
 
       await ensureUwRoom(room.roomId, false);
-      const entry = uwStream.get(room.roomId);
+      resumeAs(me);
       // Never fall back to the room Link just left: `dungeonTileGrid` is the
       // collision map and `roomSprite` is what `patchRoomSquareAt` paints, so
       // a stale alias tears collision away from the art it belongs to.
-      dungeonTileGrid = entry?.tileGrid ?? null;
-      roomSprite = entry?.sprite ?? null;
+      dungeonTileGrid = uwRooms.tileGrid(room.roomId);
+      roomSprite = uwStream.get(room.roomId)?.sprite ?? null;
 
       // Seam coords were set by the caller — keep them so the door reads as a
       // walkable path (no dungeonRoomSpawn / lip-clamp teleport).
       link.dir = exit.dir;
       link.posFrac = 0;
       link.gridOffset = 0;
+      if (me) {
+        me.uwOccRoomId = room.roomId;
+        me.uwDoorwayBlockSide = entrySideForFacing(exit.dir);
+      }
       dungeon.doorwayBlockSide = entrySideForFacing(exit.dir);
+      enterCandleRoom(room.roomId, room);
 
       // Per-room fixtures for the new anchor (enemies already rebased).
       dungeon.roomKillCount = 0;
       floorTiles = room.squares ? roomToTileGrid(room, [...UW_PRIMARY_SQUARES]) : null;
       ladderObj = null;
-      // Same floor origin as loadDungeonRoom — createPushBlock positions are
-      // screen-absolute off FLOOR_ORIGIN (not world/stream offsets).
-      const floor = floorFrame();
-      const origin = { x: floor.x, y: floor.y };
-      pushBlock = createPushBlock(room, origin, floorTiles ?? []);
-      if (pushBlock && dungeon.pushedRooms.has(room.roomId)) {
-        setUwSquareAt(pushBlock.homeX, pushBlock.homeY, 0x74);
-        pushBlock.state = PUSH_STATE.DONE;
-        pushBlock.complete = true;
-        pushBlock.y -= 0x10;
-        setUwSquareAt(pushBlock.x, pushBlock.y, 0xb0);
-        if (pushSpawnsStairs(room)) {
-          setUwSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE);
-          patchRoomSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE);
-        }
-      }
-      applyPushBlockRoomArt();
+      pushBlock = ensurePushBlock(room);
+      applyPushBlockRoomArt(room.roomId);
       pushBlockTex = null;
       roomItem = createRoomItem(
         room,
@@ -3181,14 +5230,13 @@ async function main() {
         roomClearedLatch = false;
       }
 
-      candleRoom = createCandleRoomState();
-      armDarkRoomAutoLight(candleRoom, room, inv);
       flames = [];
       statueState = createStatueState(room.layoutId ?? -1);
       closeDialogue();
 
       refreshDungeonRoomVisual();
       await ensureUwNeighbors();
+      resumeAs(me);
       spawnUwRoomEnemies(room.roomId, exit.dir);
       spawnVisibleUwRooms(exit.dir);
       applyPlayCamera();
@@ -3248,6 +5296,7 @@ async function main() {
   }
 
   async function finishOverworldScroll() {
+    const me = focus.current;
     const nextRoomId = screenScroll.nextRoomId;
     const spawn = screenScroll.spawn ?? {
       x: link.x,
@@ -3264,9 +5313,11 @@ async function main() {
       y: spawn.y,
       dir: spawn.dir,
     });
+    resumeAs(me);
   }
 
   async function finishDungeonScroll() {
+    const me = focus.current;
     const nextRoomId = screenScroll.nextRoomId;
     const fromDir = screenScroll.dir;
     destroyNextBg();
@@ -3276,6 +5327,7 @@ async function main() {
       roomSprite.y = play.y;
     }
     await loadDungeonRoom(nextRoomId, fromDir);
+    resumeAs(me);
   }
 
   /**
@@ -3284,11 +5336,12 @@ async function main() {
    * @param {{ allowExit: boolean, playSecretTune: boolean }} maze
    */
   async function beginOverworldScroll(transition, maze) {
+    const me = focus.current;
     if (
       scrollLoading
       || isScrolling(screenScroll)
       || busy
-      || raftRide.active
+      || currentRaft().active
       || whirlwind?.alive
       || inv.dead
       || endingUi.visible
@@ -3311,9 +5364,10 @@ async function main() {
       } catch {
         tex = markScaled(await Assets.load(bgUrl(nextRoomId, 1)));
       }
+      resumeAs(me);
       tex.source.scaleMode = 'nearest';
       // Re-check after await — raft / death / another load may have started.
-      if (busy || raftRide.active || inv.dead || whirlwind?.alive || mode !== 'overworld') {
+      if (busy || currentRaft().active || inv.dead || whirlwind?.alive || mode !== 'overworld') {
         destroyNextBg();
         return;
       }
@@ -3344,6 +5398,7 @@ async function main() {
    * @param {{ nextRoomId: number, dir: number }} exit
    */
   async function beginDungeonScroll(exit) {
+    const me = focus.current;
     if (
       scrollLoading
       || isScrolling(screenScroll)
@@ -3376,6 +5431,7 @@ async function main() {
           const tex = await Assets.load(
             `/dungeons/q${questPack}/level_${dungeon.level}/${room.image}`,
           );
+          resumeAs(me);
           tex.source.scaleMode = 'nearest';
           nextSprite = new Sprite(tex);
         } catch {
@@ -3392,6 +5448,7 @@ async function main() {
           }
         }
       }
+      resumeAs(me);
       if (!nextSprite || busy || inv.dead || endingUi.visible || !dungeon) return;
 
       destroyNextBg();
@@ -3422,20 +5479,62 @@ async function main() {
    * @param {{ skipMusic?: boolean }} [opts]
    */
   async function loadOverworldScreen(mapIndex, spawn, opts = {}) {
-    const loadGen = ++worldLoadGen;
+    const me = focus.current;
+    // Occupied is not the same as loaded: both heroes start in the
+    // overworld record, and the first `loadOverworldScreen` of a two-player
+    // boot would otherwise take the join-live shortcut and never fetch a
+    // screen.
+    //
+    // Already standing on the live overworld is a different request: a
+    // debug warp / `goOw` has to change the streaming anchor, not teleport
+    // in place. Taking the shortcut here left the party on `$77` while the
+    // spawn said `$55`, so a dock ride never started.
+    const alreadyOnOw = me?.world?.id === overworldWorldId();
+    const joiningLive =
+      !alreadyOnOw
+      && worldOccupiedByOthers(overworldWorldId(), me)
+      && Boolean(worlds.get(overworldWorldId())?.screen);
+    const loadGen = joiningLive ? worldLoadGen : ++worldLoadGen;
     busy = true;
     try {
+      // A no-op when this is one overworld screen to another; a world change
+      // when it is the way out of a labyrinth.
+      movePlayerToWorld(me, overworldWorldId(), { mode: 'overworld' });
+      if (joiningLive) {
+        // A friend is already out here. Land on the live overworld rather
+        // than rebuilding it (which would wipe their foes and their stream).
+        // Spawn is local to `mapIndex`; convert into the live anchor so an
+        // exit onto `$37` does not drop you at those numbers on `$77`.
+        resumeAs(me);
+        mode = 'overworld';
+        const here = offsetFromRoom(mapIndex, spawn.x, spawn.y);
+        link.x = here.x;
+        link.y = here.y;
+        if (spawn.dir != null) link.dir = spawn.dir;
+        link.posFrac = 0;
+        link.gridOffset = 0;
+        link.moving = false;
+        void ensureOwRoom(mapIndex);
+        applyPlayCamera();
+        refreshHud();
+        return;
+      }
       mode = 'overworld';
       dungeon = null;
       ladderObj = null;
       cancelScreenScroll();
-      streamFetchGen += 1;
+      const keepDungeonStream = dungeonOccupiedByOthers(me);
+      if (!keepDungeonStream) streamFetchGen += 1;
       owStream.clear();
-      uwStream.clear();
-      uwDoorFrames.clear();
+      if (!keepDungeonStream) {
+        uwStream.clear();
+        uwDoorFrames.clear();
+      }
       owStream.layer.visible = true;
-      uwStream.layer.visible = false;
-      doorFrameLayer.visible = false;
+      if (!keepDungeonStream) {
+        uwStream.layer.visible = false;
+        doorFrameLayer.visible = false;
+      }
       spawnedRooms = new Set();
       spawnClaims = new Set();
       if (roomSprite) {
@@ -3457,15 +5556,17 @@ async function main() {
 
       roomId = mapIndex;
       await ensureOwRoom(mapIndex);
+      resumeAs(me);
       if (loadGen !== worldLoadGen) return;
-      const entry = owStream.get(mapIndex);
-      if (!entry?.pack || !entry.tileGrid) {
+      const room = owRooms.get(mapIndex);
+      if (!room?.pack || !room.tileGrid) {
         setStatus(`Failed to load OW $${mapIndex.toString(16)}`);
         return;
       }
-      screen = { ...entry.pack, tileGrid: entry.tileGrid };
-      bg = entry.sprite;
-      candleRoom = createCandleRoomState();
+      screen = { ...room.pack, tileGrid: room.tileGrid };
+      bg = owStream.get(mapIndex)?.sprite ?? null;
+      candleRoom = asCandleStore(candleRoom);
+      beginCandleStay(candleRoom, mapIndex, null, inv, false);
       whirlwind = null;
       // A drained pond stays drained: the stairs sit in the water, so the
       // walkability floor has to survive the revisit even though the palette
@@ -3481,6 +5582,7 @@ async function main() {
       link.moving = false;
 
       await ensureOwNeighbors();
+      resumeAs(me);
       if (loadGen !== worldLoadGen) return;
       // Hard load: wipe foes + their sprites. A bare `enemies = []` orphans
       // every `enemyGfx` entry until a later sync (and used to miss them).
@@ -3515,37 +5617,165 @@ async function main() {
   }
 
   /**
+   * Progress (doors, taken items) is shared with the labyrinth; the current
+   * room and kill count belong to this place.
+   * @param {NonNullable<typeof dungeon>} base
+   * @param {object} room
+   * @param {object} [extra]
+   */
+  function forkDungeonState(base, room, extra = {}) {
+    return {
+      ...base,
+      room,
+      roomKillCount: 0,
+      doorwayBlockSide: null,
+      ...extra,
+    };
+  }
+
+  /**
+   * Drop into a mode-9 cellar as its own world. A friend still walking the
+   * top-down map keeps that labyrinth's anchor and camera.
+   * @param {number} cellarId
+   * @param {number} [sourceRoomId]
+   * @param {{ x: number, y: number, dir: number } | null} [spawnOverride]
+   */
+  async function enterCellar(cellarId, sourceRoomId, spawnOverride = null) {
+    const me = focus.current;
+    if (!dungeon?.levelData) return false;
+    const level = dungeon.levelData;
+    const cellarRoom = level.rooms.find((r) => (r.roomId & 0xff) === (cellarId & 0xff));
+    if (!cellarRoom) return false;
+    const destId = cellarWorldId(dungeon.level, cellarId);
+    const source = sourceRoomId ?? dungeon.cellarSourceRoomId ?? roomId;
+    dungeon.cellarSourceRoomId = source;
+
+    if (worlds.get(destId)?.dungeon) {
+      movePlayerToWorld(me, destId, { mode: 'dungeon' });
+      const spawn =
+        spawnOverride ??
+        cellarEnterSpawn(null, null, {
+          sourceRoomId: source,
+          cellarRoom,
+        });
+      link.x = spawn.x;
+      link.y = spawn.y;
+      link.dir = spawn.dir;
+      link.posFrac = 0;
+      link.gridOffset = 0;
+      link.moving = false;
+      if (me) me.uwOccRoomId = cellarRoom.roomId;
+      undergroundExitType = 1;
+      applyPlayCamera();
+      refreshHud();
+      fx.playSfx('stairs');
+      return true;
+    }
+
+    const shared = dungeon;
+    movePlayerToWorld(me, destId, { mode: 'dungeon', dungeon: shared });
+    mode = 'dungeon';
+    dungeon = forkDungeonState(shared, cellarRoom, { cellarSourceRoomId: source });
+    if (me?.world) me.world.dungeon = dungeon;
+    return loadDungeonRoom(cellarId, DIR.UP, spawnOverride);
+  }
+
+  /**
+   * Climb out of a cellar. Join the live labyrinth if someone is still in
+   * it; otherwise rebuild it the way a solo player always has.
+   * @param {number} nextRoomId
+   * @param {{ x: number, y: number, dir: number } | null} [spawnOverride]
+   * @param {number | null} [fromDir]
+   */
+  async function leaveCellar(nextRoomId, spawnOverride = null, fromDir = DIR.DOWN) {
+    const me = focus.current;
+    if (!dungeon?.levelData) return false;
+    const levelId = dungeon.level;
+    const destId = dungeonWorldId(levelId);
+    const spawn =
+      spawnOverride
+      ?? cellarReturnSpawn(dungeon.room?.attrsC ?? 0x6a);
+    undergroundExitType = 1;
+    stairsLatch = true;
+
+    if (worlds.get(destId)?.dungeon) {
+      movePlayerToWorld(me, destId, { mode: 'dungeon' });
+      const here = offsetFromRoom(nextRoomId, spawn.x, spawn.y);
+      link.x = here.x;
+      link.y = here.y;
+      link.dir = spawn.dir ?? DIR.DOWN;
+      link.posFrac = 0;
+      link.gridOffset = 0;
+      link.moving = false;
+      if (me) {
+        me.uwOccRoomId = nextRoomId & 0xff;
+        me.uwDoorwayBlockSide = null;
+      }
+      await ensureUwRoom(nextRoomId, false);
+      resumeAs(me);
+      applyPlayCamera();
+      refreshHud();
+      fx.playSfx('stairs');
+      return true;
+    }
+
+    const progress = dungeon;
+    const nextRoom = progress.levelData.rooms.find(
+      (r) => (r.roomId & 0xff) === (nextRoomId & 0xff),
+    );
+    movePlayerToWorld(me, destId, { mode: 'dungeon', dungeon: progress });
+    mode = 'dungeon';
+    dungeon = forkDungeonState(progress, nextRoom ?? progress.room);
+    if (me?.world) me.world.dungeon = dungeon;
+    return loadDungeonRoom(nextRoomId, fromDir, spawn);
+  }
+
+  /**
    * @param {number} roomIdWanted
    * @param {number | null} [fromDir]
    * @param {{ x: number, y: number, dir: number } | null} [spawnOverride]
    * @param {{ entranceY?: number | null }} [opts]
    */
   async function loadDungeonRoom(roomIdWanted, fromDir, spawnOverride = null, opts = {}) {
+    const me = focus.current;
     if (!dungeon?.levelData || busy) return false;
     const level = dungeon.levelData;
+    const destIsCellar = isCellarRoomId(roomIdWanted, level);
+    if (destIsCellar && !isCellarWorldId(me?.world?.id)) {
+      return enterCellar(roomIdWanted, dungeon.cellarSourceRoomId ?? roomId, spawnOverride);
+    }
+    if (!destIsCellar && isCellarWorldId(me?.world?.id)) {
+      return leaveCellar(roomIdWanted, spawnOverride, fromDir);
+    }
     const room = level.rooms.find((r) => r.roomId === roomIdWanted);
     if (!room) {
       setStatus(`No room $${Number(roomIdWanted).toString(16)} in level data`);
       return false;
     }
-    busy = true;
+    const keepDungeonStream = dungeonOccupiedByOthers(me);
+    const freezeParty = !keepDungeonStream;
+    if (freezeParty) busy = true;
     // Fresh room: allow stairs/cellar warps again (latch is only for the
     // frames Link remains on the trigger after a successful fire).
     stairsLatch = false;
     try {
       bombs = [];
-      clearEnemies();
-      cancelScreenScroll();
-      streamFetchGen += 1;
-      owStream.clear();
-      uwStream.clear();
-      uwDoorFrames.clear();
-      owStream.layer.visible = false;
+      if (!keepDungeonStream) {
+        clearEnemies();
+        cancelScreenScroll();
+        streamFetchGen += 1;
+        uwStream.clear();
+        uwDoorFrames.clear();
+        closeDialogue();
+      }
+      if (!worldOccupiedByOthers(overworldWorldId(), me)) {
+        owStream.clear();
+        owStream.layer.visible = false;
+      }
       uwStream.layer.visible = true;
       doorFrameLayer.visible = true;
       spawnedRooms = new Set();
       spawnClaims = new Set();
-      closeDialogue();
       bg = null;
       roomSprite = null;
 
@@ -3574,13 +5804,14 @@ async function main() {
       dungeon.visitedRooms.add(room.roomId);
 
       await ensureUwRoom(room.roomId, false);
-      const streamEntry = uwStream.get(room.roomId);
-      if (!streamEntry?.tileGrid) {
+      resumeAs(me);
+      const grid = uwRooms.tileGrid(room.roomId);
+      if (!grid) {
         setStatus(`Failed to load room $${room.roomId.toString(16)}`);
         return false;
       }
-      dungeonTileGrid = streamEntry.tileGrid;
-      roomSprite = streamEntry.sprite;
+      dungeonTileGrid = grid;
+      roomSprite = uwStream.get(room.roomId)?.sprite ?? null;
 
       const origin = { x: floor.x, y: floor.y };
       const roomSize = { w: floor.w, h: floor.h };
@@ -3601,6 +5832,8 @@ async function main() {
       const doorEnter = !spawnOverride && !isCellarRoom(room, level);
       link.gridOffset = doorEnter ? enteringRoomGridOffset(spawn.dir) : 0;
       link.moving = false;
+      if (me) me.uwOccRoomId = room.roomId;
+      enterCandleRoom(room.roomId, room);
       // DoorwayDir analog: skip tile collision in the entry corridor until
       // Link leaves that doorway (not a deep-room exit latch).
       let blockSide = doorEnter ? entrySideForFacing(spawn.dir) : null;
@@ -3617,6 +5850,17 @@ async function main() {
         }
       }
       dungeon.doorwayBlockSide = blockSide;
+      if (me) me.uwDoorwayBlockSide = blockSide;
+      // Hard cut reinterprets every ally's numbers as this room. Heal their
+      // occupying-room latch so they do not collide against the cell they
+      // were in before the warp.
+      for (const p of activePlayers(players)) {
+        if (p === me || p.world !== me?.world) continue;
+        if (!inAnchorPlayArea(p.link.x, p.link.y)) continue;
+        p.uwOccRoomId = room.roomId;
+        p.uwDoorwayBlockSide =
+          blockSide && nearDoorway(p.link, blockSide) ? blockSide : null;
+      }
 
       // clearEnemies() already ran at room-load start; keep the wave latches
       // fresh immediately before spawning this room's foes.
@@ -3627,21 +5871,8 @@ async function main() {
       enemyBooms = [];
       floorTiles = room.squares ? roomToTileGrid(room, [...UW_PRIMARY_SQUARES]) : null;
       ladderObj = null;
-      pushBlock = createPushBlock(room, origin, floorTiles ?? []);
-      if (pushBlock && dungeon.pushedRooms.has(room.roomId)) {
-        // Already pushed — vacate home 2×2 and park block one cell up (NES).
-        setUwSquareAt(pushBlock.homeX, pushBlock.homeY, 0x74);
-        pushBlock.state = PUSH_STATE.DONE;
-        pushBlock.complete = true;
-        pushBlock.y -= 0x10;
-        setUwSquareAt(pushBlock.x, pushBlock.y, 0xb0);
-        // BLOCK_STAIRS: stairs stay revealed after leave/re-enter.
-        if (pushSpawnsStairs(room)) {
-          setUwSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE);
-          patchRoomSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE);
-        }
-      }
-      applyPushBlockRoomArt();
+      pushBlock = ensurePushBlock(room);
+      applyPushBlockRoomArt(room.roomId);
       pushBlockTex = null; // rebuild if level palette changes
       roomItem = createRoomItem(
         room,
@@ -3680,11 +5911,10 @@ async function main() {
       world.addChild(stubLabel);
 
       titleEl.textContent = `Play — Level ${dungeon.level}`;
-      candleRoom = createCandleRoomState();
-      armDarkRoomAutoLight(candleRoom, room, inv);
       flames = [];
       statueState = createStatueState(room.layoutId ?? -1);
       await ensureUwNeighbors();
+      resumeAs(me);
       applyPlayCamera();
       syncDarkOverlay();
       const darkNote = room.floorItem?.dark ? '  DARK' : '';
@@ -3704,9 +5934,45 @@ async function main() {
     }
   }
 
+  /**
+   * Stand this hero at the labyrinth mouth in the current anchor's space.
+   * Does not rebuild the cell — an ally already inside keeps their pose.
+   * @param {object} p
+   * @param {{ walkIn?: boolean }} [opts]
+   */
+  function poseAtDungeonEntrance(p, opts = {}) {
+    const level = dungeon?.levelData;
+    if (!p?.link || !level || level.startRoom == null) return Promise.resolve();
+    const spawn = dungeonEntranceSpawn(level);
+    const here = offsetFromRoom(spawn.roomId, spawn.x, spawn.y);
+    p.link.x = here.x;
+    p.link.y = here.y;
+    p.link.dir = spawn.dir;
+    p.link.posFrac = 0;
+    p.link.gridOffset = opts.walkIn ? enteringRoomGridOffset(spawn.dir) : 0;
+    p.link.moving = false;
+    p.uwOccRoomId = spawn.roomId;
+    p.uwDoorwayBlockSide = entrySideForFacing(spawn.dir);
+    return ensureUwRoom(spawn.roomId, false).then(() => {
+      spawnUwRoomEnemies(spawn.roomId, spawn.dir);
+    });
+  }
+
   async function enterLevel(levelId, opts = {}) {
+    const me = focus.current;
     if (levelId === 9 && triforceCount(inv) < 8) {
       setStatus(`Level 9 sealed — Triforce ${triforceCount(inv)}/8`);
+      return;
+    }
+    const destId = dungeonWorldId(levelId);
+    // Someone is already down there — share the place rather than rebuilding
+    // it on top of them. Stand at the mouth, not on the occupant. Do not bump
+    // worldLoadGen: that would cancel the overworld loads the friend still
+    // standing outside is waiting on.
+    if (worlds.get(destId)?.dungeon) {
+      movePlayerToWorld(me, destId, { mode: 'dungeon' });
+      await poseAtDungeonEntrance(me, { walkIn: true });
+      fx.playSfx('stairs');
       return;
     }
     // Cancel in-flight OW loads so their completion cannot play overworld BGM
@@ -3718,17 +5984,25 @@ async function main() {
       const level = finalizeLevelMeta(
         await fetchJson(`/dungeons/q${quest}/level_${levelId}/level.json`),
       );
+      resumeAs(me);
       const startRoom = level.rooms.find((r) => r.roomId === level.startRoom);
       if (!startRoom) {
         throw new Error(`Level ${levelId} missing start room`);
       }
 
       const saved = dungeonProgress.get(dungeonProgressKey(quest, levelId));
+      // Where the stairs were, read before the move: `roomId` and `screen`
+      // belong to the place, so a step into the labyrinth answers for the
+      // labyrinth and no longer knows the overworld door it came in by.
+      const fromRoomId = opts.fromRoomId ?? roomId;
+      const fromAttrs = opts.fromAttrs ?? screen?.attrs ?? {};
+      const from = me?.world;
+      movePlayerToWorld(me, destId, { mode: 'dungeon' });
       mode = 'dungeon';
       dungeon = {
         level: levelId,
-        fromRoomId: opts.fromRoomId ?? roomId,
-        fromAttrs: opts.fromAttrs ?? screen?.attrs ?? {},
+        fromRoomId,
+        fromAttrs,
         levelData: level,
         room: startRoom,
         doorState: createDoorState(),
@@ -3760,17 +6034,20 @@ async function main() {
       );
       inv.map = saved?.map ?? 0;
       inv.compass = saved?.compass ?? 0;
+      if (!worldOccupiedByOthers(from, me)) {
         owStream.clear();
-      if (bg) {
-        if (bg.parent && bg.parent !== owStream.layer) {
-          bg.parent.removeChild(bg);
-          bg.destroy({ texture: false, textureSource: false });
+        if (bg) {
+          if (bg.parent && bg.parent !== owStream.layer) {
+            bg.parent.removeChild(bg);
+            bg.destroy({ texture: false, textureSource: false });
+          }
+          bg = null;
         }
-        bg = null;
       }
     } finally {
       busy = false;
     }
+    resumeAs(me);
     const resumeRoom = opts.roomId ?? dungeon.levelData.startRoom;
     // Fresh entry from the overworld stands Link on LevelInfo's StartY ($DD),
     // slightly lower than a room-to-room south entry, but still walks in.
@@ -3784,7 +6061,8 @@ async function main() {
       opts.spawnOverride ?? null,
       { entranceY },
     );
-    audio?.playSfx('stairs');
+    resumeAs(me);
+    fx.playSfx('stairs');
     playDungeonMusic(levelId);
     // Only on a real descent from the overworld — a save resumed inside the
     // labyrinth is not the moment to introduce it.
@@ -3799,18 +6077,43 @@ async function main() {
       setStatus(`Cave $${caveId.toString(16)} (missing table)`);
       return;
     }
-    caveReturn = {
+    // The doorstep to come back out onto, taken before the move: it is the
+    // cave that remembers it, and inside the cave `roomId` is the cave's.
+    const returnPose = {
       roomId,
       x: link.x,
       y: link.y,
       dir: DIR.DOWN,
     };
+    const me = focus.current;
+    const destId = caveWorldId(cave.caveId);
+    if (worlds.get(destId)) {
+      movePlayerToWorld(me, destId, { mode: 'cave' });
+      ensureCaveScene(destId);
+      link.x = CAVE_ENTER_SPAWN.x;
+      link.y = CAVE_ENTER_SPAWN.y;
+      link.dir = CAVE_ENTER_SPAWN.dir;
+      if (me) {
+        me.caveInteractLatch = false;
+        me.caveExitLatch = true;
+      }
+      clearCaveTransitState({ link, inv, sword, cancelSword });
+      fx.playSfx('stairs');
+      return;
+    }
+    const from = me?.world;
     // Cancel in-flight OW stream fetches so they cannot prune/layout mid-cave.
-    streamFetchGen += 1;
-    // Hide OW under the cave scene.
-    owStream.layer.visible = false;
-    if (bg) bg.visible = false;
-    clearEnemies();
+    // Only when this player is the last one outside — a friend still walking
+    // the overworld still needs those fetches.
+    if (!worldOccupiedByOthers(from, me)) streamFetchGen += 1;
+    // Hide OW under the cave scene when nobody else is looking at it.
+    // presentViews flips the layers per quadrant when the party is split.
+    if (!worldOccupiedByOthers(from, me)) {
+      owStream.layer.visible = false;
+      if (bg) bg.visible = false;
+    }
+    movePlayerToWorld(me, destId, { mode: 'cave' });
+    caveReturn = returnPose;
     bombs = [];
     // Candle flames live on fxLayer and are only stepped in combat — leave
     // them armed and a frozen orange blob hangs over the dweller forever.
@@ -3826,8 +6129,10 @@ async function main() {
     // OW knockback / mid-swing sword never finish in Mode B (no stepCombat),
     // and either one alone freezes Link on the mouth tile.
     clearCaveTransitState({ link, inv, sword, cancelSword });
-    caveInteractLatch = false;
-    caveExitLatch = true; // ignore exit until Link walks further inside
+    if (me) {
+      me.caveInteractLatch = false;
+      me.caveExitLatch = true; // ignore exit until Link walks further inside
+    }
     gambleAmounts = cave.kind === 'gamble' ? rollMoneyGameAmounts() : null;
     gambleResolved = false;
     // Bombs/keys/etc. restock every visit; do not keep prior shop purchases
@@ -3835,7 +6140,7 @@ async function main() {
     clearShopVisitTaken(cave, caveTaken);
     // `roomId` is still the OW entrance screen (Mode B does not change it).
     // Money game: stake "-10" under each rupee until a pick reveals results.
-    caveScene.openWith(
+    ensureCaveScene(destId).openWith(
       cave,
       caveTaken,
       potionShopWaresHidden(cave, inv),
@@ -3843,7 +6148,7 @@ async function main() {
       roomId,
       cave.kind === 'gamble' ? moneyGameStakeLabels() : null,
     );
-    audio?.playSfx('stairs');
+    fx.playSfx('stairs');
     setStatus(
       potionShopWaresHidden(cave, inv) ? 'The shopkeeper waits…' : describeCave(cave),
     );
@@ -3855,14 +6160,16 @@ async function main() {
       const result = tryDoorRepair(inv, cave, caveTakenState());
       if (result.ok) {
         setStatus(result.label);
-        audio?.playSfx('rupee');
+        fx.playSfx('rupee');
         refreshHud();
       }
     }
   }
 
   async function leaveCave(opts = {}) {
-    const cave = caveScene.cave;
+    const me = focus.current;
+    const scene = caveView();
+    const cave = scene?.cave;
     const destRoom = opts.roomId ?? caveReturn.roomId;
     const spawn = {
       x: opts.x ?? caveReturn.x,
@@ -3870,12 +6177,19 @@ async function main() {
       dir: opts.dir ?? caveReturn.dir,
     };
     closeDialogue();
-    invUi.close();
+    closePlayerMenu(me);
     world.y = 0;
     // Hide cave first — loadOverworldScreen may rebuild sprite caches, and
     // destroyed textures still bound to visible cave/HUD sprites black the GL context.
-    caveScene.close();
-    caveTileGrid = null;
+    // Only tear the scene down when this player is the last one in it.
+    if (!worldOccupiedByOthers(me?.world, me)) {
+      dropCaveScene(me?.world?.id);
+      caveTileGrid = null;
+    }
+    const joiningLive =
+      worldOccupiedByOthers(overworldWorldId(), me)
+      && Boolean(worlds.get(overworldWorldId())?.screen);
+    movePlayerToWorld(me, overworldWorldId(), { mode: 'overworld' });
     mode = 'overworld';
     undergroundExitType = 1;
 
@@ -3886,7 +6200,23 @@ async function main() {
         y: worldIndex.startY,
         dir: DIR.DOWN,
       });
+      resumeAs(me);
       setStatus(`Took the road to $${opts.roadDest.toString(16)}`);
+      return;
+    }
+
+    if (joiningLive) {
+      resumeAs(me);
+      link.x = spawn.x;
+      link.y = spawn.y;
+      if (spawn.dir != null) link.dir = spawn.dir;
+      link.posFrac = 0;
+      link.gridOffset = 0;
+      link.moving = false;
+      applyPlayCamera();
+      refreshHud();
+      fx.playSfx('stairs');
+      setStatus(cave ? 'Left the cave' : 'Back outside');
       return;
     }
 
@@ -3912,12 +6242,13 @@ async function main() {
       projectiles = [];
       bombs = [];
       await ensureOwNeighbors();
+      resumeAs(me);
       spawnVisibleOwRooms(spawn.dir ?? link.dir);
       applyPlayCamera();
       titleEl.textContent = 'Play — overworld';
       refreshHud();
       playOverworldMusic();
-      audio?.playSfx('stairs');
+      fx.playSfx('stairs');
       persistSave('cave exit');
       setStatus(cave ? 'Left the cave' : 'Back outside');
       return;
@@ -3926,7 +6257,8 @@ async function main() {
     owStream.layer.visible = true;
     if (bg) bg.visible = true;
     await loadOverworldScreen(destRoom, spawn);
-    audio?.playSfx('stairs');
+    resumeAs(me);
+    fx.playSfx('stairs');
     persistSave('cave exit');
     setStatus(cave ? 'Left the cave' : 'Back outside');
   }
@@ -3935,7 +6267,7 @@ async function main() {
    * Interact with ware / dweller while in cave mode.
    */
   function tryCaveInteract() {
-    const cave = caveScene.cave;
+    const cave = caveView()?.cave;
     if (!cave) return;
 
     if (cave.kind === 'road') {
@@ -3969,13 +6301,13 @@ async function main() {
       if (result.ok) {
         gambleResolved = true;
         // Reveal signed win/loss under all three rupees (PrependSignToPrice).
-        caveScene.refreshWares(
+        caveView()?.refreshWares(
           caveTaken,
           false,
           inv,
           moneyGameResultLabels(amounts),
         );
-        audio?.playSfx('rupee');
+        fx.playSfx('rupee');
       }
       refreshHud();
       return;
@@ -3991,8 +6323,8 @@ async function main() {
       const result = tryMoblinGift(inv, cave, caveTakenState());
       setStatus(result.ok ? result.label : (result.reason ?? 'Nothing'));
       if (result.ok) {
-        audio?.playSfx('rupee');
-        caveScene.refreshWares(caveTaken, false, inv);
+        fx.playSfx('rupee');
+        caveView()?.refreshWares(caveTaken, false, inv);
       }
       refreshHud();
       return;
@@ -4010,19 +6342,20 @@ async function main() {
       setStatus(result.reason ?? 'Cannot');
       return;
     }
+    if (result.item != null) onGrantedItem(result.item);
     setStatus(`Got ${result.label}${result.price ? ` (−${result.price}R)` : ''}`);
-    caveScene.refreshWares(caveTaken, false, inv);
+    caveView()?.refreshWares(caveTaken, false, inv);
     refreshHud();
-    invUi.refresh(inv, dungeon);
+    refreshOpenMenus();
     if (cave.kind === 'give' || cave.kind === 'letter' || cave.kind === 'take_any') {
       // TakeItem: Tune1 $08, and in a cave/cellar also SongRequest $08 with
       // Link halted holding the item for $80 frames.
-      audio?.playSfx('item_taken');
-      audio?.playFanfare('item');
+      fx.playSfx('item_taken');
+      fx.playFanfare('item');
       inv.itemLiftTimer = ITEM_LIFT_FRAMES;
       startItemLift(result.item ?? null);
     } else {
-      audio?.playSfx('rupee');
+      fx.playSfx('rupee');
     }
     // Shelf purchases get the same introduction a labyrinth floor would give.
     tellItemStory(result.item, { interrupt: true });
@@ -4046,7 +6379,8 @@ async function main() {
       stepLink(link, caveTileGrid, inputMask);
     }
     ensureLinkNotInSolid();
-    const cave = caveScene.cave;
+    const me = focus.current;
+    const cave = caveView()?.cave;
     if (cave) {
       const slots = potionShopWaresHidden(cave, inv)
         ? []
@@ -4061,16 +6395,16 @@ async function main() {
           ? `road:${overRoad}`
           : null;
       if (!targetKey) {
-        caveInteractLatch = false;
-      } else if (caveInteractLatch !== targetKey) {
-        caveInteractLatch = targetKey;
+        if (me) me.caveInteractLatch = false;
+      } else if (me && me.caveInteractLatch !== targetKey) {
+        me.caveInteractLatch = targetKey;
         tryCaveInteract();
       }
     }
     // Clear latch once Link has walked north of the mouth (enter spawn is $B8).
-    if (link.y < 0xc0) caveExitLatch = false;
-    if (!caveExitLatch && checkCaveExit(link)) {
-      caveExitLatch = true;
+    if (me && link.y < 0xc0) me.caveExitLatch = false;
+    if (me && !me.caveExitLatch && checkCaveExit(link)) {
+      me.caveExitLatch = true;
       void leaveCave();
     }
     stepLinkStatus(inv);
@@ -4092,7 +6426,7 @@ async function main() {
     }
     if (opened.length) {
       syncOwBombCracks(owStream.get(roomId), roomId);
-      audio?.playSfx('secret');
+      fx.playSfx('secret');
       setStatus(`Secret revealed (${action})!`);
     }
     return opened;
@@ -4116,7 +6450,7 @@ async function main() {
       if (!revealPondStairs(screen.tileGrid)) return;
       owSecretsRevealed.add(key);
       patchOwBgSquare(POND_STAIRS_COL, POND_STAIRS_ROW, SECRET_STAIRS_TILES);
-      audio?.playSfx('secret');
+      fx.playSfx('secret');
       setStatus('Secret revealed (recorder)!');
       persistSave('pond stairs');
     }
@@ -4161,35 +6495,33 @@ async function main() {
   }
 
   async function exitDungeon() {
+    const me = focus.current;
     if (!dungeon || busy) return;
     snapshotDungeonProgress();
-    ladderObj = null;
-    holdingTriforceLift = false;
-    liftItemType = null;
-    syncItemLiftSprite();
-    closeDialogue();
-    invUi.close();
-    world.y = 0;
-    // NES Items RAM swaps per level — map/compass leave inventory on OW.
-    inv.map = 0;
-    inv.compass = 0;
-    darkOverlay.visible = false;
-    doorFrameLayer.tint = 0xffffff;
-    candleRoom = createCandleRoomState();
     const spawn = overworldExitSpawn(dungeon.fromAttrs ?? {});
     const from = dungeon.fromRoomId ?? worldIndex.startScreen;
-    // Drop dungeon stream before the OW reload (same care as leaveCave).
-    uwStream.clear();
-    uwDoorFrames.clear();
-    doorFrameLayer.visible = false;
-    roomSprite = null;
-    dungeonTileGrid = null;
-    floorTiles = null;
-    dungeon = null;
+    const lastOut = !worldOccupiedByOthers(me?.world, me);
+    closeDialogue();
+    closePlayerMenu(me);
+    world.y = 0;
+    // Only the last one out takes the lights. An ally still in the labyrinth
+    // needs the stream, the tile grid, and the map/compass on their HUD.
+    if (lastOut) {
+      ladderObj = null;
+      holdingTriforceLift = false;
+      liftItemType = null;
+      syncItemLiftSprite();
+      inv.map = 0;
+      inv.compass = 0;
+      darkOverlay.visible = false;
+      doorFrameLayer.tint = 0xffffff;
+      candleRoom = createCandleStore();
+    }
     try {
       await loadOverworldScreen(from, { ...spawn, dir: DIR.DOWN });
+      resumeAs(me);
       undergroundExitType = 1;
-      audio?.playSfx('stairs');
+      fx.playSfx('stairs');
       persistSave('dungeon exit');
       setStatus(`Left the dungeon → OW $${Number(from).toString(16).padStart(2, '0')}`);
     } catch (err) {
@@ -4264,7 +6596,7 @@ async function main() {
    */
   /** OW screen for room-scoped caveTaken keys (take-any / door / moblin). */
   function caveEntranceRoomId() {
-    return caveScene.roomId ?? caveReturn.roomId ?? roomId;
+    return caveView()?.roomId ?? caveReturn.roomId ?? roomId;
   }
 
   function caveTakenState() {
@@ -4282,7 +6614,7 @@ async function main() {
     const { pages, marks } = caveStory(cave, { repeat, locked, wares: slots });
     if (!pages.length) return;
     applyStoryMarks(marks);
-    textBox.open(pages, { kind: 'cave' });
+    openTextBox(pages, { kind: 'cave' });
     // Mode B keeps physics running under the box (NES nametable crawl).
     setStatus('A / B / Start closes text — you can still walk');
   }
@@ -4298,24 +6630,32 @@ async function main() {
     });
     if (!pages.length) return;
     applyStoryMarks(marks);
-    textBox.open(pages, { kind: 'person' });
+    openTextBox(pages, { kind: 'person' });
   }
 
   /**
-   * Open underworld person dialogue once Link has fully entered the room and
-   * the NPC is on camera (NES textbox starts after the person begins updating,
-   * not while Link is still in the doorway).
+   * Open underworld person dialogue once this hero has fully entered the
+   * NPC's cell and the NPC is on camera (NES textbox starts after the person
+   * begins updating, not while Link is still in the doorway).
+   *
+   * The world's `roomId` is the streaming anchor — whoever last crossed a
+   * door. Looking there made an ally standing in a leftover cell "hear" an
+   * old man two rooms away, and tagged the wrong reader on the box.
    */
   function tryOpenPersonDialogue() {
     if (mode !== 'dungeon' || !dungeon || busy || inv.dead) return;
-    if (textBox.active || personDialogueForRoom === roomId) return;
+    if (textBox.active) return;
+    const me = focus.current;
+    const door = uwHeroDoorContext();
+    const occId = door.occId & 0xff;
+    if (personDialogueForRoom === occId) return;
     if (
-      dungeon.doorwayBlockSide
-      && !doorwayLatchCleared(link, dungeon.doorwayBlockSide)
+      me?.uwDoorwayBlockSide
+      && !doorwayLatchCleared(door.localLink, me.uwDoorwayBlockSide)
     ) {
       return;
     }
-    const person = enemiesInRoom(enemies, roomId).find(
+    const person = enemiesInRoom(enemies, occId).find(
       (e) =>
         e.alive
         && (isPersonType(e.objType) || isGrumble(e.objType))
@@ -4323,7 +6663,7 @@ async function main() {
     );
     if (!person) return;
     openPersonDialogue(dungeon.level, person.objType);
-    personDialogueForRoom = roomId;
+    personDialogueForRoom = occId;
   }
 
   function clearPersonWareSprites() {
@@ -4449,7 +6789,7 @@ async function main() {
       return false;
     }
     applyStoryMarks(marks);
-    textBox.open(pages, { kind, meta });
+    openTextBox(pages, { kind, meta });
     return true;
   }
 
@@ -4462,6 +6802,8 @@ async function main() {
    */
   function closeDialogue() {
     pendingStory = null;
+    talkingPlayer = null;
+    storyPager = null;
     textBox.close();
   }
 
@@ -4471,7 +6813,7 @@ async function main() {
     pendingStory = null;
     if (!next || inv.dead) return;
     applyStoryMarks(next.marks);
-    textBox.open(next.pages, { kind: next.kind, meta: next.meta });
+    openTextBox(next.pages, { kind: next.kind, meta: next.meta });
   }
 
   /**
@@ -4486,7 +6828,25 @@ async function main() {
     });
     if (!pages.length) return;
     applyStoryMarks(marks);
-    textBox.open(pages, { kind: 'briefing', meta: { level, missed: missed.length } });
+    openTextBox(pages, { kind: 'briefing', meta: { level, missed: missed.length } });
+  }
+
+  /**
+   * The between-labyrinth briefing walks the whole party out. Closing it
+   * as whoever finished reading last used to leave the others underground.
+   */
+  async function exitDungeonParty() {
+    const leaving = activePlayers(players).filter((p) => {
+      const id = String(p.world?.id ?? '');
+      return id.startsWith('dungeon:') || id.startsWith('cellar:');
+    });
+    for (const p of leaving) {
+      const id = String(p.world?.id ?? '');
+      if (!id.startsWith('dungeon:') && !id.startsWith('cellar:')) continue;
+      await focus.on(p, () => exitDungeon());
+    }
+    const host = hostPlayer(players) ?? players[0];
+    if (host) focus.to(host);
   }
 
   /**
@@ -4499,7 +6859,7 @@ async function main() {
       pendingStory = null;
       persistSave('level briefing');
       // NES EndGameMode12 → OW entrance after the Mode $12 ceremony.
-      void exitDungeon();
+      void exitDungeonParty();
       return;
     }
     drainPendingStory();
@@ -4512,13 +6872,13 @@ async function main() {
             (screen?.attrs?.monsterId ?? 0).toString(16)
           }`
         : mode === 'cave'
-          ? `Cave $${(caveScene.cave?.caveId ?? 0).toString(16)}`
+          ? `Cave $${(caveView()?.cave?.caveId ?? 0).toString(16)}`
           : `L${dungeon?.level} $${roomId.toString(16).padStart(2, '0')}  TF ${triforceCount(inv)}/8`;
     // Cave keeps the OW radar on the overworld entrance screen.
-    const mapRoomId =
-      mode === 'cave' ? (caveReturn?.roomId ?? roomId) : roomId;
+    const mapRoomId = lookingRoomId();
     // A mark whose item is now in the bag retires itself.
     pruneHintMarks(hintMarks, inv);
+    const compact = playerCount > 1;
     hud.update({
       inv,
       location,
@@ -4529,7 +6889,21 @@ async function main() {
       mapMarks: currentMapMarks(),
       dungeonMarks: currentDungeonMapMarks(),
       frame: uiFrame,
+      compact,
+      playerIndex: focus.current?.index ?? 0,
     });
+    if (compact) {
+      sharedBar.update({
+        inv,
+        rupeesShown: rupeeRoll.shown,
+        mode,
+        roomId: mapRoomId,
+        dungeon,
+        mapMarks: currentMapMarks(),
+        dungeonMarks: currentDungeonMapMarks(),
+        frame: uiFrame,
+      });
+    }
   }
 
   function activeLinkTileGrid() {
@@ -4551,6 +6925,10 @@ async function main() {
 
   function applyShove() {
     if (inv.shovePixels <= 0 || !inv.shoveDir) return;
+    if (mode === 'dungeon' && dungeon) {
+      applyUwShove();
+      return;
+    }
     const grid = activeLinkTileGrid();
     if (!grid) {
       inv.shovePixels = 0;
@@ -4566,16 +6944,12 @@ async function main() {
     const tileOpts =
       mode === 'overworld'
         ? overworldLinkTileOpts()
-        : mode === 'dungeon'
-          ? dungeonTileOpts(inv)
-          : {};
+        : {};
     const result = stepShove(link, grid, shoveDir, inv.shovePixels, {
       roomId:
         mode === 'overworld'
           ? CONTINUOUS_OW
-          : mode === 'dungeon'
-            ? UW_ROOM_BOUNDS
-            : null,
+          : null,
       tileOpts,
       pixelsPerFrame: 4,
     });
@@ -4583,17 +6957,110 @@ async function main() {
     if (result.blocked) inv.shoveDir = 0;
   }
 
+  /**
+   * Knockback in the cell this hero occupies. The world's `dungeonTileGrid`
+   * is the streaming anchor; using it on leftover coords clamped those
+   * samples to the anchor's walls and yanked the ally into the wrong room.
+   */
+  function applyUwShove() {
+    const door = uwHeroDoorContext();
+    const shoveDir = maskPersonBlockedDir(inv.shoveDir);
+    if (!shoveDir) {
+      inv.shovePixels = 0;
+      inv.shoveDir = 0;
+      return;
+    }
+    const inCellar =
+      door.occRoom && dungeon?.levelData
+        ? isCellarRoom(door.occRoom, dungeon.levelData)
+        : false;
+    const grid =
+      door.mode === 'corridor'
+        ? OPEN_UW_GRID
+        : (uwRooms.tileGrid(door.occId)
+          ?? ((door.occId & 0xff) === (roomId & 0xff) ? dungeonTileGrid : OPEN_UW_GRID));
+    if (!grid) {
+      inv.shovePixels = 0;
+      return;
+    }
+    const bounds =
+      door.mode === 'room' && !inCellar ? UW_ROOM_BOUNDS : NO_ROOM_BOUNDS;
+    const result = stepShove(door.localLink, grid, shoveDir, inv.shovePixels, {
+      roomId: bounds,
+      tileOpts: door.mode === 'room' ? dungeonTileOpts(inv) : {},
+      pixelsPerFrame: 4,
+    });
+    writeUwLocal(door.occId, door.localLink);
+    inv.shovePixels = result.shovePixels;
+    if (result.blocked) inv.shoveDir = 0;
+  }
+
+  /**
+   * Door walking in the cell this hero occupies, which may not be the world's
+   * streaming anchor. Coords on `localLink` are that cell's local space.
+   */
+  function uwHeroDoorContext() {
+    const me = focus.current;
+    const occNow = occupyingRoom(roomId, link.x, link.y);
+    // Prefer the latch only while this hero is still in that cell (or its
+    // door lip). A hard cut reinterprets everyone else's numbers as the new
+    // room; keeping the old id maps them onto the neighbour's wall tiles.
+    const occId = resolveUwOccupyingRoomId(roomId, link.x, link.y, me?.uwOccRoomId);
+    if (me && (me.uwOccRoomId == null || (me.uwOccRoomId & 0xff) !== (occId & 0xff))) {
+      me.uwOccRoomId = occId;
+      const occPack =
+        dungeon?.levelData?.rooms?.find((r) => (r.roomId & 0xff) === (occId & 0xff))
+        ?? dungeon?.room;
+      enterCandleRoom(occId, occPack);
+    }
+    const occRoom =
+      dungeon?.levelData?.rooms?.find((r) => (r.roomId & 0xff) === (occId & 0xff))
+      ?? dungeon?.room;
+    const local = offsetToRoom(occId, link.x, link.y);
+    const localLink = { ...link, x: local.x, y: local.y };
+    const latch = me?.uwDoorwayBlockSide ?? null;
+    const mode = occRoom
+      ? uwDoorMotionMode(localLink, occRoom, {
+          doorwayBlockSide: latch,
+          doorState: dungeon?.doorState,
+        })
+      : 'room';
+    return { me, occId, occRoom, occNow, localLink, latch, mode };
+  }
+
+  function writeUwLocal(occId, localLink) {
+    const p = offsetFromRoom(occId, localLink.x, localLink.y);
+    writeLinkMotion(link, localLink, p.x, p.y);
+  }
+
   /** Safety net: if Link is somehow inside a solid, slide him out. */
   function ensureLinkNotInSolid() {
     // Doorway tiles are solid in the UW map; NES skips collision via DoorwayDir.
-    if (
-      mode === 'dungeon'
-      && dungeon
-      && linkInDoorwayCorridor(link, dungeon.room, {
-        doorwayBlockSide: dungeon.doorwayBlockSide,
-        doorState: dungeon.doorState,
-      })
-    ) {
+    if (mode === 'dungeon' && dungeon) {
+      const door = uwHeroDoorContext();
+      // Occupying-room corridor, or a leftover still in a neighbour cell.
+      if (door.mode === 'neighbor' || door.mode === 'corridor') return;
+      if (ladderAllowsStanding(ladderObj, door.localLink)) return;
+      const grid =
+        uwRooms.tileGrid(door.occId)
+        ?? ((door.occId & 0xff) === (roomId & 0xff) ? dungeonTileGrid : OPEN_UW_GRID);
+      if (!grid) return;
+      const preferDir =
+        (inv.shoveDir ? oppositeDir(inv.shoveDir) : 0) || oppositeDir(door.localLink.dir) || DIR.UP;
+      const inCellar =
+        door.occRoom && dungeon.levelData
+          ? isCellarRoom(door.occRoom, dungeon.levelData)
+          : false;
+      const result = ejectLinkFromSolid(door.localLink, grid, {
+        roomId: inCellar ? NO_ROOM_BOUNDS : UW_ROOM_BOUNDS,
+        tileOpts: dungeonTileOpts(inv),
+        preferDir,
+      });
+      if (result.ejected) {
+        writeUwLocal(door.occId, door.localLink);
+        inv.shovePixels = 0;
+        inv.shoveDir = 0;
+      }
       return;
     }
     // On the stepladder, feet sit on water `$F4` — that is intentional.
@@ -4602,19 +7069,9 @@ async function main() {
     if (!grid) return;
     const preferDir =
       (inv.shoveDir ? oppositeDir(inv.shoveDir) : 0) || oppositeDir(link.dir) || DIR.UP;
-    const tileOpts =
-      mode === 'overworld'
-        ? overworldLinkTileOpts()
-        : mode === 'dungeon'
-          ? dungeonTileOpts(inv)
-          : {};
+    const tileOpts = mode === 'overworld' ? overworldLinkTileOpts() : {};
     const result = ejectLinkFromSolid(link, grid, {
-      roomId:
-        mode === 'overworld'
-          ? CONTINUOUS_OW
-          : mode === 'dungeon'
-            ? UW_ROOM_BOUNDS
-            : null,
+      roomId: mode === 'overworld' ? CONTINUOUS_OW : null,
       tileOpts,
       preferDir,
     });
@@ -4629,20 +7086,42 @@ async function main() {
     const result = harmLink(inv, halfHearts);
     if (!result.applied) return;
     resetDropStreak(dropCounters);
-    clearClockFreeze(inv, enemies);
-    audio?.playSfx('hurt');
+    endClockIfHere();
+    fx.playSfx('hurt');
     inv.shoveDir = oppositeDir(dir) || oppositeDir(link.dir) || DIR.DOWN;
     inv.shovePixels = 0x20;
     refreshHud();
     if (result.died) beginDeath();
   }
 
-  /** GameMode $11: silence the world and hand the screen to the death sequence. */
+  /**
+   * GameMode $11: this hero just dropped.
+   *
+   * A potion in the shared bag is drunk for them, as the ROM does. If someone
+   * else is still standing they regroup on that ally rather than opening a
+   * game-over the living did not earn. The continue menu is only for when
+   * the whole party is down — and at one player that is the ROM's own flow.
+   */
   function beginDeath() {
+    const dead = focus.current;
+    if (!dead) return;
+    if (tryAutoRevive(inv)) {
+      refreshHud();
+      fx.playSfx('text');
+      setStatus('Potion!');
+      return;
+    }
+    if (deathOutcome(players, dead) === 'respawn') {
+      if (talkingPlayer === dead) closeDialogue();
+      if (menuUi(dead).open) closePlayerMenu(dead);
+      dead.deathSeq = createDeathSequence();
+      setStatus('Continue — beside your friend');
+      return;
+    }
     // InitMode11Death ends in SilenceSound before the first submode runs.
     worldLoadGen += 1;
     cancelScreenScroll();
-    audio?.stopMusic();
+    fx.stopMusic();
     // Mode $11 owns the screen from here; an open textbox would halt it.
     closeDialogue();
     pendingBriefingLevel = null;
@@ -4650,8 +7129,58 @@ async function main() {
     if (activeSlot != null && playing) {
       saveStore.save(activeSlot, collectSaveState());
     }
+    for (const p of players) p.deathSeq = null;
     deathUi.begin();
+    presentCinematic();
     setStatus('Game over');
+  }
+
+  /**
+   * After the co-op spin, stand next to whoever is still up. The fade and
+   * GAME OVER are for a wipe, not for one hero dropping.
+   */
+  function finishCoopRespawn(dead) {
+    dead.deathSeq = null;
+    if (deathOutcome(players, dead) !== 'respawn') {
+      focus.on(dead, () => beginDeath());
+      return;
+    }
+    const ally = respawnAlly(players, dead);
+    if (!ally) {
+      focus.on(dead, () => beginDeath());
+      return;
+    }
+    if (talkingPlayer === dead) closeDialogue();
+    if (shouldFollowAllyWorld(dead, ally)) {
+      movePlayerToWorld(dead, ally.world.id, { mode: ally.world.mode });
+      respawnBeside(dead, ally);
+    } else if (isCellarWorldId(ally?.world?.id) && !isCellarWorldId(dead?.world?.id)) {
+      const destId = labyrinthForCellarAlly(ally);
+      respawnBeside(dead, ally);
+      if (destId && worlds.get(destId)?.dungeon) {
+        if (dead.world?.id !== destId) {
+          movePlayerToWorld(dead, destId, { mode: 'dungeon' });
+        }
+        void poseAtDungeonEntrance(dead);
+      }
+      refreshHud();
+      setStatus('Continue — Level entrance');
+      return;
+    } else {
+      respawnBeside(dead, ally);
+    }
+    refreshHud();
+    setStatus('Continue — beside your friend');
+  }
+
+  function stepCoopDeaths() {
+    for (const p of activePlayers(players)) {
+      if (!p.deathSeq) continue;
+      const ev = stepDeathSequence(p.deathSeq);
+      if (ev.playDyingTune) fx.playSfx('link_dying');
+      p.link.dir = deathLinkDir(p.deathSeq);
+      if (coopDeathSpinDone(p.deathSeq)) finishCoopRespawn(p);
+    }
   }
 
   /**
@@ -4660,15 +7189,15 @@ async function main() {
    */
   function stepDeathMode(pressed) {
     const tick = deathUi.tick(link, pressed);
-    if (tick.playDyingTune) audio?.playSfx('link_dying');
-    if (tick.playHeartTune) audio?.playSfx('text');
+    if (tick.playDyingTune) fx.playSfx('link_dying');
+    if (tick.playHeartTune) fx.playSfx('text');
     if (tick.playGameOverMusic) {
       // UpdateMode11Death_SubC: Tune1 $40 loops, and the death is tallied.
-      audio?.playSfx('game_over');
+      fx.playSfx('game_over');
       deathCount = incrementDeathCount(deathCount);
       if (activeSlot != null) saveStore.save(activeSlot, collectSaveState());
     }
-    if (tick.cursorMoved) audio?.playSfx('shield');
+    if (tick.cursorMoved) fx.playSfx('shield');
 
     // Link keeps spinning in the world layer until the spark replaces him.
     deathLinkVisible = tick.linkVisible;
@@ -4681,7 +7210,7 @@ async function main() {
   function applyContinueChoice(action) {
     deathUi.hide();
     // Effect `$80` / leaving mode `$08`: drop Tune1 game-over before anything else.
-    audio?.stopSfx();
+    fx.stopSfx();
     if (action === 'continue') {
       continueAfterDeath();
       return;
@@ -4690,27 +7219,31 @@ async function main() {
     inv.dead = false;
     playing = false;
     dungeon = null;
-    audio?.stopMusic();
-    audio?.playMusic('title');
+    fx.stopMusic();
+    fx.playMusic('title');
     titleUi.setSlots(saveStore.listSlots());
     titleUi.show();
     setStatus(action === 'save' ? 'Saved — file select' : 'Retry — file select');
   }
 
   /**
-   * NES Mode 3 unfurl stand-in: reload dungeon entrance after capture slide.
+   * Dump the caught hero at the dungeon mouth. Allies stay where they are —
+   * a hard `loadDungeonRoom` would rebuild the cell on top of them.
    * @param {import('@shared/enemies.js').Enemy} e
    */
   function finishWallmasterCapture(e) {
+    const victimIndex = e.wallmasterVictim ?? focus.current?.index ?? 0;
     e.wallmasterGrab = false;
     e.wallmasterWarpPending = false;
     e.alive = false;
-    inv.paralyzed = 0;
-    const entrance = dungeon?.levelData?.startRoom;
-    const entranceY = dungeon?.levelData?.startY;
-    if (entrance == null) return;
+    const victim = players.find((p) => p.index === victimIndex && p.active);
+    const level = dungeon?.levelData;
+    if (!victim || !level || level.startRoom == null) return;
+    victim.inv.paralyzed = 0;
+    victim.inv.shovePixels = 0;
+    victim.inv.shoveDir = 0;
+    void poseAtDungeonEntrance(victim);
     snapshotDungeonProgress();
-    void loadDungeonRoom(entrance, DIR.UP, null, { entranceY });
   }
 
   /**
@@ -4742,7 +7275,9 @@ async function main() {
     if (e.objType === OBJ.WALLMASTER && mode === 'dungeon' && dungeon) {
       // Capture starts a slide into the wall; warp fires when the trip ends.
       if (!e.wallmasterGrab) {
+        if (linkHeldByWallmaster()) return;
         e.wallmasterGrab = true;
+        e.wallmasterVictim = focus.current?.index ?? 0;
         e.captureTimer = 1;
         e.wallmasterRetreatDir = undefined;
         e.wallmasterTilesCrossed = 0;
@@ -4898,12 +7433,12 @@ async function main() {
       patchOwBgSquare(secret.col, secret.row, tiles);
     }
     if (secret.kind === 'stairs') {
-      audio?.playSfx('secret');
+      fx.playSfx('secret');
       setStatus('Armos reveals stairs!');
       return;
     }
     if (secret.kind === 'bracelet' && !inv.bracelet) {
-      audio?.playSfx('secret');
+      fx.playSfx('secret');
       // Drop bracelet at Armos feet as a room-style pickup via grant.
       const label = grantRoomItem(inv, ARMOS_BRACELET_ITEM);
       setStatus(`Armos drops the ${label}!`);
@@ -4934,7 +7469,7 @@ async function main() {
 
   function playWeaponHitSfx(e, result) {
     for (const name of sfxNamesForWeaponHit(result, e, { isBoss: isBossType(e.objType) })) {
-      audio?.playSfx(name);
+      fx.playSfx(name);
     }
   }
 
@@ -4945,8 +7480,8 @@ async function main() {
    */
   function onEnemyKilled(e, damageType = 0) {
     // Tune1 $20 is the death cue; `enemy_die` / `boss_hit` fire from playWeaponHitSfx.
-    audio?.playSfx(isBossType(e.objType) ? 'boss_defeat' : 'monster_die');
-    if (isGanon(e.objType)) audio?.playFanfare('ganon');
+    fx.playSfx(isBossType(e.objType) ? 'boss_defeat' : 'monster_die');
+    if (isGanon(e.objType)) fx.playFanfare('ganon');
     // A foe streamed in from a neighbour must not count toward this room's
     // kill tally or trip its ringleader cascade.
     const homeRoom = (e.homeRoomId ?? roomId) & 0xff;
@@ -4998,35 +7533,51 @@ async function main() {
   function tryTakeDropsWith(takerX, takerY, takerKind = 'link') {
     if (!isValidItemTaker(takerKind)) return;
     for (const d of drops) {
-      if (!d.alive || !dropTouchesTaker(d, takerX, takerY)) continue;
+      if (!d.alive || !dropTouchesTaker(d, takerX, takerY, takerKind)) continue;
       const got = grantDroppedItem(inv, d.itemId);
       d.alive = false;
       if (got.ok) {
         if (d.itemId === DROP_ITEM.CLOCK) {
           tagVisibleEnemiesForClock(
             enemies,
-            (e) => !rectFullyOffCamera(e, camLocalX, camLocalY, 0),
+            (e) => !rectFullyOffEveryCamera(e, sessionCameras(), 0),
           );
-          if (!clockFreezeActive(enemies)) clearClockFreeze(inv, enemies);
+          if (clockFreezeActive(enemies)) {
+            clockWorldId = clockWorldHere();
+          } else {
+            endClockFreeze();
+          }
         }
         // Fairy uses TakeHeartsNoSound — no item tune.
         // NES TakeItem only arms ItemLiftTimer in caves/cellars (GameMode≠$05);
         // OW/UW play skips the lift halt, so drops must not freeze Link.
         // Rupees → Tune1 $01; hearts/bombs/keys → Tune0 $08 (PlayKeyTakenTune).
         const sfx = dropPickupSfx(d.itemId);
-        if (sfx) audio?.playSfx(sfx);
+        if (sfx) fx.playSfx(sfx);
         setStatus(got.label);
         refreshHud();
       }
     }
   }
 
-  function stepDrops() {
-    dropFrame += 1;
-    const bounds = enemyBounds();
-    for (const d of drops) {
-      stepDroppedItemLifetime(d, dropFrame);
-      if (d.itemId === DROP_ITEM.FAIRY) stepFairy(d, bounds, { x: link.x, y: link.y });
+  /**
+   * Drops: the world's to age, anyone's to take.
+   *
+   * @param {boolean} [shared] false for the second and later hero in a place
+   *   this frame, who may still pick things up but must not age them again
+   */
+  function stepDrops(shared = true) {
+    if (shared) {
+      dropFrame += 1;
+      const bounds = enemyBounds();
+      for (const d of drops) {
+        stepDroppedItemLifetime(d, dropFrame);
+        if (d.itemId === DROP_ITEM.FAIRY) {
+          const marks = targetableLinks(players, focus.current?.world);
+          const chase = nearestTarget(marks, d.x, d.y) ?? { x: link.x, y: link.y };
+          stepFairy(d, bounds, chase);
+        }
+      }
     }
     // NES ItemTakerObjSlots: Link / sword / boom / arrow only.
     if (isSwordActive(sword)) {
@@ -5038,18 +7589,21 @@ async function main() {
         tryTakeDropsWith(p.x, p.y, 'arrow');
       }
     }
-    if (boomerang && boomerang.phase !== BOOM_PHASE.DONE) {
-      tryTakeDropsWith(boomerang.x, boomerang.y, 'boom');
+    if (boomerangs.length) {
+      for (const boom of liveBoomerangs(boomerangs)) {
+        tryTakeDropsWith(boom.x, boom.y, 'boom');
+      }
     }
     tryTakeDropsWith(link.x, link.y, 'link');
     // UpdateRupeeStash — walk onto a $35 pickup (L7 stash rooms, etc.).
     const stash = tryTakeRupeeStash(enemies, link, inv);
     if (stash.taken) {
-      audio?.playSfx('rupee');
+      fx.playSfx('rupee');
       setStatus('Rupee');
       refreshHud();
     }
 
+    if (!shared) return;
     drops = drops.filter((d) => d.alive);
     for (const [id, spr] of [...dropGfx.entries()]) {
       if (!drops.some((d) => d.id === id)) {
@@ -5062,7 +7616,11 @@ async function main() {
 
   function syncDropSprites() {
     for (const d of drops) {
-      if (!d.alive) continue;
+      if (!d.alive) {
+        const spr = dropGfx.get(d.id);
+        if (spr) spr.visible = false;
+        continue;
+      }
       let spr = dropGfx.get(d.id);
       const tile = dropChrTile(d.itemId);
       // DrawItemBySlot: bomb=SP1 blue; heart/1-rupee flash SP1↔SP2; 5-rupee solid blue.
@@ -5078,8 +7636,15 @@ async function main() {
       // Narrow drops (heart/rupee/bomb) are centered in the 16px slot.
       spr.x = d.x + (drawn.narrow ? 4 : 0);
       spr.y = d.y;
+      spr.visible = true;
       if (d.itemId === DROP_ITEM.FAIRY) spr.alpha = dropFrame & 4 ? 1 : 0.75;
       else spr.alpha = 1;
+    }
+    // Sprites left in the map after the drop list moved on still paint, and
+    // walking onto that ghost never collects anything.
+    for (const [id, spr] of [...dropGfx.entries()]) {
+      if (drops.some((d) => d.id === id && d.alive)) continue;
+      spr.visible = false;
     }
   }
 
@@ -5088,7 +7653,7 @@ async function main() {
       itemLayer.removeChild(spr);
       spr.destroy({ texture: false, textureSource: false });
     }
-    pondHeartGfx = [];
+    pondHeartGfx.length = 0;
   }
 
   /**
@@ -5130,15 +7695,18 @@ async function main() {
   function stepPondFairyFountain() {
     // Only the fairy in Link's current room — a streamed neighbor fountain
     // must not consume the heal when Link walks Y=$AD elsewhere.
+    const me = focus.current;
     const fairy = findPondFairy(enemies, roomId);
     if (!fairy || !enemyCombatActive(fairy)) {
       pondFairyHalt = false;
+      if (me) me.pondFairyHalt = false;
       clearPondHeartSprites();
       return false;
     }
     const result = stepPondFairy(fairy, inv, link, { roomId });
     pondFairyHalt = result.haltLink;
-    if (result.playHeartTune) audio?.playSfx('text');
+    if (me) me.pondFairyHalt = result.haltLink;
+    if (result.playHeartTune) fx.playSfx('text');
     syncPondHeartSprites(result.hearts, result.showOrbitHearts);
     if (result.haltLink || result.playHeartTune) refreshHud();
     return result.haltLink;
@@ -5146,7 +7714,6 @@ async function main() {
 
   function stepRoomSecrets() {
     if (mode === 'overworld') {
-      tryPickupOwRoomItem();
       return;
     }
     if (mode !== 'dungeon' || !dungeon?.room) return;
@@ -5169,7 +7736,7 @@ async function main() {
       const paid = tryPayMoneyOrLife(inv, link.x, link.y);
       if (paid) {
         dismissMoneyOrLifePerson(roomFoes);
-        audio?.playSfx(paid === 'rupees' ? 'rupee' : 'key');
+        fx.playSfx(paid === 'rupees' ? 'rupee' : 'key');
         setStatus(paid === 'rupees' ? 'Paid 50 rupees' : 'Paid a heart container');
         refreshHud();
       }
@@ -5183,10 +7750,10 @@ async function main() {
     ) {
       dismissBombUpgradePerson(roomFoes);
       dungeon.takenItems.add(dungeon.room.roomId);
-      audio?.playSfx('rupee');
+      fx.playSfx('rupee');
       setStatus(`Bomb capacity ${inv.maxBombs}!`);
       refreshHud();
-      invUi.refresh(inv, dungeon);
+      refreshOpenMenus();
     }
 
     if (effect === SECRET.RINGLEADER && !roomClearedLatch) {
@@ -5224,7 +7791,7 @@ async function main() {
         dungeon.clearedRooms.add(dungeon.room.roomId);
       }
       // CheckSecretTrigger activates the room item with Tune1 $02.
-      if (revealItem) audio?.playSfx('item_appears');
+      if (revealItem) fx.playSfx('item_appears');
       if (shutter) {
         const sides = openRoomShutters(dungeon.doorState, dungeon.room);
         if (sides.length) refreshDungeonRoomVisual();
@@ -5245,32 +7812,44 @@ async function main() {
     }
     // Keys/maps on Stalfos / Like-Like / Gibdo follow the foe (NES slot 1).
     syncRoomItemPosition(roomItem, roomFoes);
+  }
+
+  /**
+   * Floor items belong to a room; taking one is this hero's. Shared
+   * `stepRoomSecrets` only ran for the first player in the world, so player
+   * two could stand on a key forever.
+   */
+  function tryPickupCurrentRoomItem() {
+    if (mode === 'overworld') {
+      tryPickupOwRoomItem();
+      return;
+    }
+    if (mode !== 'dungeon' || !dungeon?.room || !roomItem) return;
+    const occ = occupyingRoom(roomId, link.x, link.y);
+    if ((occ.roomId & 0xff) !== (dungeon.room.roomId & 0xff)) return;
     const picked = tryPickupRoomItem(roomItem, link.x, link.y);
-    if (picked != null) {
-      dungeon.takenItems.add(dungeon.room.roomId);
-      const label = grantRoomItem(inv, picked, { level: dungeon.level });
-      refreshHud();
-      invUi.refresh(inv, dungeon);
-      // TakeItem always posts Tune1 `$08`; floor takes skip the lift song.
-      audio?.playSfx('item_taken');
-      if (picked === 0x1b && hasTriforce(inv, dungeon.level)) {
-        audio?.playFanfare('triforce');
-        // GameMode $12: halt, hold the shard overhead, flash, then fill hearts.
-        holdingTriforceLift = true;
-        startItemLift(0x1b);
-        startTriforceCeremony(triforceCeremony);
-        // The briefing waits for the fanfare — see the ceremony step below.
-        pendingBriefingLevel = dungeon.level;
-        setStatus(
-          dungeon.level >= 8
-            ? `Got ${label}! ${triforceCount(inv)}/8 — Level 9 awaits`
-            : `Got ${label}! Level ${dungeon.level} clear`,
-        );
-      } else {
-        audio?.playFanfare('item');
-        setStatus(`Got ${label}!`);
-        tellItemStory(picked);
-      }
+    if (picked == null) return;
+    dungeon.takenItems.add(dungeon.room.roomId);
+    const label = grantRoomItem(inv, picked, { level: dungeon.level });
+    onGrantedItem(picked);
+    refreshHud();
+    refreshOpenMenus();
+    fx.playSfx('item_taken');
+    if (picked === 0x1b && hasTriforce(inv, dungeon.level)) {
+      fx.playFanfare('triforce');
+      holdingTriforceLift = true;
+      startItemLift(0x1b);
+      startTriforceCeremony(triforceCeremony);
+      pendingBriefingLevel = dungeon.level;
+      setStatus(
+        dungeon.level >= 8
+          ? `Got ${label}! ${triforceCount(inv)}/8 — Level 9 awaits`
+          : `Got ${label}! Level ${dungeon.level} clear`,
+      );
+    } else {
+      fx.playFanfare('item');
+      setStatus(`Got ${label}!`);
+      tellItemStory(picked);
     }
   }
 
@@ -5313,7 +7892,8 @@ async function main() {
         const quest = inv.quest === 2 ? 2 : 1;
         questCompleted = quest;
         endingUi.begin({ quest, name: saveName, deaths: deathCount });
-        audio?.playFanfare('zelda');
+        presentCinematic();
+        fx.playFanfare('zelda');
         setStatus(`Quest ${quest} complete — thanks Link!`);
         return;
       }
@@ -5331,9 +7911,9 @@ async function main() {
       link: { x: link.x, y: link.y },
       zelda: zelda ? { x: zelda.x, y: zelda.y } : undefined,
     });
-    if (tick.playCharTune) audio?.playSfx('text');
-    if (tick.startSong) audio?.playMusic('ending');
-    if (tick.silence) audio?.stopMusic();
+    if (tick.playCharTune) fx.playSfx('text');
+    if (tick.startSong) fx.playMusic('ending');
+    if (tick.silence) fx.stopMusic();
     world.visible = tick.worldVisible;
     linkSprite.visible = tick.heroesVisible;
     for (const g of enemyGfx.values()) {
@@ -5343,20 +7923,38 @@ async function main() {
     if (tick.finished) {
       endingUi.hide();
       world.visible = true;
+      adoptSessionLayout();
       void beginSecondQuestAfterVictory();
     }
   }
 
+  /**
+   * Combat, which is two things wearing one coat.
+   *
+   * Some of it belongs to the place — stepping the foes, flying the arrows,
+   * spawning at the edges — and must happen once however many players are
+   * standing in it. The rest belongs to *this* hero: their swing, what hits
+   * them, their shove and their invulnerability. `shared` marks the first
+   * half; everything unmarked runs for every player.
+   *
+   * The two are interleaved rather than separated because the order is
+   * load-bearing (a swing resolves before the foes move, contact after) and
+   * gathering them into two passes would reorder a single player's frame
+   * against itself. This way one player's frame is exactly what it was.
+   */
   function stepCombat() {
-    // Streamed foes stay inert until their sprite enters the camera.
-    const revealed = activateEnemiesInView(
-      enemies,
-      (e) => !rectFullyOffCamera(e, camLocalX, camLocalY, 0),
-    );
-    for (const e of revealed) {
-      const roar = bossRoarSfx(e.objType);
-      if (roar) audio?.playSfx(roar);
-      if (e.objType === OBJ.POND_FAIRY) audio?.playSfx('item_taken');
+    const shared = firstInWorldThisFrame('combat');
+    if (shared) {
+      // Streamed foes stay inert until their sprite enters the camera.
+      const revealed = activateEnemiesInView(
+        enemies,
+        (e) => !rectFullyOffEveryCamera(e, sessionCameras(), 0),
+      );
+      for (const e of revealed) {
+        const roar = bossRoarSfx(e.objType);
+        if (roar) fx.playSfx(roar);
+        if (e.objType === OBJ.POND_FAIRY) fx.playSfx('item_taken');
+      }
     }
 
     const swordWasActive = isSwordActive(sword);
@@ -5388,11 +7986,11 @@ async function main() {
       ) {
         projectiles.push(shootSwordBeam(link.x, link.y, sword.dir ?? link.dir, inv.sword));
         // MakeSwordShot plays DMC sample $01.
-        audio?.playSfx('sword_shot');
+        fx.playSfx('sword_shot');
       }
     }
 
-    tickBombs();
+    if (shared) tickBombs();
 
     const bounds = enemyBounds();
     const owGrid = mode === 'overworld' ? screen?.tileGrid ?? null : null;
@@ -5400,9 +7998,9 @@ async function main() {
     const baseTileOpts = mode === 'dungeon' ? dungeonTileOpts(inv) : {};
     const grids =
       mode === 'overworld'
-        ? owStream.gridMap()
+        ? owRooms.gridMap()
         : mode === 'dungeon'
-          ? uwStream.gridMap()
+          ? uwRooms.gridMap()
           : null;
     const tileOpts = grids
       ? {
@@ -5412,30 +8010,35 @@ async function main() {
           standingTile: (x, y) => standingTileMulti(grids, roomId, x, y),
         }
       : baseTileOpts;
-    const chase =
-      bait?.alive ? { x: bait.x, y: bait.y } : { x: link.x, y: link.y };
-    if (inv.clock && !clockFreezeActive(enemies)) {
-      clearClockFreeze(inv, enemies);
+    // Who each foe is coming for. One hero today, so every foe resolves to
+    // the same answer the single `chase` used to hold. The positions are
+    // snapshotted before the loop, as they always have been: a Wallmaster
+    // capture assigns to a `link` mid-loop, and pursuit must not see that
+    // until the next frame.
+    const heroes = targetableLinks(players, focus.current?.world);
+    const heroPositions = heroes.map((h) => ({ x: h.x, y: h.y }));
+    if (shared && inv.clock && shouldClearClock(clockWorldId, clockWorldHere(), enemies)) {
+      endClockFreeze();
     }
-    const clockActive = Boolean(inv.clock);
+    const clockActive = Boolean(inv.clock) && clockIsHere();
 
     // Edge slide-in: place pending foes on open border cells. Each foe is
     // placed against *its own* room's grid — a `monsterEntry` neighbour used
     // to sit edge-pending forever (invisible, inert, and still holding a
     // monster slot) because only the anchor room's foes were ever considered.
     // New spawns are not clock-frozen (only foes tagged at pickup).
-    if (mode === 'overworld') {
+    if (shared && mode === 'overworld') {
       for (const e of enemies) {
         if (!e.edgePending || enemyIsClockFrozen(e)) continue;
         const home = (e.homeRoomId ?? roomId) & 0xff;
         const homeGrid = home === (roomId & 0xff)
           ? owGrid
-          : owStream.get(home)?.tileGrid ?? null;
+          : owRooms.tileGrid(home);
         if (!homeGrid) continue;
         // tryEdgeSpawn works in the home room's own local space; Link has to
         // be expressed there too so the "too close to Link" test holds.
         const linkLocal = offsetToRoom(home, link.x, link.y);
-        const placed = tryEdgeSpawn(e, homeGrid, linkLocal);
+        const placed = tryEdgeSpawn(e, homeGrid, linkLocal, pickRng);
         if (!placed) continue;
         e.x = placed.x;
         e.y = placed.y;
@@ -5451,7 +8054,7 @@ async function main() {
       }
       // Shore ambient — LevelBlockAttrsA bit $04 → EffectRequest $20 (sea).
       // Re-request each frame; audio.js continues an in-flight sea ramp.
-      if (screen?.attrs?.wave) audio?.playSfx('sea');
+      if (screen?.attrs?.wave) fx.playSfx('sea');
       // CheckZora — attrs.zora rooms get one water Zora when the slot is free.
       if (owGrid) {
         // `trySpawnZora` scopes its one-per-room slot test by `roomId`.
@@ -5469,12 +8072,22 @@ async function main() {
 
     const newShots = [];
     const newBooms = [];
-    for (const e of enemies) {
+    for (const e of shared ? enemies : []) {
       if (!enemyCombatActive(e)) continue;
       if (!enemyIsClockFrozen(e)) {
+        const aim = enemyTarget(e, {
+          targets: heroPositions,
+          bait,
+          anchorRoomId: roomId,
+          confineToHome: mode === 'dungeon',
+        });
+        const drag =
+          wallmasterIsCapturing(e)
+            ? activePlayers(players).find((p) => wallmasterHoldsPlayer(e, p.index))?.link
+            : null;
         stepEnemy(e, enemyBoundsFor(e), tileGrid, {
-          chase,
-          link,
+          chase: aim.chase,
+          link: drag ?? (aim.index < 0 ? null : heroes[aim.index]),
           enemies,
           rngByte: dropRng,
           onArmosAwake,
@@ -5493,17 +8106,17 @@ async function main() {
           ...tileOpts,
         });
         const shootSfx = tryEnemyShoot(e, newShots, newBooms, {
-          target: chase,
+          target: aim.chase,
           rngByte: dropRng,
         });
-        if (shootSfx) audio?.playSfx(shootSfx);
+        if (shootSfx) fx.playSfx(shootSfx);
       } else if (e.invuln > 0) {
         e.invuln -= 1;
       }
     }
     // Continuous streaming can leave walkers planted on trees/rocks after a
     // seam rebase or a late tile-grid load — slide them back onto open ground.
-    if (grids) {
+    if (shared && grids) {
       ejectEnemiesFromSolid(
         enemies.filter(
           (e) =>
@@ -5516,22 +8129,25 @@ async function main() {
       );
     }
 
-    // Wallmaster trip end → dungeon entrance (after slide, not on first touch).
+    // Wallmaster trip end → that hero to the dungeon entrance (after slide,
+    // not on first touch). Allies keep their cell; a room reload would take
+    // everyone.
     const capturer = enemies.find((e) => e.wallmasterWarpPending);
     if (capturer && mode === 'dungeon' && dungeon) {
+      const victimIndex = capturer.wallmasterVictim ?? focus.current?.index ?? 0;
       finishWallmasterCapture(capturer);
-      return;
+      if ((focus.current?.index ?? 0) === victimIndex) return;
     }
 
-    const linkCaptured = enemies.some((e) => wallmasterIsCapturing(e));
+    const meHeld = linkHeldByWallmaster();
     // Halt for the whole slide (ObjState $40), not just contact frames.
-    if (linkCaptured) inv.paralyzed = 2;
+    if (meHeld) inv.paralyzed = 2;
     for (const e of enemies) {
       // Clock: keep Link topped up with invuln like NES InvClock while active.
       if (clockActive && inv.invuln < 8) inv.invuln = 8;
       if (!enemyCombatActive(e) || enemyIsHidden(e)) continue;
-      // During Wallmaster slide, only the capturer may touch Link.
-      if (linkCaptured && !wallmasterIsCapturing(e)) continue;
+      // During this hero's slide, only the capturer may touch them.
+      if (meHeld && !wallmasterHoldsPlayer(e, focus.current?.index ?? 0)) continue;
       if (!enemyTouchesLink(e, link.x, link.y)) {
         if (e.objType === OBJ.LIKE_LIKE) e.captureTimer = 0;
         continue;
@@ -5540,14 +8156,26 @@ async function main() {
     }
     projectiles.push(...newShots);
     enemyBooms.push(...newBooms);
-    if (mode === 'dungeon' && statueState) {
-      projectiles.push(...stepStatues(statueState, link));
+    if (shared && mode === 'dungeon' && statueState) {
+      const marks = targetableLinks(players, focus.current?.world);
+      projectiles.push(...stepStatues(statueState, marks.length ? marks : link));
     }
 
+    // Flying them is the world's job; being hit by one is this hero's.
+    // `bounds` is this hero's camera. Shared stepping belongs to whoever
+    // arrives first, so a leftover ally's beam would die on player one's
+    // playfield. Union that camera with the shot's occupying cell.
+    const hereHeroes = livingPlayers(players).filter((h) => h.world === focus.current?.world);
     for (const p of projectiles) {
-      stepProjectile(p, bounds);
+      if (shared) {
+        const box =
+          mode === 'overworld' || mode === 'dungeon'
+            ? shotMotionBounds(mode, p.x, p.y, roomId, cam)
+            : bounds;
+        stepProjectile(p, box);
+      }
       if (p.friendly) {
-        for (const e of enemies) {
+        for (const e of shared ? enemies : []) {
           if (e.edgePending || enemyAwaitingView(e)) continue;
           const wasAlive = e.alive;
           const hit =
@@ -5568,34 +8196,54 @@ async function main() {
         }
         continue;
       }
-      if (!projectileTouchesLink(p, link.x, link.y) || p.damage <= 0) continue;
-      const shield = shotBlockedByShield(p, link, inv, {
-        idle: !isSwordActive(sword),
-      });
-      if (shield === SHIELD_RESULT.PARRY) {
-        // CheckLinkCollision @Parry → Tune0 `$01`.
-        audio?.playSfx('shield');
+      // Each hero's own facing and blade — a leftover ally used to be tested
+      // with whoever happened to hold the focus, so player two's shield never
+      // saw the rock.
+      const targets = shared ? hereHeroes : [focus.current];
+      let blocked = false;
+      for (const hero of targets) {
+        if (!hero?.link || !projectileTouchesLink(p, hero.link.x, hero.link.y) || p.damage <= 0) {
+          continue;
+        }
+        const shield = shotBlockedByShield(p, hero.link, hero.inv, {
+          idle: !isSwordActive(hero.sword),
+        });
+        if (shield !== SHIELD_RESULT.PARRY) continue;
+        fx.playSfx('shield');
         bounceProjectile(p);
-        continue;
+        blocked = true;
+        break;
       }
-      if (shield === SHIELD_RESULT.HARM) {
-        hurtLinkFrom(p.dir, p.damage);
+      if (blocked || p.damage <= 0) continue;
+      for (const hero of targets) {
+        if (!hero?.link || !projectileTouchesLink(p, hero.link.x, hero.link.y)) continue;
+        const shield = shotBlockedByShield(p, hero.link, hero.inv, {
+          idle: !isSwordActive(hero.sword),
+        });
+        if (shield !== SHIELD_RESULT.HARM) continue;
+        const actor = focus.current;
+        if (hero === actor) hurtLinkFrom(p.dir, p.damage);
+        else {
+          focus.on(hero, () => hurtLinkFrom(p.dir, p.damage));
+          if (actor) focus.to(actor);
+        }
         p.alive = false;
+        break;
       }
     }
     // HandleShotBlocked: a spent magic-rod shot leaves a fire when the Book of
     // Magic is held. The fire bypasses the candle's once-per-room limit.
-    for (const p of projectiles) {
+    for (const p of shared ? projectiles : []) {
       if (p.alive || !p.friendly || p.kind !== PROJ.MAGIC_SHOT) continue;
       if (!inv.book || flames.length >= FLAME_SLOTS) continue;
       const fire = createOwFlame(p.x, p.y, p.dir);
       flames.push(fire);
-      audio?.playSfx('flame');
+      fx.playSfx('flame');
       if (mode === 'overworld') applyOwSecretReveal('burn', fire.x, fire.y);
     }
-    projectiles = projectiles.filter((p) => p.alive);
+    if (shared) projectiles = projectiles.filter((p) => p.alive);
 
-    for (const f of flames) {
+    for (const f of shared ? flames : []) {
       if (!f.alive) continue;
       stepOwFlame(f);
       if (mode === 'overworld') {
@@ -5608,27 +8256,39 @@ async function main() {
         applyWeaponHit(e, wasAlive, hit);
       }
     }
-    flames = flames.filter((f) => f.alive);
+    if (shared) flames = flames.filter((f) => f.alive);
 
-    if (mode === 'dungeon') checkZeldaRescue();
+    if (shared && mode === 'dungeon') checkZeldaRescue();
 
-    if (boomerang) {
-      stepBoomerang(boomerang, link.x, link.y);
-      if (boomerang.phase !== BOOM_PHASE.DONE) {
+    // Each hero may have a boom in the air; it comes back to whoever threw
+    // it — not whoever the world happened to step first this frame.
+    if (shared && boomerangs.length) {
+      const here = focus.current?.world;
+      const throwers = activePlayers(players)
+        .filter((p) => p.world === here)
+        .map((p) => ({ index: p.index, x: p.link.x, y: p.link.y }));
+      const next = [];
+      for (const boom of boomerangs) {
+        const target = boomerangReturnPos(boom, throwers, null);
+        if (!target) continue;
+        stepBoomerang(boom, target.x, target.y);
+        if (boom.phase === BOOM_PHASE.DONE) continue;
         for (const e of enemies) {
           if (e.edgePending || enemyAwaitingView(e)) continue;
           const wasAlive = e.alive;
-          const hit = tryBoomerangHitEnemy(e, boomerang);
+          const hit = tryBoomerangHitEnemy(e, boom);
           applyWeaponHit(e, wasAlive, hit);
         }
-      } else {
-        boomerang = null;
+        next.push(boom);
       }
+      boomerangs = next;
     }
 
-    // Goriya (and other) hostile boomerangs — return to owner, harm Link.
-    // Frozen owners' booms still finish their flight.
-    if (enemyBooms.length) {
+    // Goriya (and other) hostile boomerangs — return to owner, harm any
+    // living hero in this place, not only whoever this frame is focused on.
+    if (shared && enemyBooms.length) {
+      const here = focus.current?.world;
+      const victims = livingPlayers(players).filter((p) => p.world === here);
       const next = [];
       for (const boom of enemyBooms) {
         const owner = enemies.find((e) => e.id === boom.ownerId && e.alive);
@@ -5640,8 +8300,20 @@ async function main() {
         const ry = owner?.y ?? boom.y;
         stepBoomerang(boom, rx, ry);
         if (boom.phase === BOOM_PHASE.DONE) continue;
-        if (enemyBoomerangHitsLink(boom, link.x, link.y)) {
-          hurtLinkFrom(boom.dir, 1);
+        const actor = focus.current;
+        const hit = victims.filter((p) => enemyBoomerangHitsLink(boom, p.link.x, p.link.y));
+        const parry = hit.find(
+          (p) => !isSwordActive(p.sword) && dirsAreOpposite(p.link.dir, boom.dir),
+        );
+        if (parry) {
+          fx.playSfx('shield');
+          boom.phase = BOOM_PHASE.DONE;
+          continue;
+        }
+        const victim = hit[0];
+        if (victim) {
+          focus.on(victim, () => hurtLinkFrom(boom.dir, 1));
+          if (actor) focus.to(actor);
           boom.phase = BOOM_PHASE.DONE;
           continue;
         }
@@ -5650,7 +8322,7 @@ async function main() {
       enemyBooms = next;
     }
 
-    if (bait) {
+    if (shared && bait) {
       stepBait(bait);
       for (const e of enemies) {
         if (tryFeedGrumble(e, bait)) {
@@ -5659,24 +8331,29 @@ async function main() {
           if (dungeon?.takenItems) dungeon.takenItems.add(home & 0xff);
           inv.food = 0;
           setStatus('Hungry Goriya eats the bait!');
-          audio?.playSfx('secret');
+          fx.playSfx('secret');
           refreshHud();
-          invUi.refresh(inv, dungeon);
+          refreshOpenMenus();
         }
       }
       if (!bait.alive) bait = null;
     }
 
-    stepDrops();
-    stepRoomSecrets();
-    refreshStubLabel();
-    syncToolSprites();
-    syncDropSprites();
-    syncPersonWareSprites();
+    // Drops are the world's, but picking one up is the hero's — running this
+    // for everyone is what lets either player take the rupee they walked over.
+    stepDrops(shared);
+    if (shared) {
+      stepRoomSecrets();
+      refreshStubLabel();
+      syncToolSprites();
+      syncDropSprites();
+      syncPersonWareSprites();
+    }
+    tryPickupCurrentRoomItem();
 
     if (inv.invuln > 0) inv.invuln -= 1;
     stepLinkStatus(inv);
-    if (flutePulse > 0) flutePulse -= 1;
+    if (shared && flutePulse > 0) flutePulse -= 1;
     // Room clamp / shove / solid-eject fight the hand — leave position to the capturer.
     if (!linkHeldByWallmaster()) {
       applyShove();
@@ -5684,19 +8361,31 @@ async function main() {
     }
     pinWallmasterCapture();
 
-    // QoL: owning a candle lights dark rooms ~1s after entry.
-    if (mode === 'dungeon' && stepDarkRoomAutoLight(candleRoom)) {
-      syncDarkOverlay();
+    // QoL: owning a candle lights this occupying cell ~1s after entry.
+    // Per-room so leftover `$02` does not tick (or inherit) `$01`'s stay.
+    if (mode === 'dungeon') {
+      const occ = uwHeroDoorContext();
+      const state = candleForRoom(asCandleStore(candleRoom), occ.occId);
+      if (
+        firstInWorldThisFrame(`candle:${occ.occId & 0xff}`)
+        && stepDarkRoomAutoLight(state)
+      ) {
+        syncDarkOverlay();
+      }
     }
   }
 
   function syncDarkOverlay() {
-    if (mode !== 'dungeon' || !dungeon?.room) {
+    if (mode !== 'dungeon' || !dungeon) {
       darkOverlay.visible = false;
       doorFrameLayer.tint = 0xffffff;
       return;
     }
-    if (!roomIsDark(dungeon.room, candleRoom)) {
+    // Occupying cell, not the streaming anchor: a leftover dark room must
+    // stay dark in its view when a friend is standing in a lit neighbour.
+    const pack = uwHeroDoorContext().occRoom ?? dungeon.room;
+    const occId = pack?.roomId ?? dungeon.room?.roomId;
+    if (!roomIsDark(pack, candleForRoom(asCandleStore(candleRoom), occId))) {
       darkOverlay.visible = false;
       doorFrameLayer.tint = 0xffffff;
       return;
@@ -5725,62 +8414,109 @@ async function main() {
     flashOverlay.visible = true;
   }
 
+  /**
+   * Room-local push block for this cell. Leftover rooms keep their own object
+   * so walking away does not steal the block or leave $B0 collision with
+   * nothing to shove.
+   * @param {object | null | undefined} room
+   */
+  function ensurePushBlock(room) {
+    if (!room) return null;
+    const id = room.roomId & 0xff;
+    if (pushBlocks.has(id)) return pushBlocks.get(id) ?? null;
+    const tiles = room.squares ? roomToTileGrid(room, [...UW_PRIMARY_SQUARES]) : [];
+    const origin = { x: floorFrame().x, y: floorFrame().y };
+    const block = createPushBlock(room, origin, tiles);
+    if (block && dungeon?.pushedRooms.has(id)) {
+      block.state = PUSH_STATE.DONE;
+      block.complete = true;
+      block.y -= 0x10;
+      setUwSquareAt(block.homeX, block.homeY, 0x74, id);
+      setUwSquareAt(block.x, block.y, 0xb0, id);
+      if (pushSpawnsStairs(room)) {
+        setUwSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE, id);
+        patchRoomSquareAt(BLOCK_STAIRS_POS.x, BLOCK_STAIRS_POS.y, BLOCK_STAIRS_TILE, id);
+      }
+    }
+    pushBlocks.set(id, block);
+    return block;
+  }
+
   function tickPushBlock(inputMask) {
-    if (!pushBlock || mode !== 'dungeon') return;
-    const wasIdle = pushBlock.state === PUSH_STATE.IDLE;
-    const beforeX = pushBlock.x;
-    const beforeY = pushBlock.y;
-    // Match stepRoomSecrets: only this room's foes gate the push (streamed
-    // neighbours must not keep the block locked).
-    const roomFoes = dungeon?.room
-      ? enemiesInRoom(enemies, dungeon.room.roomId)
-      : enemies;
-    const cleared = roomClearedLatch || roomAllDead(roomFoes);
+    if (mode !== 'dungeon' || !dungeon) return;
+    if (firstInWorldThisFrame('pushBlocks')) {
+      beginPushBlockFrame(pushBlocks.values());
+    }
+    const door = uwHeroDoorContext();
+    const block = ensurePushBlock(door.occRoom);
+    pushBlock = block;
+    if (!block) return;
+    const occId = door.occId & 0xff;
+    const local = door.localLink;
+    const wasIdle = block.state === PUSH_STATE.IDLE;
+    const beforeX = block.x;
+    const beforeY = block.y;
+    // Only this cell's foes gate the push (streamed neighbours must not).
+    const roomFoes = enemiesInRoom(enemies, occId);
+    const cleared =
+      dungeon.clearedRooms.has(occId)
+      || ((dungeon.room?.roomId & 0xff) === occId && roomClearedLatch)
+      || roomAllDead(roomFoes);
     const inputDir = pickSingleDir(inputMask);
     // One walk-row/column off looks aligned (block is 16×16) but NES needs an
     // exact axis match — ease Link onto that axis while he keeps shoving.
     if (wasIdle && cleared) {
-      const nudged = nudgeLinkOntoPushAxis(pushBlock, link, inputDir);
-      if (nudged && (pushBlock.pushTimer ?? 0) === 0) {
-        setStatus('Lining up with the block…');
+      const nudged = nudgeLinkOntoPushAxis(block, local, inputDir);
+      if (nudged) {
+        writeUwLocal(occId, local);
+        if ((block.pushTimer ?? 0) === 0) setStatus('Lining up with the block…');
       }
     }
+    const shoving = linkPushingBlock(block, local, inputDir);
+    if (shoving) block.heldThisFrame = true;
     // Hint when Link is lined up and shoving but RoomAllDead is still false.
-    if (
-      wasIdle
-      && !cleared
-      && linkPushingBlock(pushBlock, link, inputDir)
-      && (pushBlock.pushTimer ?? 0) === 0
-    ) {
+    if (wasIdle && !cleared && shoving && (block.pushTimer ?? 0) === 0) {
       const left = roomFoes.filter((e) => countsTowardRoomClear(e)).length;
       setStatus(`Clear ${left} foe${left === 1 ? '' : 's'} to push`);
     }
-    const { justCompleted } = stepPushBlock(
-      pushBlock,
-      link,
-      inputDir,
-      cleared,
-    );
-    if (wasIdle && pushBlock.state === PUSH_STATE.MOVING) {
+    const { justCompleted } = stepPushBlock(block, local, inputDir, cleared, {
+      persistTimer: true,
+    });
+    if (wasIdle && block.state === PUSH_STATE.MOVING) {
       // ChangeTileObjTiles($74) at source — full 2×2, then sprite takes over.
-      setUwSquareAt(beforeX, beforeY, 0x74);
-      patchRoomSquareAt(beforeX, beforeY, 0x74);
+      setUwSquareAt(beforeX, beforeY, 0x74, occId);
+      patchRoomSquareAt(beforeX, beforeY, 0x74, occId);
     }
-    if (justCompleted && dungeon) {
+    if (justCompleted && dungeon && door.occRoom) {
       // ChangeTileObjTiles($B0) at destination — full 2×2.
-      setUwSquareAt(pushBlock.x, pushBlock.y, 0xb0);
-      dungeon.pushedRooms.add(dungeon.room.roomId);
-      applyPushBlockRoomArt();
-      if (pushSpawnsStairs(dungeon.room)) {
+      setUwSquareAt(block.x, block.y, 0xb0, occId);
+      dungeon.pushedRooms.add(occId);
+      applyPushBlockRoomArt(occId);
+      if (pushSpawnsStairs(door.occRoom)) {
         const sx = BLOCK_STAIRS_POS.x;
         const sy = BLOCK_STAIRS_POS.y;
-        setUwSquareAt(sx, sy, BLOCK_STAIRS_TILE);
-        patchRoomSquareAt(sx, sy, BLOCK_STAIRS_TILE);
+        setUwSquareAt(sx, sy, BLOCK_STAIRS_TILE, occId);
+        patchRoomSquareAt(sx, sy, BLOCK_STAIRS_TILE, occId);
         setStatus('Stairs appear!');
-        audio?.playSfx('secret');
-      } else if (pushOpensShutters(dungeon.room)) {
-        const sides = openRoomShutters(dungeon.doorState, dungeon.room);
-        if (sides.length) refreshDungeonRoomVisual();
+        fx.playSfx('secret');
+      } else if (pushOpensShutters(door.occRoom)) {
+        const sides = openRoomShutters(dungeon.doorState, door.occRoom);
+        if (sides.length) {
+          if (occId === (roomId & 0xff)) refreshDungeonRoomVisual();
+          else {
+            const painted = paintDungeonRoom(door.occRoom);
+            if (painted) {
+              uwStream.upsert(occId, painted.tex, {
+                tileGrid: painted.tileGrid,
+                pack: door.occRoom,
+                fogged: false,
+              });
+              setUwDoorFrame(occId, painted.frameTex, false);
+              applyPushBlockRoomArt(occId);
+            }
+            for (const side of sides) refreshNeighborDoorVisual(occId, side);
+          }
+        }
         setStatus(sides.length ? `Block pushed — shutter open` : 'Block pushed');
       } else {
         setStatus('Block pushed');
@@ -5789,7 +8525,8 @@ async function main() {
   }
 
   function syncRaftSprite() {
-    if (raftRide.active) {
+    const ride = raftInWorld() ?? currentRaft();
+    if (ride.active) {
       if (!raftGfx) {
         // Anim_ItemFrameTiles slot $09 → tile $6C (wide raft).
         const laid = items.itemTexture(chrTileForItemId(0x0c));
@@ -5798,8 +8535,8 @@ async function main() {
         enemyLayer.addChild(raftGfx);
       }
       raftGfx.visible = true;
-      raftGfx.x = raftRide.x;
-      raftGfx.y = raftRide.y;
+      raftGfx.x = ride.x;
+      raftGfx.y = ride.y;
     } else if (raftGfx) {
       raftGfx.visible = false;
     }
@@ -5854,8 +8591,7 @@ async function main() {
   /** Lightweight overlays for boom / bait; push block uses UW CHR. */
   function syncToolSprites() {
     /** @type {import('@shared/boomerang.js').Boomerang[]} */
-    const activeBooms = [];
-    if (boomerang && boomerang.phase !== BOOM_PHASE.DONE) activeBooms.push(boomerang);
+    const activeBooms = [...liveBoomerangs(boomerangs)];
     for (const b of enemyBooms) {
       if (b.phase !== BOOM_PHASE.DONE) activeBooms.push(b);
     }
@@ -5892,7 +8628,17 @@ async function main() {
     }
 
     // NES draws the block sprite only while moving; idle/done use BG tiles.
-    if (pushBlock && pushBlock.state === PUSH_STATE.MOVING) {
+    // Coords are room-local; leftover rooms convert into the current anchor.
+    let moving = null;
+    let movingRoom = roomId;
+    for (const [id, b] of pushBlocks) {
+      if (b?.state === PUSH_STATE.MOVING) {
+        moving = b;
+        movingRoom = id;
+        break;
+      }
+    }
+    if (moving) {
       const tex = ensurePushBlockTexture();
       if (tex) {
         if (!pushGfx) {
@@ -5901,9 +8647,10 @@ async function main() {
         } else if (pushGfx.texture !== tex) {
           pushGfx.texture = tex;
         }
+        const here = offsetFromRoom(movingRoom, moving.x, moving.y);
         pushGfx.visible = true;
-        pushGfx.x = pushBlock.x;
-        pushGfx.y = pushBlock.y;
+        pushGfx.x = here.x;
+        pushGfx.y = here.y;
       }
     } else if (pushGfx) {
       pushGfx.visible = false;
@@ -5925,9 +8672,10 @@ async function main() {
       inv.selectedB = B_ITEM.BOMB;
       inv.bombs -= 1;
       const bomb = placeBomb(link.x, link.y, link.dir);
+      bomb.owner = focus.current?.index ?? 0;
       bombs.push(bomb);
       refreshHud();
-      audio?.playSfx('bomb_set');
+      fx.playSfx('bomb_set');
       setStatus(`Bomb set (${inv.bombs} left)`);
       return;
     }
@@ -5937,17 +8685,20 @@ async function main() {
         setStatus('No boomerang');
         return;
       }
-      if (boomerang && boomerang.phase !== BOOM_PHASE.DONE) {
+      if (playerBoomerang(boomerangs, focus.current?.index ?? 0)) {
         setStatus('Boomerang out');
         return;
       }
-      boomerang = throwBoomerang(
-        link.x,
-        link.y,
-        link.dir,
-        Boolean(inv.magicBoomerang),
+      boomerangs.push(
+        throwBoomerang(
+          link.x,
+          link.y,
+          link.dir,
+          Boolean(inv.magicBoomerang),
+          focus.current?.index ?? 0,
+        ),
       );
-      audio?.playSfx('arrow');
+      fx.playSfx('arrow');
       setStatus('Boomerang!');
       return;
     }
@@ -5964,7 +8715,7 @@ async function main() {
       inv.food -= 1;
       bait = placeBait(link.x, link.y, link.dir);
       refreshHud();
-      invUi.refresh(inv, dungeon);
+      refreshOpenMenus();
       setStatus('Bait dropped');
       return;
     }
@@ -5975,7 +8726,11 @@ async function main() {
         return;
       }
       if (mode === 'overworld') {
-        const result = tryUseCandle(inv, candleRoom, null);
+        const result = tryUseCandle(
+          inv,
+          candleForRoom(asCandleStore(candleRoom), occupyingRoom(roomId, link.x, link.y).roomId),
+          null,
+        );
         if (!result.ok) {
           setStatus(result.reason ?? 'Candle failed');
           return;
@@ -5983,32 +8738,37 @@ async function main() {
         const lit = createOwFlame(link.x, link.y, link.dir);
         flames.push(lit);
         applyOwSecretReveal('burn', lit.x, lit.y);
-        audio?.playSfx('flame');
+        fx.playSfx('flame');
         setStatus('Candle flame');
         return;
       }
-      const result = tryUseCandle(inv, candleRoom, dungeon?.room);
+      const occ = uwHeroDoorContext();
+      const result = tryUseCandle(
+        inv,
+        candleForRoom(asCandleStore(candleRoom), occ.occId),
+        occ.occRoom ?? dungeon?.room,
+      );
       if (!result.ok) {
         setStatus(result.reason ?? 'Candle failed');
         return;
       }
       flames.push(createOwFlame(link.x, link.y, link.dir));
-      audio?.playSfx('flame');
+      fx.playSfx('flame');
       syncDarkOverlay();
       setStatus(result.lit ? 'Candle lights the room' : 'Candle flame');
       return;
     }
 
     if (slot === B_ITEM.POTION) {
-      if (canShowLetter(caveScene.cave, inv)) {
+      if (canShowLetter(caveView()?.cave, inv)) {
         showLetter(inv);
-        audio?.playSfx('secret');
-        caveScene.refreshWares(caveTaken, false, inv);
+        fx.playSfx('secret');
+        caveView()?.refreshWares(caveTaken, false, inv);
         refreshHud();
-        invUi.refresh(inv, dungeon);
+        refreshOpenMenus();
         setStatus('You showed the letter — the wares appear');
         // Switch from the locked refusal to the medicine pitch.
-        openCaveDialogue(caveScene.cave);
+        openCaveDialogue(caveView()?.cave);
         return;
       }
       const result = drinkPotion(inv);
@@ -6017,7 +8777,7 @@ async function main() {
         return;
       }
       refreshHud();
-      invUi.refresh(inv, dungeon);
+      refreshOpenMenus();
       setStatus(result.potion ? 'Potion! (now blue)' : 'Potion restored hearts');
       return;
     }
@@ -6027,7 +8787,7 @@ async function main() {
         setStatus('No recorder');
         return;
       }
-      audio?.playSfx('flute');
+      fx.playSfx('flute');
       if (mode === 'overworld') {
         if (whirlwind?.alive) {
           setStatus('Whirlwind already out');
@@ -6068,7 +8828,7 @@ async function main() {
       }
       projectiles.push(shootMagicRod(link.x, link.y, link.dir));
       // @MakeMagicShot → Tune0 `$04`.
-      audio?.playSfx('magic_shot');
+      fx.playSfx('magic_shot');
       setStatus(inv.book ? 'Magic rod (book)' : 'Magic rod!');
       return;
     }
@@ -6085,7 +8845,7 @@ async function main() {
         return;
       }
       projectiles.push(shootArrow(link.x, link.y, link.dir, inv.arrow));
-      audio?.playSfx('arrow');
+      fx.playSfx('arrow');
       refreshHud();
       setStatus(inv.arrow >= 2 ? 'Silver arrow!' : 'Arrow!');
       return;
@@ -6098,13 +8858,18 @@ async function main() {
    * Rebase onto the neighbouring screen when Link has walked (or been shoved)
    * out of the anchor room's coordinate space.
    * @param {{ dir: number, nextRoomId: number, x: number, y: number } | null} raftApproach
+   * @param {boolean} [mayOwnAnchor] false when this hero was already living
+   *   deep in a neighbour — they must not steal the anchor. The seam lip
+   *   still counts: a stride can land one pixel past the edge with
+   *   gridOffset set, and the next frame has to be allowed to finish the exit.
    * @returns {boolean} true when a cross (or a maze loop) was handled
    */
-  function resolveOwRoomCross(raftApproach) {
+  function resolveOwRoomCross(raftApproach, mayOwnAnchor = true) {
+    if (!mayOwnAnchor && !raftApproach) return false;
     const cross = raftApproach ?? detectRoomCross(roomId, link.x, link.y);
     if (!cross) return false;
     const maze = checkMaze(mazeState, roomId, cross.dir);
-    if (maze.playSecretTune) audio?.playSfx('secret');
+    if (maze.playSecretTune) fx.playSfx('secret');
     if (!maze.allowExit) {
       mazeLoopSpawn(link, cross.dir);
       dropRoomEnemies(roomId);
@@ -6142,11 +8907,14 @@ async function main() {
     // loop skips physics while the raft sprite is left stranded.
     // Also runs while `screen` is briefly unbound so a dock soft-enter cannot
     // soft-lock the ride on a black playfield.
-    if (raftRide.active) {
+    //
+    // The ride is this hero's. An ally standing on the pier keeps walking.
+    const ride = currentRaft();
+    if (ride.active) {
       if (!owScreenBound()) {
         prefetchOwRoom(roomId);
       }
-      const r = stepRaftRide(link, raftRide, roomId);
+      const r = stepRaftRide(link, ride, roomId);
       if (r?.cross) {
         // Mid-ride seam: keep scrolling onto the northern shore.
         if (!owRoomReady(r.cross.nextRoomId)) {
@@ -6159,7 +8927,7 @@ async function main() {
         link.x = r.cross.x;
         link.y = r.cross.y;
         link.dir = r.cross.dir;
-        raftRide.crossed = true;
+        ride.crossed = true;
         softEnterOwRoom(r.cross.nextRoomId, r.cross.dir, {
           dropHomeRoom: fromRoom,
         });
@@ -6168,7 +8936,7 @@ async function main() {
         return;
       }
       if (r?.landed) {
-        audio?.playSfx('secret');
+        fx.playSfx('secret');
         setStatus('Docked');
       }
       // No stepCombat during dock scroll — Link is halted on the raft.
@@ -6179,6 +8947,8 @@ async function main() {
     // Hold the world still for the frame or two a not-yet-streamed room needs
     // rather than stepping against the previous screen's tiles and warps.
     if (!owScreenBound()) return;
+
+    const mayOwnAnchor = canClaimAnchorCross(link.x, link.y);
 
     // Pond fairy first so ObjState $40 halt applies to this frame's movement.
     const fairyHalt = stepPondFairyFountain();
@@ -6258,17 +9028,17 @@ async function main() {
     // Cull/release before spawn so a seam-edge latch drop cannot share a frame
     // with a fresh wave of the same ROM spawn points.
     cullStreamEnemies();
-    if (!resolveOwRoomCross(raftApproach)) {
+    if (!resolveOwRoomCross(raftApproach, mayOwnAnchor)) {
       spawnVisibleOwRooms(link.dir);
     }
 
     // After seam/room updates — NES UpdateDock reads RoomId + ObjX/ObjY with
     // no facing check. Run here so a same-frame southbound cross into `$55`/`$3F`
     // can still catch the `$3D` north-edge trigger.
-    if (!fairyHalt && tryStartRaftRide(link, roomId, inv, raftRide)) {
+    if (!fairyHalt && tryStartRaftRide(link, roomId, inv, ride)) {
       inv.shovePixels = 0;
       inv.shoveDir = 0;
-      audio?.playSfx('secret');
+      fx.playSfx('secret');
       setStatus('Raft!');
       syncRaftSprite();
       return;
@@ -6281,7 +9051,7 @@ async function main() {
     // the check above. Everything below reads the anchor room's own attrs
     // (warps, secrets) — resolve the cross first or a cave mouth is looked up
     // on the screen Link already left.
-    resolveOwRoomCross(null);
+    resolveOwRoomCross(null, mayOwnAnchor);
 
     // Push graves / rocks: exact X + vertical hold $10.
     // Nudge first — standing under either half of the 16×16 looks aligned but
@@ -6311,7 +9081,7 @@ async function main() {
         for (const secret of pushed) {
           patchOwBgSquare(secret.col, secret.row, tilesForSecretMarker(secret.marker));
         }
-        audio?.playSfx('secret');
+        fx.playSfx('secret');
         setStatus('Pushed a secret open!');
       }
     } else {
@@ -6330,7 +9100,7 @@ async function main() {
     // refuses to open. Walking normally does clear it, so this is a stuck
     // window rather than a permanent wedge. Keying on the tile Link stands on
     // cannot miss it at all.
-    const owStanding = standingTileMulti(owStream.gridMap(), roomId, link.x, link.y);
+    const owStanding = standingTileMulti(owRooms.gridMap(), roomId, link.x, link.y);
     if (undergroundExitType && !isOwWarpTile(owStanding)) {
       undergroundExitType = 0;
     }
@@ -6338,7 +9108,7 @@ async function main() {
       ? null
       : checkCaveEntry(link, screen?.tileGrid, screen?.attrs, roomId, {
         standingTile: (x, y) =>
-          standingTileMulti(owStream.gridMap(), roomId, x, y),
+          standingTileMulti(owRooms.gridMap(), roomId, x, y),
       });
     if (!cave) {
       caveLatch = false;
@@ -6357,7 +9127,7 @@ async function main() {
     if (!dungeon?.room || inv.dead) return;
     // Soft continuous rooms still need a tile grid; cellar hard-loads too.
     if (!dungeonTileGrid) {
-      dungeonTileGrid = uwStream.get(roomId)?.tileGrid ?? null;
+      dungeonTileGrid = uwRooms.tileGrid(roomId) ?? null;
       roomSprite = uwStream.get(roomId)?.sprite ?? roomSprite;
       if (!dungeonTileGrid) return;
     }
@@ -6371,6 +9141,17 @@ async function main() {
     // Grumble / UW persons: CheckPersonBlocking clears UP above the midline.
     inputMask = maskPersonBlockedDir(inputMask);
 
+    // Walk and unlock in the cell this hero occupies. The world's `roomId`
+    // is whoever last crossed; using it for DoorwayDir left player two
+    // stuck on solid door tiles in a room they were already standing in.
+    const door = uwHeroDoorContext();
+    const { occId, occRoom, localLink } = door;
+    const doorMode = door.mode;
+    const inDoor = doorMode === 'corridor';
+    const occGrid =
+      uwRooms.tileGrid(occId)
+      ?? ((occId & 0xff) === (roomId & 0xff) ? dungeonTileGrid : OPEN_UW_GRID);
+
     const heldByWallmaster = linkHeldByWallmaster();
     if (
       !heldByWallmaster
@@ -6378,57 +9159,61 @@ async function main() {
       && inv.shovePixels <= 0
       && (inv.itemLiftTimer ?? 0) <= 0
     ) {
-      // Bump a locked key door with a key → remove the block (open both faces).
       const unlockedSide = tryUnlockFacingKeyDoor(
-        link,
-        dungeon.room,
+        localLink,
+        occRoom,
         dungeon.doorState,
         inv,
       );
       if (unlockedSide) {
         refreshDungeonRoomVisual();
-        refreshNeighborDoorVisual(dungeon.room.roomId, unlockedSide);
+        refreshNeighborDoorVisual(occId, unlockedSide);
         refreshHud();
-        audio?.playSfx('door');
+        fx.playSfx('door');
         setStatus(`Unlocked door (${inv.keys} keys left)`);
       }
 
       // NES: DoorwayDir ≠ 0 skips BoundByRoom + tile collision; otherwise
       // ObjectRoomBoundsUW + GetCollidingTileMoving both apply.
-      // Locked key/shutter/bombable faces are NOT corridors until passable.
-      const inDoor = linkInDoorwayCorridor(link, dungeon.room, {
-        doorwayBlockSide: dungeon.doorwayBlockSide,
-        doorState: dungeon.doorState,
-      });
-      if (inDoor || !dungeonTileGrid) {
+      if (doorMode === 'neighbor') {
+        stepLink(
+          localLink,
+          occGrid,
+          inputMask,
+          undefined,
+          NO_ROOM_BOUNDS,
+          dungeonTileOpts(inv),
+        );
+        writeUwLocal(occId, localLink);
+      } else if (inDoor || !occGrid) {
         const open = Array.from({ length: 22 }, () => Array(32).fill(0x26));
         ladderObj = null;
-        stepLink(link, open, inputMask, undefined, NO_ROOM_BOUNDS);
-        // Passable doors open through the geometric seam; locked/missing sides
-        // still stop at the NES PlayerScreenEdgeBounds lip.
+        stepLink(localLink, open, inputMask, undefined, NO_ROOM_BOUNDS);
         const roomIds = new Set(level.rooms.map((r) => r.roomId));
-        clampUwDoorwayPath(link, dungeon.room, {
+        clampUwDoorwayPath(localLink, occRoom, {
           doorState: dungeon.doorState,
           roomIds,
         });
+        writeUwLocal(occId, localLink);
       } else {
-        const uwOpts = prepareLadderTileOpts(
-          dungeonTileGrid,
-          inputMask,
-          'dungeon',
-          dungeonTileOpts(inv),
-          Boolean(dungeon.doorwayBlockSide) || inDoor,
-        );
-        // NES skips BoundByRoom in mode 9 (cellar) so the ladder can climb
-        // past ObjectRoomBoundsUW top `$5E` into the HUD band for CheckSubroom.
-        const inCellar = isCellarRoom(dungeon.room, level);
+        const sameAnchor = (occId & 0xff) === (roomId & 0xff);
+        const uwOpts = sameAnchor
+          ? prepareLadderTileOpts(
+              occGrid,
+              inputMask,
+              'dungeon',
+              dungeonTileOpts(inv),
+              Boolean(door.latch) || inDoor,
+            )
+          : dungeonTileOpts(inv);
+        const inCellar = isCellarRoom(occRoom, level);
         const roomBounds = inCellar ? NO_ROOM_BOUNDS : UW_ROOM_BOUNDS;
-        stepLink(link, dungeonTileGrid, inputMask, undefined, roomBounds, uwOpts);
-        ladderObj = stepLadderObject(ladderObj, link);
-        link.x = Math.max(left, Math.min(right, link.x));
-        // Cellars: allow Y into the HUD band so CheckSubroom (Y < $40) can fire.
+        stepLink(localLink, occGrid, inputMask, undefined, roomBounds, uwOpts);
+        if (sameAnchor) ladderObj = stepLadderObject(ladderObj, link);
+        localLink.x = Math.max(left, Math.min(right, localLink.x));
         const minY = inCellar ? CELLAR_EXIT_MIN_Y : top;
-        link.y = Math.max(minY, Math.min(bottom + 8, link.y));
+        localLink.y = Math.max(minY, Math.min(bottom + 8, localLink.y));
+        writeUwLocal(occId, localLink);
       }
     }
 
@@ -6440,8 +9225,8 @@ async function main() {
 
     // Cellar: walk up past Y<$40 to return (NES CheckSubroom mode 9).
     // Stairs / cellar remain hard cuts (full reload).
-    if (isCellarRoom(dungeon.room, level)) {
-      const up = checkCellarExit(link, dungeon.room, level, play, inputMask);
+    if (isCellarRoom(occRoom, level)) {
+      const up = checkCellarExit(localLink, occRoom, level, play, inputMask);
       if (up && !busy) {
         stairsLatch = true;
         void loadDungeonRoom(up.nextRoomId, DIR.DOWN, cellarReturnSpawn(up.attrsC)).then(
@@ -6451,14 +9236,14 @@ async function main() {
         );
         return;
       }
-    } else if (checkUwStairsEntry(link, dungeonTileGrid)) {
+    } else if (checkUwStairsEntry(link, occGrid)) {
       if (!stairsLatch && !busy) {
-        const cellarId = cellarForStairsRoom(level, dungeon.room.roomId);
+        const cellarId = cellarForStairsRoom(level, occId);
         if (cellarId != null) {
           stairsLatch = true;
-          dungeon.cellarSourceRoomId = dungeon.room.roomId;
+          dungeon.cellarSourceRoomId = occId;
           setStatus(`Stairs → cellar $${cellarId.toString(16)}`);
-          audio?.playSfx('stairs');
+          fx.playSfx('stairs');
           void loadDungeonRoom(cellarId, DIR.UP).then(
             (ok) => {
               if (!ok) stairsLatch = false;
@@ -6475,36 +9260,44 @@ async function main() {
       stairsLatch = false;
     }
 
-    if (dungeon.doorwayBlockSide && doorwayLatchCleared(link, dungeon.doorwayBlockSide)) {
-      dungeon.doorwayBlockSide = null;
+    if (door.me?.uwDoorwayBlockSide && doorwayLatchCleared(localLink, door.me.uwDoorwayBlockSide)) {
+      if (dungeon.doorwayBlockSide === door.me.uwDoorwayBlockSide) {
+        dungeon.doorwayBlockSide = null;
+      }
+      door.me.uwDoorwayBlockSide = null;
     }
     tryOpenPersonDialogue();
 
     // South doorway of the start room returns to overworld.
     if (
-      dungeon.room.roomId === level.startRoom
-      && link.gridOffset === 0
-      && (link.dir & DIR.DOWN)
-      && inDoorway(link, 'south')
+      (occId & 0xff) === (level.startRoom & 0xff)
+      && localLink.gridOffset === 0
+      && (localLink.dir & DIR.DOWN)
+      && inDoorway(localLink, 'south')
     ) {
       void exitDungeon();
       return;
     }
 
     // No room-to-room exits from cellars (only the ladder).
-    if (isCellarRoom(dungeon.room, level)) return;
+    if (isCellarRoom(occRoom, level)) return;
 
-    // Unlocked doors are a walkable path: cross at the geometric room seam
-    // (same as OW), keep continuous coords, then soft-enter the neighbor.
-    const cross = detectUwDoorCross(link, dungeon.room, {
+    // Unlocked doors are a walkable path: cross at this hero's room seam,
+    // then make that destination the world's streaming anchor.
+    const after = uwHeroDoorContext();
+    const cross = detectOwnedUwDoorCross(after.localLink, after.occRoom, {
       doorState: dungeon.doorState,
       rooms: level.rooms,
     });
     if (cross) {
-      rebaseEntities(cross.dir);
+      rebaseToRoom(cross.nextRoomId);
       link.x = cross.x;
       link.y = cross.y;
       link.dir = cross.dir;
+      if (after.me) {
+        after.me.uwOccRoomId = cross.nextRoomId;
+        after.me.uwDoorwayBlockSide = entrySideForFacing(cross.dir);
+      }
       applyPlayCamera();
       void softEnterDungeonRoom(cross);
     }
@@ -6521,7 +9314,7 @@ async function main() {
       playing = false;
       titleUi.setSlots(saveStore.listSlots());
       titleUi.show();
-      audio?.playMusic('title');
+      fx.playMusic('title');
       return;
     }
     questCompleted = 0;
@@ -6542,7 +9335,7 @@ async function main() {
       dir: worldIndex.startDir,
     });
     refreshHud();
-    invUi.refresh(inv, invView());
+    refreshOpenMenus();
     persistSave('second quest');
     setStatus('SECOND QUEST — good luck!');
   }
@@ -6553,6 +9346,9 @@ async function main() {
    * @param {string} [name]
    */
   async function beginPlay(slot, kind, name = 'LINK') {
+    // File continue from a live session (and title continue) must not
+    // autosave a half-restored world over the slot being loaded.
+    playing = false;
     activeSlot = slot;
     saveName = (name || 'LINK').slice(0, 8).toUpperCase();
     caveTaken.clear();
@@ -6591,8 +9387,13 @@ async function main() {
       // Keep playing=false until world is restored so bootstrap OW load
       // cannot overwrite a mid-dungeon save as overworld-only.
       applyDebugKit();
+      applyPartyCaps(sharedInv, activePlayers(players).length);
+      focus.to(hostPlayer(players) ?? players[0]);
       const healed = await restoreWorldFromSave(meta.position);
+      applyPartySnapshot(players, meta.party, { skipPose: [0] });
+      await restorePartyWorlds(meta.party, { includeHost: !healed });
       playing = true;
+      refreshJoinHint();
       persistSave('continue');
       setStatus(
         healed
@@ -6610,6 +9411,7 @@ async function main() {
     if (secondQuest) resetProfileToSecondQuest(inv);
     resetRupeeRoll(rupeeRoll, inv.rupees ?? 0);
     applyDebugKit();
+    applyPartyCaps(sharedInv, activePlayers(players).length);
     titleUi.hide();
     await loadOverworldScreen(worldIndex.startScreen, {
       x: worldIndex.startX,
@@ -6617,6 +9419,7 @@ async function main() {
       dir: worldIndex.startDir,
     });
     playing = true;
+    refreshJoinHint();
     persistSave('new game');
     setStatus(
       secondQuest
@@ -6690,7 +9493,7 @@ async function main() {
     world.visible = false;
     demoUi.begin();
     setStatus('Title — press Start');
-    audio?.playMusic('title');
+    fx.playMusic('title');
   }
 
   let acc = 0;
@@ -6698,224 +9501,49 @@ async function main() {
   let last = performance.now();
   /** Frames `zeldaDebug.step()` has queued; consumed by the next ticker run. */
   let debugSteps = 0;
+  /**
+   * Hold the world still between animation frames (`?debug=1&pause=1`).
+   *
+   * A golden run has to start from a known frame. Without this the loop keeps
+   * advancing on wall-clock time from the moment the page loads until the
+   * harness gets around to its first `step()`, so how many frames the game had
+   * already simulated depended on how long the browser took to boot — and the
+   * hash of a run would change from one machine to the next.
+   */
+  let framePaused = urlParams.get('debug') === '1' && urlParams.get('pause') === '1';
 
   exposeDebugHandle();
 
-  app.ticker.add(() => {
-    const now = performance.now();
-    if (debugSteps > 0) {
-      // `zeldaDebug.step(n)` asks for exactly n simulated frames. Deriving
-      // them from the wall clock made the count depend on how long the tool
-      // call took, so a batch could silently simulate nothing at all.
-      acc = stepMs * debugSteps;
-      debugSteps = 0;
-      last = now;
-    } else {
-      acc += now - last;
-      last = now;
-      if (acc > stepMs * 3) acc = stepMs * 3;
+  /**
+   * One animation frame, simulated as the player in focus.
+   *
+   * Everything in here reads the world context of whoever `focus.on()` loaded.
+   * At one player that is always player one and the swap is a no-op; the split
+   * into a per-player part and a shared part (enemies, streaming, rendering)
+   * comes next.
+   */
+  /**
+   * One hero's physics step, in whatever place that hero is standing.
+   *
+   * Called with the focus already on them, so `mode`, `link` and the rest mean
+   * this player. `device` is their controller: player one's keys and every
+   * pad when alone, one set each in company.
+   */
+  function stepHero(device) {
+    const mask = inv.paralyzed > 0 || inv.dead ? 0 : device.mask();
+    if (mode === 'cave') {
+      stepCave(mask);
+    } else if (mode === 'overworld' && (screen || currentRaft().active)) {
+      // Raft can outlive a brief unbound `screen` after a dock soft-enter;
+      // keep stepping so UpdateDock still lands.
+      stepOverworld(mask);
+    } else if (mode === 'dungeon') {
+      stepDungeon(mask);
     }
+  }
 
-    if (optionsUi.visible || debugUi.visible) {
-      acc = 0;
-      return;
-    }
-
-    if (inAttract && demoUi.visible) {
-      const startDemo = input.pressedStart();
-      while (acc >= stepMs) {
-        acc -= stepMs;
-        const demoTick = demoUi.tick({ start: startDemo });
-        if (demoTick.playTitleMusic) audio?.playMusic('title');
-        if (demoTick.finished) {
-          demoUi.hide();
-          inAttract = false;
-          // File select still owns the screen; HUD returns when play begins.
-          titleUi.setSlots(saveStore.listSlots());
-          titleUi.show();
-          setStatus('File select — Enter to start · O options');
-          audio?.playMusic('title');
-          break;
-        }
-      }
-      return;
-    }
-
-    if (!playing || titleUi.visible) {
-      titleUi.tick(input, DIR);
-      acc = 0;
-      return;
-    }
-
-    // Periodic autosave (~15s) while exploring.
-    if (now - lastAutosave > 15000) persistSave();
-
-    // Edge-detect buttons once per frame (not once per physics step).
-    const startPressed = input.pressedStart();
-    const aPressed = input.pressedA();
-    const bPressed = input.pressedB();
-
-    // Mode $13 owns Start once Zelda is rescued.
-    if (endingUi.visible) {
-      stepEndingMode({ start: startPressed });
-      acc = 0;
-      return;
-    }
-
-    // Phase 19: an open dialogue box owns the buttons. The same press must not
-    // also swing the sword or flip the submenu open behind the text.
-    const dialogueOpen = textBox.active;
-    let dialogueConsumed = false;
-    if (dialogueOpen && (aPressed || bPressed || startPressed)) {
-      dialogueConsumed = true;
-      const res = textBox.advance();
-      if (res.closed) onDialogueClosed(res);
-    }
-    const dialogueBlocking = dialogueOpen || dialogueConsumed;
-
-    // Mode $08 reads Start and Select itself; see stepDeathMode.
-    let deathInput = { select: input.pressedSelect(), start: startPressed };
-    if (startPressed && !inv.dead && !dialogueBlocking) {
-      if (invUi.open) {
-        invUi.close();
-        persistSave();
-      } else {
-        // Same as NES: Start opens the submenu in caves; walk south to leave.
-        invUi.toggle(inv, invView());
-      }
-    }
-
-    // While inventory is open, B cycles the B slot (does not place items).
-    if (invUi.open && invUi.phase === 'open' && bPressed && !dialogueBlocking) {
-      const prevB = inv.selectedB;
-      cycleBItem(inv);
-      // Selection changed → Tune1 `$01` (same as rupee taken).
-      if (inv.selectedB !== prevB) audio?.playSfx('rupee');
-      refreshHud();
-      invUi.refresh(inv, invView());
-    }
-    // NES CurVScroll ±3px/frame — slide panel + scroll the playfield.
-    // Status bar docks to the bottom while the submenu is open (original layout).
-    invUi.tick();
-    world.y = invUi.worldSlideY();
-    hud.root.y = Math.round(invUi.hudDockT() * (INTERNAL_H - HUD_HEIGHT));
-
-    // Letter-show is the only B action allowed inside a cave (medicine shop).
-    if (
-      !inv.dead
-      && !invUi.open
-      && !dialogueBlocking
-      && mode === 'cave'
-      && bPressed
-      && canShowLetter(caveScene.cave, inv)
-    ) {
-      tryUseB();
-    }
-
-    if (!inv.dead && !invUi.open && !dialogueBlocking && mode !== 'cave' && !pondFairyHalt) {
-      if (aPressed) {
-        const swung =
-          canSwingSword(inv) && tryStartSword(sword, link.dir, inv.sword);
-        if (swung) audio?.playSfx('sword');
-        if (inv.sword < 1) setStatus('No sword — stand still on the cave mouth');
-      }
-      if (bPressed) {
-        tryUseB();
-      }
-    }
-
-    while (acc >= stepMs) {
-      acc -= stepMs;
-      frameCounter = (frameCounter + 1) & 0xff;
-
-      // UpdateHeartsAndRupees → World_ChangeRupees: spin the status-bar total
-      // one step every other frame, chirping the heart tune as it goes.
-      // Keep rolling during cave speech so door-repair / shop fees are visible
-      // while the text box is up (NES ticks the counter independently).
-      if (stepRupeeRoll(rupeeRoll, inv.rupees ?? 0).playTune) {
-        audio?.playSfx('text');
-        refreshHud();
-      }
-
-      // The world holds still while someone is talking, the same way the
-      // submenu freezes it — nothing steps, nothing spawns, nothing hits Link.
-      // Cave Mode B is the exception: NES lets Link walk the shop while the
-      // nametable text crawls, and freezing here reads as a hard hang on enter
-      // (no foes to pause for). leaveCave always closes the box so walking out
-      // mid-speech cannot leave the overlay stranded on the overworld.
-      // Death outranks dialogue either way.
-      if (
-        invUi.open
-        || (textBox.active && !inv.dead && mode !== 'cave')
-      ) {
-        continue;
-      }
-
-      // Keep an in-progress raft ride ticking even after death so Link is not
-      // stranded mid-water with a frozen dock object.
-      const raftInProgress = mode === 'overworld' && raftRide.active;
-      if (inv.dead && !raftInProgress) {
-        if (deathUi.visible) {
-          // Physics may run several steps per animation frame; the edge-
-          // detected presses must only be seen by the first of them.
-          stepDeathMode(deathInput);
-          deathInput = NO_DEATH_INPUT;
-        }
-        continue;
-      }
-
-      // GameMode $12 halts the world until hearts finish filling.
-      if (triforceCeremonyActive(triforceCeremony)) {
-        const step = stepTriforceCeremony(triforceCeremony, inv);
-        if (step.playFillTune) audio?.playSfx('text');
-        syncItemLiftSprite();
-        refreshHud();
-        if (step.finished) {
-          invUi.refresh(inv, invView());
-          persistSave();
-          // Hearts are full and the palette has stopped flashing — now talk.
-          if (pendingBriefingLevel != null) {
-            const level = pendingBriefingLevel;
-            pendingBriefingLevel = null;
-            openLevelBriefing(level);
-          }
-        }
-        continue;
-      }
-
-      // Tune0 $40 is re-requested every frame; arbitration drops it when
-      // square 1 is busy, so a single call would usually be swallowed.
-      if (!inv.dead && (inv.halfHearts ?? 0) > 0 && (inv.halfHearts ?? 0) <= 2) {
-        audio?.playSfx('low_health');
-      }
-
-      const mask = inv.paralyzed > 0 || inv.dead ? 0 : input.mask();
-      if (mode === 'cave') {
-        stepCave(mask);
-      } else if (mode === 'overworld' && (screen || raftRide.active)) {
-        // Raft can outlive a brief unbound `screen` after a dock soft-enter;
-        // keep stepping so UpdateDock still lands.
-        stepOverworld(mask);
-      } else if (mode === 'dungeon') {
-        stepDungeon(mask);
-      }
-    }
-
-    if (mode === 'cave' && !invUi.open) caveScene.tick();
-    textBox.tick();
-    // Radar-only repaint: the mark pulse must breathe without rebuilding the
-    // sprite-heavy half of the status bar every frame. Soft OW/UW room crosses
-    // update `roomId` without `refreshHud`, so pass locator state here or the
-    // player dot sticks until some other HUD event happens to catch up.
-    uiFrame = (uiFrame + 1) & 0xffff;
-    const mapRoomId =
-      mode === 'cave' ? (caveReturn?.roomId ?? roomId) : roomId;
-    hud.pulseMap(uiFrame, currentMapMarks(), currentDungeonMapMarks(), {
-      roomId: mapRoomId,
-      mode,
-      dungeon,
-    });
-
+  /** One hero's sprites, positioned for the frame just simulated. */
+  function drawHero() {
     const attacking = isSwordActive(sword);
     const drawY = mode === 'overworld' ? link.y + 2 : link.y;
     // InvRing patches SP0 tunic (`LinkColors`); detach before cache destroy.
@@ -6934,21 +9562,360 @@ async function main() {
     if (itemLiftActive()) syncItemLiftSprite();
     // During mode $11 the sequence decides when Link is on screen.
     linkSprite.visible = !deathUi.visible || deathLinkVisible;
-
-    if (mode === 'overworld' || mode === 'dungeon') {
-      applyPlayCamera();
-    } else if (mode === 'cave') {
-      playField.x = 0;
-      playField.y = 0;
+    const tag = focus.current?.gfx?.tag;
+    if (tag) {
+      tag.x = link.x + 4;
+      tag.y = drawY - 8;
     }
+    drawSwordBlade();
+  }
+
+  function tickFrame() {
+    const now = performance.now();
+    if (debugSteps > 0) {
+      // `zeldaDebug.step(n)` asks for exactly n simulated frames. Deriving
+      // them from the wall clock made the count depend on how long the tool
+      // call took, so a batch could silently simulate nothing at all.
+      acc = stepMs * debugSteps;
+      debugSteps = 0;
+      last = now;
+    } else if (framePaused) {
+      // Keep the clock with us so resuming does not simulate the whole pause.
+      last = now;
+      acc = 0;
+      return;
+    } else {
+      acc += now - last;
+      last = now;
+      if (acc > stepMs * 3) acc = stepMs * 3;
+    }
+
+    if (optionsUi.visible || debugUi.visible) {
+      acc = 0;
+      return;
+    }
+
+    if (inAttract && demoUi.visible) {
+      const startDemo = input.pressedStart();
+      while (acc >= stepMs) {
+        acc -= stepMs;
+        const demoTick = demoUi.tick({ start: startDemo });
+        if (demoTick.playTitleMusic) fx.playMusic('title');
+        if (demoTick.finished) {
+          demoUi.hide();
+          inAttract = false;
+          // File select still owns the screen; HUD returns when play begins.
+          titleUi.setSlots(saveStore.listSlots());
+          titleUi.show();
+          setStatus('File select — Enter to start · O options');
+          fx.playMusic('title');
+          break;
+        }
+      }
+      return;
+    }
+
+    if (!playing || titleUi.visible) {
+      titleUi.tick(input, DIR);
+      acc = 0;
+      return;
+    }
+
+    // Periodic autosave (~15s) while exploring.
+    if (now - lastAutosave > 15000) persistSave();
+
+    // Edge-detect buttons once per frame (not once per physics step), and
+    // once per device: asking consumes the edge, so every player's buttons
+    // are read here and read nowhere else.
+    const pressed = inputs.map((device) => ({
+      start: device.pressedStart(),
+      a: device.pressedA(),
+      b: device.pressedB(),
+      select: device.pressedSelect(),
+    }));
+    // Start on an empty seat sits that player down. Start+Select on a
+    // seated one stands them up. The last player cannot leave this way.
+    const leaveConsumed = new Set();
+    /** Start that sat someone down must not also open the submenu. */
+    const joinConsumed = new Set();
+    let joinConsumedStart = false;
+    const pads = navigator.getGamepads?.() ?? [];
+    const spare = joiningPads(pads, {
+      padSlots: options.padSlots,
+      activeIndexes: activePlayers(players).map((p) => p.index),
+    });
+    const spareStarts = padStartEdges.rising(spare, pads);
+    if (playing && !deathUi.visible && !endingUi.visible) {
+      for (const pad of spareStarts) {
+        const seat = seatForJoiningPad(pad, {
+          padSlots: options.padSlots,
+          players,
+          max: maxPlayers,
+        });
+        if (seat < 0) continue;
+        if (!options.padSlots) options.padSlots = [null, 1, 2, 3];
+        options.padSlots[seat] = pad;
+        const joined = joinPlayer(seat);
+        if (joined) {
+          joinConsumed.add(joined);
+          joinConsumedStart = true;
+        }
+      }
+      for (let i = 0; i < inputs.length; i += 1) {
+        const press = pressed[i];
+        const occupant = players.find((p) => p.index === i);
+        if (occupant?.active) {
+          if (press.start && inputs[i].holdingSelect() && canLeave(players, occupant)) {
+            leavePlayer(occupant);
+            leaveConsumed.add(occupant);
+          }
+        } else if (press.start && !inputs[i].holdingSelect()) {
+          const joined = joinPlayer(i);
+          if (joined) {
+            joinConsumed.add(joined);
+            joinConsumedStart = true;
+          }
+        }
+      }
+    }
+
+    // The ending and the continue menu are still the group's. Anyone's
+    // Start pages the credits; dialogue and the submenu belong to whoever
+    // opened them.
+    const { start: startPressed, a: aPressed, b: bPressed } = {
+      start: pressed[0].start && !joinConsumedStart,
+      a: pressed[0].a,
+      b: pressed[0].b,
+    };
+
+    // Mode $13 owns Start once Zelda is rescued.
+    if (endingUi.visible) {
+      stepEndingMode({ start: pressed.some((p) => p.start) });
+      acc = 0;
+      return;
+    }
+
+    // Only the reader (or everyone, for a story beat) can page the box.
+    // Their press must not also swing a sword or open the submenu.
+    const dialogueConsumed = new Set();
+    if (textBox.active) {
+      if (storyPager?.holding()) {
+        let closedStory = null;
+        for (const p of activePlayers(players)) {
+          if (!storyPager || storyPager.finished(p.index)) continue;
+          const press = pressed[p.index];
+          if (!press || !(press.a || press.b || press.start)) continue;
+          dialogueConsumed.add(p);
+          const res = storyPager.advance(p.index);
+          if (res.turned || res.closed) fx.playSfx('text');
+          if (res.allDone) {
+            closedStory = { closed: true, kind: textBox.kind, meta: textBox.meta };
+            textBox.close();
+            storyPager = null;
+            talkingPlayer = null;
+            break;
+          }
+        }
+        if (closedStory) onDialogueClosed(closedStory);
+      } else {
+        for (const p of activePlayers(players)) {
+          if (!playerCanPageDialogue(p)) continue;
+          const press = pressed[p.index];
+          if (!(press.a || press.b || press.start)) continue;
+          dialogueConsumed.add(p);
+          const res = textBox.advance();
+          if (res.closed) {
+            talkingPlayer = null;
+            onDialogueClosed(res);
+          }
+          break;
+        }
+      }
+    }
+
+    // Mode $08 reads Start and Select itself; see stepDeathMode.
+    let deathInput = { select: pressed[0].select, start: startPressed };
+    for (const p of activePlayers(players)) {
+      const press = pressed[p.index];
+      if (
+        !press.start
+        || dialogueConsumed.has(p)
+        || leaveConsumed.has(p)
+        || joinConsumed.has(p)
+      ) {
+        continue;
+      }
+      focus.on(p, () => {
+        if (inv.dead) return;
+        const ui = menuUi(p);
+        if (ui.open) {
+          ui.close();
+          persistSave();
+          return;
+        }
+        ui.toggle(inv, invView());
+      });
+    }
+    focus.to(players[0]);
+
+    // While a player's inventory is open they cycle their own B slot.
+    for (const p of activePlayers(players)) {
+      const ui = menuUi(p);
+      if (!ui.open || ui.phase !== 'open' || dialogueConsumed.has(p)) continue;
+      const press = pressed[p.index];
+      if (!press.b) continue;
+      focus.on(p, () => {
+        const prevB = inv.selectedB;
+        cycleBItem(inv);
+        if (inv.selectedB !== prevB) fx.playSfx('rupee');
+        refreshHud();
+        ui.refresh(inv, invView());
+      });
+    }
+    focus.to(players[0]);
+    // NES CurVScroll ±3px/frame — slide panel + scroll the playfield.
+    // Status bar docks to the bottom while the submenu is open (original layout).
+    for (const ui of invUis) ui.tick();
+    if (playerCount <= 1) {
+      world.y = invUi.worldSlideY();
+      hud.root.y = Math.round(invUi.hudDockT() * (QUAD_H - HUD_HEIGHT));
+    }
+
+    // Letter-show is the only B action allowed inside a cave (medicine shop).
+    if (
+      !inv.dead
+      && !playerIsInMenu(players[0])
+      && !textBox.active
+      && mode === 'cave'
+      && bPressed
+      && canShowLetter(caveView()?.cave, inv)
+    ) {
+      tryUseB();
+    }
+
+    // Every hero swings their own sword and uses their own B item, unless
+    // they are the one reading or they opened the submenu. A fountain halt
+    // is that hero's — an ally underground must still be able to swing.
+    for (const p of activePlayers(players)) {
+      if (playerIsFrozenByDialogue(p) || playerIsInMenu(p) || dialogueConsumed.has(p)) continue;
+      if (p.pondFairyHalt) continue;
+      const press = pressed[p.index];
+      if (!press.a && !press.b) continue;
+      focus.on(p, () => {
+        if (inv.dead || mode === 'cave') return;
+        if (press.a) {
+          const swung = canSwingSword(inv) && tryStartSword(sword, link.dir, inv.sword);
+          if (swung) fx.playSfx('sword');
+          if (inv.sword < 1) setStatus('No sword — stand still on the cave mouth');
+        }
+        if (press.b) tryUseB();
+      });
+    }
+    focus.to(players[0]);
+
+    while (acc >= stepMs) {
+      acc -= stepMs;
+      frameCounter = (frameCounter + 1) & 0xff;
+      simTick += 1;
+
+      // UpdateHeartsAndRupees → World_ChangeRupees: spin the status-bar total
+      // one step every other frame, chirping the heart tune as it goes.
+      // Keep rolling during cave speech so door-repair / shop fees are visible
+      // while the text box is up (NES ticks the counter independently).
+      if (stepRupeeRoll(rupeeRoll, inv.rupees ?? 0).playTune) {
+        fx.playSfx('text');
+        refreshHud();
+      }
+
+      // The submenu freezes only its owner, the same as a private conversation.
+      // Story beats (`levelEntry`, `briefing`) still hold everyone. Cave Mode B
+      // lets you walk the shop while the text crawls. Solo is unchanged: the
+      // only player is the owner, so the world still stops for the goldens.
+
+      // Keep an in-progress raft ride ticking even after death so Link is not
+      // stranded mid-water with a frozen dock object. One hero down no longer
+      // stops the others; the continue menu is the only death that holds the
+      // whole party, and at one player that is still the ROM's own flow.
+      const raftInProgress = activePlayers(players).some(
+        (p) => p.world?.mode === 'overworld' && p.raftRide?.active,
+      );
+      if (deathUi.visible && !raftInProgress) {
+        // Physics may run several steps per animation frame; the edge-
+        // detected presses must only be seen by the first of them.
+        stepDeathMode(deathInput);
+        deathInput = NO_DEATH_INPUT;
+        continue;
+      }
+
+      // GameMode $12 halts the world until hearts finish filling.
+      if (triforceCeremonyActive(triforceCeremony)) {
+        const step = stepTriforceCeremony(triforceCeremony, inv);
+        if (step.playFillTune) fx.playSfx('text');
+        syncItemLiftSprite();
+        refreshHud();
+        if (step.finished) {
+          refreshOpenMenus();
+          persistSave();
+          // Hearts are full and the palette has stopped flashing — now talk.
+          if (pendingBriefingLevel != null) {
+            const level = pendingBriefingLevel;
+            pendingBriefingLevel = null;
+            openLevelBriefing(level);
+          }
+        }
+        continue;
+      }
+
+      // Tune0 $40 is re-requested every frame; arbitration drops it when
+      // square 1 is busy, so a single call would usually be swallowed.
+      if (!inv.dead && (inv.halfHearts ?? 0) > 0 && (inv.halfHearts ?? 0) <= 2) {
+        fx.playSfx('low_health');
+      }
+
+      rallyFollowers();
+
+      stepCoopDeaths();
+
+      // Each hero walks their own world, on their own device. Work shared by
+      // everyone standing in one place — the foes, the collisions — is claimed
+      // by whoever gets there first this tick; see firstInWorldThisFrame.
+      for (const p of activePlayers(players)) {
+        if (playerIsFrozenByDialogue(p) || playerIsInMenu(p) || p.deathSeq) continue;
+        focus.on(p, () => stepHero(inputs[p.index]));
+      }
+    }
+
+    // The rest of the frame is the view's, not the last hero simulated.
+    focus.to(players[0]);
+
+    // Each live cave keeps its fires going even when that interior is not
+    // the one being captured this pass.
+    for (const scene of caveScenes.values()) scene.tick();
+    textBox.tick();
+    // Radar-only repaint: the mark pulse must breathe without rebuilding the
+    // sprite-heavy half of the status bar every frame. Soft OW/UW room crosses
+    // update `roomId` without `refreshHud`, so pass locator state here or the
+    // player dot sticks until some other HUD event happens to catch up.
+    uiFrame = (uiFrame + 1) & 0xffff;
+    hud.pulseMap(uiFrame, currentMapMarks(), currentDungeonMapMarks(), {
+      roomId: lookingRoomId(),
+      mode,
+      dungeon,
+    });
+
+    for (const p of activePlayers(players)) focus.on(p, drawHero);
+    focus.to(players[0]);
 
     syncEnemySprites();
     drawBombs();
-    drawSwordBlade();
+    presentViews();
+    syncSessionMusic();
 
     syncTriforceFlash();
 
     // Collision probe readout + optional solid-tile overlay (?debug=1 / ?coll=1).
+    // Player one's, like the rest of the status line.
+    const attacking = isSwordActive(sword);
     collDebugGfx.clear();
     collDebugGfx.visible = false;
     if (mode === 'dungeon' && dungeonTileGrid && (debugCollision || urlParams.get('coll') === '1')) {
@@ -6984,7 +9951,9 @@ async function main() {
         attacking ? ' ATK' : link.moving ? ' walk' : ''
       }`;
     }
-  });
+  }
+
+  app.ticker.add(() => focus.on(players[0], tickFrame));
 }
 
 main().catch((err) => {

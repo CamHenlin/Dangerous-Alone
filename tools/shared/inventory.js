@@ -63,6 +63,15 @@ export function createInventory() {
     sword: SWORD.NONE,
     bombs: 0,
     maxBombs: 8,
+    /** Unscaled ROM bag; `maxBombs` is this times the party size. */
+    bombBag: 8,
+    /** Shared purse ceiling; 255 alone, ×N in company. */
+    rupeeCap: 255,
+    /**
+     * Party-size floor the cap ratchets toward as rupees are spent.
+     * A leave does not drop the ceiling under a pile you already hold.
+     */
+    rupeeCapFloor: 255,
     candle: 0,
     boomerang: 0,
     magicBoomerang: 0,
@@ -129,6 +138,7 @@ export function trySpendArrowShot(inv) {
   if (!inv.bow || (inv.arrow | 0) < 1) return { ok: false, reason: 'gear' };
   if ((inv.rupees | 0) <= 0) return { ok: false, reason: 'rupees' };
   inv.rupees -= 1;
+  ratchetRupeeCap(inv);
   return { ok: true };
 }
 
@@ -279,6 +289,30 @@ export function grantWoodenSword(inv) {
  * @param {ReturnType<typeof createInventory>} inv
  * @param {number} n
  */
+export function addRupees(inv, n) {
+  const cap = inv.rupeeCap ?? 255;
+  const before = inv.rupees ?? 0;
+  inv.rupees = Math.max(0, Math.min(cap, before + n));
+  if (inv.rupees < before) ratchetRupeeCap(inv);
+  return inv.rupees - before;
+}
+
+/**
+ * After a spend (or a leave), the ceiling is `max(party floor, what you hold)`.
+ * Picking up cannot grow the pile past that; spending walks it down to the floor.
+ * @param {object} inv
+ */
+export function ratchetRupeeCap(inv) {
+  if (!inv) return inv;
+  const floor = inv.rupeeCapFloor ?? 255;
+  inv.rupeeCap = Math.max(floor, inv.rupees ?? 0);
+  return inv;
+}
+
+/**
+ * @param {ReturnType<typeof createInventory>} inv
+ * @param {number} n
+ */
 export function addBombs(inv, n) {
   const before = inv.bombs;
   inv.bombs = Math.min(inv.maxBombs, inv.bombs + n);
@@ -359,7 +393,7 @@ export function grantRoomItem(inv, itemType, opts = {}) {
       inv.triforceOfPower = 1;
       return 'Triforce of Power';
     case 0x0f: // 5 rupees
-      inv.rupees = Math.min(255, (inv.rupees ?? 0) + 5);
+      addRupees(inv, 5);
       return '5 rupees';
     case 0x12: // Blue ring
       if ((inv.ring ?? 0) < RING.BLUE) inv.ring = RING.BLUE;

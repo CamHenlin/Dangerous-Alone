@@ -44,3 +44,17 @@ export function clockFreezeActive(enemies) {
 export function enemyIsClockFrozen(e) {
   return Boolean(e?.clockFrozen);
 }
+
+/**
+ * InvClock is shared, but the freeze tags live on one world's foes.
+ * A friend walking a cellar must not clear an overworld clock just because
+ * that cellar has no tagged monsters.
+ *
+ * @param {unknown} clockWorldId
+ * @param {unknown} worldId
+ * @param {Iterable<object>} enemies
+ */
+export function shouldClearClock(clockWorldId, worldId, enemies) {
+  if (!clockWorldId || clockWorldId !== worldId) return false;
+  return !clockFreezeActive(enemies);
+}

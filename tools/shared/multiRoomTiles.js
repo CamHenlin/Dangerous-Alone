@@ -192,4 +192,29 @@ export function roomFullyOffCamera(roomId, worldCamX, worldCamY, pad = 8) {
   );
 }
 
+/**
+ * @typedef {{ worldCamX: number, worldCamY: number }} WorldCamera
+ */
+
+/**
+ * True only when a room is outside *every* camera.
+ *
+ * The world is shared, so a room has to stay live while anyone can still see
+ * it — culling it because the nearest player looked away would empty a room
+ * another player is standing in (Phase 23).
+ *
+ * An empty camera list means nothing is on screen at all, which is `true` by
+ * the same logic; callers with no active players should simply not sweep.
+ *
+ * @param {number} roomId
+ * @param {Iterable<WorldCamera>} cameras
+ * @param {number} [pad]
+ */
+export function roomFullyOffAllCameras(roomId, cameras, pad = 8) {
+  for (const cam of cameras) {
+    if (!roomFullyOffCamera(roomId, cam.worldCamX, cam.worldCamY, pad)) return false;
+  }
+  return true;
+}
+
 export { roomCol, roomRow };

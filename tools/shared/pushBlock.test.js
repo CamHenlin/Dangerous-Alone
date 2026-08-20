@@ -10,6 +10,7 @@ import {
   PUSH_HOLD_FRAMES,
   PUSH_STATE,
   PUSH_TRAVEL,
+  beginPushBlockFrame,
   createPushBlock,
   findPushBlockTile,
   linkPushingBlock,
@@ -20,6 +21,7 @@ import {
   BLOCK_STAIRS_POS,
   stepPushBlock,
 } from './pushBlock.js';
+import { PLAY_W, localInRoom } from './continuousCamera.js';
 import { SECRET } from './roomSecrets.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -127,5 +129,55 @@ test('nudgeLinkOntoPushAxis slides from the neighboring walk row', () => {
   assert.equal(link.y, 0x9c);
   for (let i = 0; i < 16; i += 1) nudgeLinkOntoPushAxis(block, link, DIR.RIGHT);
   assert.equal(link.y, 0x8d);
+  assert.equal(linkPushingBlock(block, link, DIR.RIGHT), true);
+});
+
+test('an idle ally does not reset a push hold', () => {
+  const block = {
+    x: 0x70,
+    y: 0x90,
+    state: PUSH_STATE.IDLE,
+    pushTimer: 8,
+    heldThisFrame: true,
+  };
+  const idle = { x: 0x30, y: 0x8d, dir: DIR.RIGHT };
+  beginPushBlockFrame([block]);
+  assert.equal(block.pushTimer, 8);
+  assert.equal(block.heldThisFrame, false);
+  stepPushBlock(block, idle, DIR.RIGHT, true, { persistTimer: true });
+  assert.equal(block.pushTimer, 8, 'the idle hero must not zero the hold');
+  beginPushBlockFrame([block]);
+  assert.equal(block.pushTimer, 0, 'a frame with nobody shoving still drops the hold');
+});
+
+test('a leftover shove lines up in room-local space', () => {
+  const block = { x: 0x70, y: 0x90 };
+  const local = { x: 0x60, y: 0x8d };
+  assert.equal(linkPushingBlock(block, local, DIR.RIGHT), true);
+  const world = localInRoom(0x42, 0x43, local.x, local.y);
+  assert.equal(world.x, 0x60 - PLAY_W);
+  assert.equal(
+    linkPushingBlock(block, world, DIR.RIGHT),
+    false,
+    'anchor-local leftover coords must not match a room-local block',
+  );
+});
+
+test('L1 $42 push block is the centre-left $B0 at $70,$90', {
+  skip: !fs.existsSync(romPath),
+}, () => {
+  const prg = fs.readFileSync(romPath).subarray(16);
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  const tables = loadDungeonTables(prg, schema);
+  const level = buildLevel(tables, 1, 1);
+  const room = level.rooms.find((r) => r.roomId === 0x42);
+  assert.ok(room?.pushable);
+  const floor = dungeonFloorRect(dungeonPlayOrigin());
+  const tiles = roomToTileGrid(room, tables.primarySquares);
+  const block = createPushBlock(room, { x: floor.x, y: floor.y }, tiles);
+  assert.ok(block);
+  assert.equal(block.x, 0x70);
+  assert.equal(block.y, 0x90);
+  const link = { x: 0x60, y: 0x8d, dir: DIR.RIGHT };
   assert.equal(linkPushingBlock(block, link, DIR.RIGHT), true);
 });

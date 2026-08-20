@@ -14,6 +14,7 @@ import {
   SPIN_LAPS,
   SPIN_TURN_FRAMES,
   createDeathSequence,
+  coopDeathSpinDone,
   deathRenderState,
   deathSequenceActive,
   stepDeathSequence,
@@ -114,6 +115,14 @@ test('GAME OVER shows after the hold and lasts $60 frames', () => {
 
   const toDone = framesUntilPhase(state, DEATH_PHASE.DONE);
   assert.equal(toDone, OVER_FRAMES);
+});
+
+test('co-op regroups when the spin ends, not at GAME OVER', () => {
+  const state = createDeathSequence();
+  assert.equal(coopDeathSpinDone(state), false);
+  framesUntilPhase(state, DEATH_PHASE.FADE);
+  assert.equal(coopDeathSpinDone(state), true);
+  assert.equal(state.phase, DEATH_PHASE.FADE);
 });
 
 test('the sequence reports finished exactly once, then goes inert', () => {

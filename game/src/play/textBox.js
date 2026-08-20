@@ -9,6 +9,7 @@ import {
   isLastPage,
   openTextBox,
   pageFullyRevealed,
+  pageText,
   stepTextBox,
   visibleText,
 } from '@shared/textBoxModel.js';
@@ -189,12 +190,29 @@ export function createTextBox(deps = {}) {
     return res;
   }
 
+  /**
+   * Show a specific page without advancing the shared crawl — used so each
+   * player can read their own copy of a story beat.
+   * @param {number} pageIndex
+   */
+  function seekPage(pageIndex) {
+    if (!state.active) return;
+    const i = Math.max(0, Math.min(state.pages.length - 1, pageIndex | 0));
+    if (state.pageIndex === i && state.revealed >= pageText(state).length) return;
+    state.pageIndex = i;
+    state.revealed = pageText(state).length;
+    painted = null;
+    paint();
+    paintCue();
+  }
+
   return {
     root,
     open,
     close,
     tick,
     advance,
+    seekPage,
     get active() {
       return state.active;
     },

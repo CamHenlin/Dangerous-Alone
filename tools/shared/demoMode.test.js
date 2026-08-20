@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   CRAWL_FIRST_LINE_Y,
+  CRAWL_ITEM_ABOVE_LINE,
+  LINE_ATTR,
   PHASE,
   STORY_PANEL_HEIGHT,
   STORY_SCROLL_IN_LINES,
@@ -94,6 +96,20 @@ test('crawl rows are emitted at the panel-aware origin', () => {
   const { state, t } = atStory(2);
   runUntil(state, t, (s) => s.lines.length > 0, 200000);
   assert.equal(state.lines[0].y, crawlFirstLineY(2));
+});
+
+test('treasure sprites sit with the crawl, not behind an extra-tall storyboard', () => {
+  const { state, t } = atStory(4);
+  t.lineAttrs[0] = LINE_ATTR.ITEM;
+  t.leftItemIds = [0x08];
+  t.rightItemIds = [0x14];
+  runUntil(state, t, (s) => s.items.length > 0, 200000);
+  const expected = crawlFirstLineY(4) - CRAWL_ITEM_ABOVE_LINE;
+  assert.equal(state.items[0].y, expected);
+  assert.ok(
+    state.items[0].y > panelRestY(3),
+    'the sword would already have scrolled off by the time the labels appear',
+  );
 });
 
 test('a fresh loop starts again from the first panel', () => {
