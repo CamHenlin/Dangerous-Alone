@@ -35,7 +35,12 @@ test('a player holds the very objects it was given', () => {
   assert.equal(p.active, true);
   assert.equal(p.caveExitLatch, false);
   assert.equal(p.caveInteractLatch, false);
+  assert.equal(p.owWarpLatch, false);
+  assert.equal(p.gravePushHold.size, 0);
+  assert.equal(p.undergroundExitType, 0);
   assert.equal(p.raftRide.active, false);
+  assert.equal(p.busy, false);
+  assert.equal(p.personDialogueForRoom, null);
 });
 
 test('activePlayers skips the ones who have not joined', () => {
@@ -59,6 +64,13 @@ test('two players do not share a raft ride', () => {
   const b = hero(1);
   a.raftRide.active = true;
   assert.equal(b.raftRide.active, false, 'boarding must not freeze the ally');
+});
+
+test('two players do not share a grave shove hold', () => {
+  const a = hero(0);
+  const b = hero(1);
+  a.gravePushHold.set('33:5:9', 8);
+  assert.equal(b.gravePushHold.size, 0, 'an idle ally must not zero the leftover shove');
 });
 
 test('an empty roster is not an error', () => {

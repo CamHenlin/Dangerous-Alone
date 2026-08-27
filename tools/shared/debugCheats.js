@@ -37,15 +37,15 @@ export function refillBombs(inv) {
   }
 }
 
-/** NES rupee counter saturates at 255. */
+/** NES rupee counter saturates at 255. Co-op multiplies that by party size. */
 export const MAX_RUPEES = 255;
 
 /**
- * Fill rupees to the NES max.
- * @param {{ rupees: number }} inv
+ * Fill rupees to the current purse ceiling (255 alone, ×N in company).
+ * @param {{ rupees: number, rupeeCap?: number }} inv
  */
 export function refillRupees(inv) {
-  inv.rupees = MAX_RUPEES;
+  inv.rupees = inv.rupeeCap ?? MAX_RUPEES;
 }
 
 /**

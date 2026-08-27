@@ -2,6 +2,7 @@
  * Recorder whirlwind teleport (Z_05 SummonWhirlwind / UpdateWhirlwind).
  */
 
+import { occupyingRoom, roomPlayOrigin } from './continuousCamera.js';
 import { triforceCount } from './inventory.js';
 
 export const WHIRLWIND_TYPE = 0x2e;
@@ -58,12 +59,31 @@ export function nextWhirlwindLevel(triforce, fromLevel = 0) {
 }
 
 /**
+ * Left edge of the cell Link occupies, in the streaming anchor's local X.
+ *
+ * A leftover hero's numbers are anchor-relative. Starting at X=0 (the
+ * anchor's west wall) never overlaps someone standing in leftover `$48`,
+ * so the tornado finished at `$F0` and warped them without picking them
+ * up — and while it flew, `checkCaveEntry` could still fire.
+ * @param {number} anchorRoomId
+ * @param {number} linkX
  * @param {number} linkY
  */
-export function createWhirlwind(linkY) {
+export function whirlwindSpawnX(anchorRoomId, linkX, linkY) {
+  const occ = occupyingRoom(anchorRoomId, linkX, linkY);
+  return roomPlayOrigin(occ.roomId).ox - roomPlayOrigin(anchorRoomId & 0xff).ox;
+}
+
+/**
+ * @param {number} linkY
+ * @param {number} [startX=0] west edge of the cell, in anchor-local X
+ */
+export function createWhirlwind(linkY, startX = 0) {
+  const x = startX | 0;
   return {
-    x: 0,
-    y: linkY & 0xff,
+    x,
+    y: linkY,
+    doneAt: x + 0xf0,
     alive: true,
     carrying: false,
     done: false,
@@ -71,7 +91,7 @@ export function createWhirlwind(linkY) {
 }
 
 /**
- * Move +2 X/frame; pick up Link on overlap; finish at X≥$F0.
+ * Move +2 X/frame; pick up Link on overlap; finish at the cell's `$F0`.
  * @param {object} ww
  * @param {{ x: number, y: number }} link
  */
@@ -86,7 +106,7 @@ export function stepWhirlwind(ww, link) {
     link.x = ww.x;
     link.y = ww.y;
   }
-  if (ww.x >= 0xf0) {
+  if (ww.x >= (ww.doneAt ?? 0xf0)) {
     ww.alive = false;
     ww.done = true;
   }

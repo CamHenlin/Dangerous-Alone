@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import aiTiles as ai  # noqa: E402
 
 SCRATCH = Path(os.environ.get("SCRATCH", "/tmp"))
-GEN = 768                     # divides by 3 exactly, so the centre crop is clean
+GEN = 768                     # divides by 3 exactly, so the center crop is clean
 COND_SCALES = (0.5, 0.8)      # how strictly the silhouette is enforced
 STYLE = ("16-bit SNES action RPG tileset, top-down view, {d}, detailed shading, "
          "soft colour gradients, clean dark outlines, crisp pixel art, no text")
@@ -93,7 +93,7 @@ def main():
         row = [Image.fromarray(base).resize((256, 256), Image.NEAREST)]
 
         cond = boundary_map(ctx, GEN)
-        row.append(ai.crop_centre(cond, ai.CONTEXT).resize((256, 256), Image.NEAREST))
+        row.append(ai.crop_center(cond, ai.CONTEXT).resize((256, 256), Image.NEAREST))
 
         for cs in COND_SCALES:
             key = ai.cache_key(ctx.tobytes(), f"cn|{desc}|{cs}|{GEN}")
@@ -106,7 +106,7 @@ def main():
                     height=GEN, width=GEN,
                     generator=torch.Generator("cpu").manual_seed(ai.SEED),
                 ).images[0]
-                ai.crop_centre(out, ai.CONTEXT).save(cached)
+                ai.crop_center(out, ai.CONTEXT).save(cached)
                 print(f"  {desc} @ conditioning {cs}")
             row.append(Image.open(cached).convert("RGB").resize((256, 256), Image.NEAREST))
         cells.append(row)

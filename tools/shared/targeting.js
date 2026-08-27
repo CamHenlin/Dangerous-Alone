@@ -16,7 +16,7 @@
  * every Goriya faces the seam and piles up on that wall.
  */
 
-import { occupyingRoom } from './continuousCamera.js';
+import { inAnchorPlayArea, localInRoom, occupyingRoom } from './continuousCamera.js';
 
 /**
  * True when `target` is standing in this foe's home room.
@@ -29,7 +29,12 @@ import { occupyingRoom } from './continuousCamera.js';
 export function targetInFoeHome(target, foe, anchorRoomId) {
   if (!target || anchorRoomId == null) return Boolean(target);
   const home = (foe?.homeRoomId ?? anchorRoomId) & 0xff;
-  return occupyingRoom(anchorRoomId, target.x, target.y).roomId === home;
+  if (occupyingRoom(anchorRoomId, target.x, target.y).roomId === home) return true;
+  // Door-lip / HUD rounding can land occupyingRoom on a neighbour while the
+  // sprite is still on this cell's floor. Chase that hero; walking out of the
+  // play rectangle still drops them.
+  const local = localInRoom(anchorRoomId, home, target.x, target.y);
+  return inAnchorPlayArea(local.x, local.y);
 }
 
 /**

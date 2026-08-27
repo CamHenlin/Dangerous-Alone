@@ -111,6 +111,43 @@ test('on returns what the frame returned', () => {
   );
 });
 
+test('nested on restores the outer player', () => {
+  const { live, focus } = harness();
+  const a = player(0, 0x30);
+  const b = player(1, 0x77);
+  live.roomId = 0x30;
+  focus.adopt(a);
+
+  focus.on(a, () => {
+    live.roomId = 0x31;
+    focus.on(b, () => {
+      assert.equal(live.roomId, 0x77);
+      live.roomId = 0x78;
+    });
+    assert.equal(focus.current, a, 'inner save must not steal the outer step');
+    assert.equal(live.roomId, 0x31);
+  });
+  assert.equal(b.world.roomId, 0x78);
+});
+
+test('nested on restores after an async inner frame', async () => {
+  const { live, focus } = harness();
+  const a = player(0, 0x30);
+  const b = player(1, 0x77);
+  live.roomId = 0x30;
+  focus.adopt(a);
+
+  await focus.on(a, async () => {
+    live.roomId = 0x31;
+    await focus.on(b, async () => {
+      live.roomId = 0x78;
+    });
+    assert.equal(focus.current, a);
+    assert.equal(live.roomId, 0x31);
+  });
+  assert.equal(b.world.roomId, 0x78);
+});
+
 test('the first frame of a never-adopted player loads its record', () => {
   const { live, focus } = harness();
   focus.on(player(0, 0x55), () => {

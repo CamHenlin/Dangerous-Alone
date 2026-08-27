@@ -4,13 +4,14 @@ import {
   OW_WALKABLE_REMAP,
   UW_BOUNDS,
   UW_FIRST_UNWALKABLE,
+  boundBlocksDir,
   getMonsterCollidingTile,
   normalizeOwTile,
 } from './collision.js';
 import { standingTile } from './world.js';
 import { cellarKeeseSpawns } from './dungeonCellar.js';
 import { objectTouchesLink } from './objectCollision.js';
-import { rectsOverlap, swordDamage, swordHitbox } from './sword.js';
+import { rectsOverlap, swingMeleeDamage, swordHitbox } from './sword.js';
 import { bombHits } from './bomb.js';
 import {
   FOE_COUNTS_L1,
@@ -126,6 +127,7 @@ import {
   snapGelAfterShove,
   zolGelPaused,
 } from './zolGelAi.js';
+import { beginEnemyShove, stepEnemyShove } from './enemyShove.js';
 
 export {
   QSPEED,
@@ -355,6 +357,8 @@ let nextId = 1;
  * @property {number} [posFrac] NES ObjPosFrac accumulator
  * @property {number} shootTimer
  * @property {number} stunTimer
+ * @property {number} [shoveDir] NES ObjShoveDir
+ * @property {number} [shovePixels] NES ObjShoveDistance
  * @property {number} invulnMask NES ObjInvincibilityMask
  * @property {boolean} [edgePending]
  * @property {number} [leeverPhase]
@@ -464,6 +468,9 @@ export function createEnemy(spawn) {
     gelState: initialGelState(objType),
     gridOffset: 0,
     wantsToShoot: false,
+    /** NES ObjShoveDir / ObjShoveDistance — weapon knockback. */
+    shoveDir: 0,
+    shovePixels: 0,
     jumperState:
       objType === OBJ.BLUE_TEKTITE || objType === OBJ.RED_TEKTITE || objType === OBJ.BOULDER
         ? 0
@@ -637,6 +644,11 @@ export function enemyRect(e) {
   return { x: e.x, y: e.y, w, h };
 }
 
+/**
+ * Clamp + reverse at a box edge. Used by flyers / hoppers (Wizzrobe, Pols Voice,
+ * Keese). Walkers use BoundByRoom + Walker_GetNextAltDir instead — reversing
+ * here is what pinned Darknuts in the north-west corner.
+ */
 function bounce(e, minX, maxX, minY, maxY) {
   if (e.x < minX) {
     e.x = minX;
@@ -976,6 +988,22 @@ export function canEnemyMove(tileGrid, x, y, dir, tileOpts = {}) {
 }
 
 /**
+ * True when this facing is open for Walker_GetNextAltDir: tiles walkable and
+ * BoundByRoom still allows it (Z_07 CheckTiles + CheckBoundary).
+ * @param {number[][] | null | undefined} tileGrid
+ * @param {number} x
+ * @param {number} y
+ * @param {number} dir
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function }} [tileOpts]
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number } | null} [bounds]
+ */
+function dirIsOpen(tileGrid, x, y, dir, tileOpts = {}, bounds = null) {
+  if (!dir) return false;
+  if (bounds && boundBlocksDir(x, y, dir, bounds)) return false;
+  return canEnemyMove(tileGrid, x, y, dir, tileOpts);
+}
+
+/**
  * Walker_GetNextAltDir search when the current facing is blocked.
  * Order matches Z_07.asm: random perpendicular → other perp → reverse → none.
  * Returns 0 when no walkable alternate exists (moving dir cleared; facing kept).
@@ -987,6 +1015,7 @@ export function canEnemyMove(tileGrid, x, y, dir, tileOpts = {}) {
  * @param {number} [salt] fallback entropy when randomByte is omitted
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function }} [tileOpts]
  * @param {(() => number) | null} [randomByte] NES Random,X (bit7 picks first perp)
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number } | null} [bounds]
  */
 export function pickUnblockedDir(
   tileGrid,
@@ -996,6 +1025,7 @@ export function pickUnblockedDir(
   salt = 0,
   tileOpts = {},
   randomByte = null,
+  bounds = null,
 ) {
   const reverse = oppositeDir(currentDir);
   const perpendicular =
@@ -1014,12 +1044,13 @@ export function pickUnblockedDir(
   for (const d of perpendicular) pushUnique(d);
   pushUnique(reverse);
 
-  if (!tileGrid && typeof tileOpts.collidingTile !== 'function') {
+  const hasTiles = Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function';
+  if (!hasTiles && !bounds) {
     return candidates[0] || reverse || 0;
   }
 
   for (const d of candidates) {
-    if (canEnemyMove(tileGrid, x, y, d, tileOpts)) return d;
+    if (dirIsOpen(tileGrid, x, y, d, tileOpts, bounds)) return d;
   }
   return 0;
 }
@@ -1091,7 +1122,7 @@ function atWalkerTileCheck(e) {
  * Try Walker_GetNextAltDir when the current facing is blocked.
  * @returns {boolean} true if a walkable facing was found
  */
-function tryAltDir(e, tileGrid, tileOpts, randomByte) {
+function tryAltDir(e, tileGrid, tileOpts, randomByte, bounds = null) {
   const next = pickUnblockedDir(
     tileGrid,
     e.x,
@@ -1100,11 +1131,61 @@ function tryAltDir(e, tileGrid, tileOpts, randomByte) {
     e.id + e.anim,
     tileOpts,
     randomByte,
+    bounds,
   );
   if (!next) return false;
   e.dir = next;
   e.timer = Math.min(e.timer, 4);
   return true;
+}
+
+/**
+ * Wanderer_TargetPlayer may reface into a BoundByRoom wall (chase is west of
+ * the west lip). NES then TryNextDir next Walker_Move — perpendiculars first,
+ * which bounces them up and down that 16px strip. Prefer the opposite of the
+ * blocked facing (into the room) so they leave the corner.
+ * @returns {boolean} true if facing changed
+ */
+function avoidBlockedWandererDir(e, bounds, tileGrid, tileOpts, randomByte) {
+  if (!walkerDirBlocked(e, bounds, tileGrid, tileOpts)) return false;
+  const reverse = oppositeDir(e.dir);
+  if (dirIsOpen(tileGrid, e.x, e.y, reverse, tileOpts, bounds)) {
+    e.dir = reverse;
+    return true;
+  }
+  return tryAltDir(e, tileGrid, tileOpts, randomByte, bounds);
+}
+
+/**
+ * Seek only a chase still inside this foe's motion box. A point west/north of
+ * BoundByRoom (stale coop coords, HUD, (0,0)) makes Wanderer_TargetPlayer
+ * reface into the wall every square and patrol a 16px strip in that corner.
+ * @param {{ x: number, y: number } | null | undefined} chase
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number } | null | undefined} bounds
+ */
+function chaseInMotionBounds(chase, bounds) {
+  if (!chase) return null;
+  if (!bounds) return chase;
+  if (chase.x < bounds.minX || chase.x >= bounds.maxX) return null;
+  if (chase.y < bounds.minY || chase.y >= bounds.maxY) return null;
+  return chase;
+}
+
+/**
+ * BoundByRoom every frame; tile probes only at ObjGridOffset == 0.
+ * @param {Enemy} e
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ * @param {number[][] | null | undefined} tileGrid
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function }} tileOpts
+ */
+function walkerDirBlocked(e, bounds, tileGrid, tileOpts) {
+  if (!e.dir) return true;
+  if (boundBlocksDir(e.x, e.y, e.dir, bounds)) return true;
+  const checkTiles =
+    (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
+    && atWalkerTileCheck(e)
+    && !enemyIgnoresTiles(e.objType);
+  return checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts);
 }
 
 /**
@@ -1117,21 +1198,18 @@ function tryAltDir(e, tileGrid, tileOpts, randomByte) {
  * @param {(() => number) | null} [randomByte]
  */
 function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}, randomByte = null) {
-  const checkTiles =
-    (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
-    && atWalkerTileCheck(e)
-    && !enemyIgnoresTiles(e.objType);
-  if (checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
-    // Same frame: if an alt facing is open, keep moving (TryNextDir).
-    if (!tryAltDir(e, tileGrid, tileOpts, randomByte)) {
-      bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
-      return;
-    }
+  if (walkerDirBlocked(e, bounds, tileGrid, tileOpts)) {
+    // NES CheckTileCollision returns early when gridOffset <> 0, so a 1px
+    // leftover offset on the lip would freeze forever. BoundByRoom already
+    // ran; allow TryNextDir when that is what blocked this facing.
+    const boundHit = Boolean(bounds) && boundBlocksDir(e.x, e.y, e.dir, bounds);
+    if (!atWalkerTileCheck(e) && !boundHit) return;
+    if (!tryAltDir(e, tileGrid, tileOpts, randomByte, bounds)) return;
+    if (walkerDirBlocked(e, bounds, tileGrid, tileOpts)) return;
   }
   const beforeX = e.x;
   const beforeY = e.y;
   moveDir(e, speed);
-  bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
   if (e.x !== beforeX || e.y !== beforeY) advanceGridOffset(e, speed);
 }
 
@@ -1144,15 +1222,11 @@ function moveAndCollide(e, speed, bounds, tileGrid, tileOpts = {}, randomByte = 
  * @param {(() => number) | null} [randomByte]
  */
 function moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts = {}, randomByte = null) {
-  const checkTiles =
-    (Boolean(tileGrid) || typeof tileOpts.collidingTile === 'function')
-    && atWalkerTileCheck(e)
-    && !enemyIgnoresTiles(e.objType);
-  if (checkTiles && !canEnemyMove(tileGrid, e.x, e.y, e.dir, tileOpts)) {
-    if (!tryAltDir(e, tileGrid, tileOpts, randomByte)) {
-      bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
-      return;
-    }
+  if (walkerDirBlocked(e, bounds, tileGrid, tileOpts)) {
+    const boundHit = Boolean(bounds) && boundBlocksDir(e.x, e.y, e.dir, bounds);
+    if (!atWalkerTileCheck(e) && !boundHit) return;
+    if (!tryAltDir(e, tileGrid, tileOpts, randomByte, bounds)) return;
+    if (walkerDirBlocked(e, bounds, tileGrid, tileOpts)) return;
   }
   // Direction none (blocked) skips MoveObject — do not advance posFrac.
   if (!e.dir) return;
@@ -1161,7 +1235,6 @@ function moveAndCollideQSpeed(e, bounds, tileGrid, tileOpts = {}, randomByte = n
   const beforeX = e.x;
   const beforeY = e.y;
   moveDir(e, speed);
-  bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
   const moved = Math.abs(e.x - beforeX) + Math.abs(e.y - beforeY);
   if (moved > 0) advanceGridOffset(e, moved);
 }
@@ -1270,7 +1343,8 @@ function stepZolOrGel(e, bounds, tileGrid, tileOpts, chase, opts = {}) {
   moveEnemyStep(e, bounds, tileGrid, tileOpts, rnd);
   if (onTileBoundary(e)) {
     truncateWandererGridOffset(e);
-    wandererDecideFacing(e, chase, rnd);
+    wandererDecideFacing(e, chaseInMotionBounds(chase, bounds), rnd);
+    avoidBlockedWandererDir(e, bounds, tileGrid, tileOpts, rnd);
   }
 
   // At a square with timer == 0: roll the next edge delay (ZolGelDelays).
@@ -1306,12 +1380,19 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     e.stunTimer = 0;
   }
 
+  const tileOpts = enemyTileOptsFrom(opts);
+  // Walker_Move / UpdateCommonWanderer: Obj_Shove outranks stun, clock, and AI.
+  if (stepEnemyShove(e, bounds, tileGrid, tileOpts, {
+    skipTiles: enemyIgnoresTiles(e.objType),
+  })) {
+    if (e.stunTimer > 0) e.stunTimer -= 1;
+    return;
+  }
+
   if (e.stunTimer > 0) {
     e.stunTimer -= 1;
     return;
   }
-
-  const tileOpts = enemyTileOptsFrom(opts);
   const chase = opts.chase;
   const link = opts.link ?? chase;
 
@@ -1470,10 +1551,11 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     if (onTileBoundary(e)) {
       truncateWandererGridOffset(e);
       if (isGoriyaStyleFacing(t)) {
-        goriyaDecideFacing(e, chase);
+        goriyaDecideFacing(e, chaseInMotionBounds(chase, bounds));
       } else {
-        wandererDecideFacing(e, chase, rnd);
+        wandererDecideFacing(e, chaseInMotionBounds(chase, bounds), rnd);
       }
+      avoidBlockedWandererDir(e, bounds, tileGrid, tileOpts, rnd);
     }
     return;
   }
@@ -1836,7 +1918,7 @@ export function trySwordHitEnemy(e, sword, linkX, linkY, swordTier, opts = {}) {
   if (darknutFaceBlocks(e, sword.dir ?? 0)) {
     return 'parry';
   }
-  const dmg = swordDamage(swordTier);
+  const dmg = swingMeleeDamage(sword, swordTier);
   e.invuln = 16;
   if (isWormType(e.objType) && opts.enemies) {
     return damageWorm(e, opts.enemies, dmg);
@@ -1853,6 +1935,8 @@ export function trySwordHitEnemy(e, sword, linkX, linkY, swordTier, opts = {}) {
     if (ganonSwordKoToBrown(e)) return true;
     e.alive = false;
     if (isGleeok(e.objType) && opts.enemies) clearGleeokHeads(e.id, opts.enemies);
+  } else {
+    beginEnemyShove(e, sword.dir ?? 0);
   }
   return true;
 }
@@ -1914,6 +1998,7 @@ export function tryArrowHitEnemy(e, arrow, opts = {}) {
   }
   e.hp -= dmg;
   if (e.hp <= 0) e.alive = false;
+  else beginEnemyShove(e, arrow.dir ?? 0);
   return true;
 }
 
@@ -1938,6 +2023,7 @@ export function tryFireHitEnemy(e, flame, opts = {}) {
   }
   e.hp -= FLAME_DAMAGE;
   if (e.hp <= 0) e.alive = false;
+  else beginEnemyShove(e, flame.dir ?? 0);
   return true;
 }
 
@@ -1990,6 +2076,8 @@ export function tryBeamOrRodHitEnemy(e, p, opts = {}) {
     if (ganonSwordKoToBrown(e)) return true;
     e.alive = false;
     if (isGleeok(e.objType) && opts.enemies) clearGleeokHeads(e.id, opts.enemies);
+  } else {
+    beginEnemyShove(e, p.dir ?? 0);
   }
   return true;
 }
@@ -2029,6 +2117,7 @@ export function tryBombHitEnemy(e, bomb, opts = {}) {
   }
   e.hp -= 0x40;
   if (e.hp <= 0) e.alive = false;
+  else beginEnemyShove(e, bomb.dir ?? 0);
   return true;
 }
 

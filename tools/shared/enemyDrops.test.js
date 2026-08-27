@@ -19,8 +19,17 @@ import {
   resetDropStreak,
   resolveDroppedItem,
   stepDroppedItemLifetime,
+  stepFairy,
   tryCreateDropFromKill,
 } from './enemyDrops.js';
+import { DIR } from './collision.js';
+import { FAIRY_SCREEN_BOUNDS_OW } from './enemyBounds.js';
+import {
+  FAIRY_FLYING_MAX_SPEED_FRAC,
+  FAIRY_INIT_SPEED,
+  FLYER_STATE,
+  flyerSpeedToPxPerFrame,
+} from './flyerMove.js';
 import { createInventory } from './inventory.js';
 
 test('drop CHR matches Anim_ItemFrameTiles', () => {
@@ -199,4 +208,38 @@ test('Link standing on a rupee still collects it from the right foot', () => {
   assert.equal(dropTouchesTaker(item, 0x80 - 12, 0x8d, 'link'), true);
   assert.equal(dropTouchesTaker(item, 0x80 - 12, 0x8d, 'sword'), false);
   assert.equal(dropTouchesTaker(item, 0x80 - 16, 0x8d, 'link'), false);
+});
+
+test('SetUpFairyObject stamps ROM flyer speed, not whole pixels', () => {
+  const item = createDroppedItem(0x80, 0x8d, DROP_ITEM.FAIRY);
+  stepFairy(item, FAIRY_SCREEN_BOUNDS_OW);
+  assert.equal(item.flyerSpeed, FAIRY_INIT_SPEED + 1);
+  assert.equal(item.flyingMaxSpeedFrac, FAIRY_FLYING_MAX_SPEED_FRAC);
+  assert.equal(item.dir, DIR.UP);
+  assert.equal(item.flyerState, FLYER_STATE.SPEED_UP);
+});
+
+test('a dropped fairy never chases and stays inside BoundFlyer', () => {
+  const item = createDroppedItem(0x80, 0x8d, DROP_ITEM.FAIRY);
+  const start = { x: item.x, y: item.y };
+  for (let i = 0; i < 400; i += 1) {
+    stepDroppedItemLifetime(item, i);
+    stepFairy(item, FAIRY_SCREEN_BOUNDS_OW);
+  }
+  assert.ok(item.flyerState === FLYER_STATE.WANDER || item.flyerState === FLYER_STATE.DECIDE
+    || item.flyerState === FLYER_STATE.SPEED_UP);
+  assert.notEqual(item.flyerState, FLYER_STATE.CHASE);
+  assert.ok(item.flyerSpeed <= FAIRY_FLYING_MAX_SPEED_FRAC);
+  assert.ok(item.x >= FAIRY_SCREEN_BOUNDS_OW.minX);
+  assert.ok(item.x <= FAIRY_SCREEN_BOUNDS_OW.maxX);
+  assert.ok(item.y >= FAIRY_SCREEN_BOUNDS_OW.minY);
+  assert.ok(item.y <= FAIRY_SCREEN_BOUNDS_OW.maxY);
+  const travel = Math.abs(item.x - start.x) + Math.abs(item.y - start.y);
+  // Old 1–2 px/frame movers covered hundreds of pixels and sat on the lip.
+  // ROM max $A0 is 0.625 px/f; with wander turns they should not bolt off-screen.
+  assert.ok(travel < 280, `expected subdued wander, got manhattan=${travel}`);
+});
+
+test('fairy cruise speed matches FlyingMaxSpeedFrac $A0', () => {
+  assert.equal(flyerSpeedToPxPerFrame(FAIRY_FLYING_MAX_SPEED_FRAC), 0.625);
 });

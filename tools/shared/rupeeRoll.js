@@ -34,7 +34,9 @@ export function resetRupeeRoll(roll, value) {
  * @returns {{ changed: boolean, playTune: boolean }}
  */
 export function stepRupeeRoll(roll, target) {
-  const goal = Math.max(0, Math.min(0xff, target | 0));
+  // The ROM's counter is a byte. Co-op multiplies the purse by who is sitting
+  // down (255 × N), so the roll has to chase the real total, not $FF.
+  const goal = Math.max(0, target | 0);
   if (roll.shown === goal) {
     roll.frame = 0;
     return { changed: false, playTune: false };

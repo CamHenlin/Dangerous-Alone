@@ -57,6 +57,14 @@ test('refillRupees fills to NES max', () => {
   assert.equal(inv.rupees, MAX_RUPEES);
 });
 
+test('refillRupees fills to the party cap when the purse is larger', () => {
+  const inv = createInventory();
+  inv.rupeeCap = 510;
+  inv.rupees = 3;
+  refillRupees(inv);
+  assert.equal(inv.rupees, 510);
+});
+
 test('killLink zeros hearts and marks dead', () => {
   const inv = createInventory();
   inv.halfHearts = 6;

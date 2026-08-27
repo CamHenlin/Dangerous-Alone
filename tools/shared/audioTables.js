@@ -102,7 +102,7 @@ export function decodeDpcm(bytes, initialDac = 0) {
 }
 
 /**
- * Convert 7-bit DAC levels to normalized float PCM centred on zero.
+ * Convert 7-bit DAC levels to normalized float PCM centered on zero.
  * @param {Uint8Array} dac
  * @returns {Float32Array}
  */

@@ -35,11 +35,12 @@ export const TRIFORCE_PHASE = Object.freeze({
  * @property {number} timer
  * @property {boolean} whiteFlash palette is currently the white row
  * @property {{ hearts: number, partial: number, containers: number } | null} nes
+ * @property {number} playerIndex whose hearts World_FillHearts tops up
  */
 
 /** @returns {TriforceCeremony} */
 export function createTriforceCeremony() {
-  return { phase: TRIFORCE_PHASE.IDLE, timer: 0, whiteFlash: false, nes: null };
+  return { phase: TRIFORCE_PHASE.IDLE, timer: 0, whiteFlash: false, nes: null, playerIndex: 0 };
 }
 
 /**
@@ -52,12 +53,14 @@ export function triforceCeremonyActive(c) {
 /**
  * Begin the ceremony on triforce pickup.
  * @param {TriforceCeremony} c
+ * @param {number} [playerIndex] the finder — fill their hearts, not seat 0's
  */
-export function startTriforceCeremony(c) {
+export function startTriforceCeremony(c, playerIndex = 0) {
   c.phase = TRIFORCE_PHASE.FANFARE;
   c.timer = TRIFORCE_FANFARE_FRAMES;
   c.whiteFlash = false;
   c.nes = null;
+  c.playerIndex = playerIndex | 0;
 }
 
 /**

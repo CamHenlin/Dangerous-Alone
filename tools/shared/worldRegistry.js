@@ -94,9 +94,15 @@ export const WORLD_STATE_KEYS = Object.freeze([
   'statueState',
   'ladderObj',
   'roomItem',
+  // Leftover cells keep their own floor item when the streaming anchor moves.
+  'roomItems',
   // Where things have been put and what has been streamed in.
   'spawnedRooms',
   'spawnClaims',
+  // Room-clear latch is per cell: leftover `$35` must not inherit `$45`'s.
+  'secretLatchRooms',
+  // In-flight shutter slides. L1 `$73` must not finish L4's door rumble.
+  'shutterAnims',
   'pushBlock',
   'pushBlocks',
   'floorTiles',
@@ -160,8 +166,13 @@ export function createWorld({
     statueState: null,
     ladderObj: null,
     roomItem: null,
+    // Leftover cells keep their own floor item (L1 `$35` heart) when the
+    // streaming anchor moves. `roomItem` stays the current-anchor alias.
+    roomItems: new Map(),
     spawnedRooms: new Set(),
     spawnClaims: new Set(),
+    secretLatchRooms: new Set(),
+    shutterAnims: new Map(),
     pushBlock: null,
     pushBlocks: new Map(),
     floorTiles: null,

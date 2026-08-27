@@ -4,12 +4,16 @@
  * Solo is the ROM: the continue menu, three hearts, the dungeon door. Co-op
  * is the phase-23 read of that: a potion in the shared bag is drunk for
  * whoever just dropped, and if someone is still standing you regroup on
- * them rather than opening a game-over that the living did not earn.
+ * them — but only when you already share a place. A dungeon death with
+ * the living on the overworld (or in another level) continues at that
+ * labyrinth's door, the way the ROM would, rather than yanking you out.
  */
 
+import { occupyingRoom } from './continuousCamera.js';
 import { CONTINUE_HALF_HEARTS } from './continueMenu.js';
 import { drinkPotion } from './inventory.js';
 import { activePlayers } from './player.js';
+import { cancelSword } from './sword.js';
 import { dungeonWorldId, isCellarWorldId, parseCellarWorldId } from './worldRegistry.js';
 
 /**
@@ -62,6 +66,19 @@ export function deathOutcome(players, dead) {
 }
 
 /**
+ * Tune1 `$80` (`link_dying`) silences the song before it plays. A wipe
+ * still wants that — the continue sequence owns the speakers. A co-op
+ * spin with someone still standing must not, or the living player's
+ * track is cut and `syncSessionMusic` restarts it from the top.
+ *
+ * @param {readonly object[]} players
+ * @param {object} dead
+ */
+export function coopDeathPlaysDyingTune(players, dead) {
+  return deathOutcome(players, dead) !== 'respawn';
+}
+
+/**
  * The ally a downed hero should stand next to: the lowest-numbered living
  * player, not counting themselves.
  * @param {readonly object[]} players
@@ -72,17 +89,45 @@ export function respawnAlly(players, dead) {
 }
 
 /**
- * Follow the living into a cave or labyrinth. A cellar is a hard cut
- * inside a level, not a streamed neighbour: dying upstairs must not
- * dump you on their ladder. ROM continue from a dungeon death is the
- * entrance.
+ * Labyrinth number for a dungeon or cellar world, or null.
+ * @param {string | null | undefined} id
+ * @returns {number | null}
+ */
+export function dungeonLevelOfWorldId(id) {
+  const cellar = parseCellarWorldId(id);
+  if (cellar) return cellar.level;
+  const m = /^dungeon:(\d+)$/.exec(String(id ?? ''));
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Same place for a co-op regroup: one world, or the same labyrinth
+ * (a cellar is still that level, just a hard cut of it).
+ *
+ * @param {object | null | undefined} dead
+ * @param {object | null | undefined} ally
+ */
+export function sameRespawnArea(dead, ally) {
+  if (!dead?.world || !ally?.world) return false;
+  if (dead.world === ally.world) return true;
+  if (dead.world.id === ally.world.id) return true;
+  const deadLevel = dungeonLevelOfWorldId(dead.world.id);
+  const allyLevel = dungeonLevelOfWorldId(ally.world.id);
+  return deadLevel != null && deadLevel === allyLevel;
+}
+
+/**
+ * Follow the living only when you already share a place. A cellar is a
+ * hard cut inside a level, not a streamed neighbour: dying upstairs must
+ * not dump you on their ladder.
  *
  * @param {object} dead
  * @param {object | null} ally
  */
 export function shouldFollowAllyWorld(dead, ally) {
   if (!dead || !ally?.world) return false;
-  if (dead.world === ally.world) return false;
+  if (!sameRespawnArea(dead, ally)) return false;
+  if (dead.world === ally.world || dead.world?.id === ally.world.id) return false;
   if (isCellarWorldId(ally.world.id) && !isCellarWorldId(dead.world?.id)) {
     return false;
   }
@@ -90,12 +135,58 @@ export function shouldFollowAllyWorld(dead, ally) {
 }
 
 /**
+ * Died in a labyrinth the living are not standing in — continue at that
+ * level's door rather than teleporting to them.
+ *
+ * @param {object} dead
+ * @param {object | null} ally
+ */
+export function shouldRestartInOwnDungeon(dead, ally) {
+  if (dungeonLevelOfWorldId(dead?.world?.id) == null) return false;
+  return !sameRespawnArea(dead, ally);
+}
+
+/**
  * Labyrinth to stand in when the living are in a cellar you were not.
  * @param {object | null} ally
  */
 export function labyrinthForCellarAlly(ally) {
-  const parsed = parseCellarWorldId(ally?.world?.id);
-  return parsed ? dungeonWorldId(parsed.level) : null;
+  return labyrinthWorldIdFor(ally?.world);
+}
+
+/**
+ * Top-down map for this dungeon or cellar world.
+ * @param {object | null | undefined} world
+ */
+export function labyrinthWorldIdFor(world) {
+  const level = dungeonLevelOfWorldId(world?.id);
+  return level != null ? dungeonWorldId(level) : null;
+}
+
+/**
+ * Three hearts, on their feet, where they already are.
+ * @param {object} dead
+ */
+export function standUpAfterDeath(dead) {
+  const inv = dead.inv;
+  if (inv) {
+    inv.dead = false;
+    inv.halfHearts = Math.min(CONTINUE_HALF_HEARTS, inv.maxHalfHearts ?? CONTINUE_HALF_HEARTS);
+    inv.invuln = 48;
+    inv.shovePixels = 0;
+    inv.shoveDir = 0;
+    inv.itemLiftTimer = 0;
+  }
+  // Caves never run stepCombat. A swing still armed when you drop (or when
+  // you are dumped into an ally's cave) never finishes, and stepCave will
+  // not walk while the blade is out.
+  if (dead.sword) cancelSword(dead.sword);
+  if (dead.link) {
+    dead.link.posFrac = 0;
+    dead.link.gridOffset = 0;
+    dead.link.moving = false;
+  }
+  return dead;
 }
 
 /**
@@ -104,12 +195,7 @@ export function labyrinthForCellarAlly(ally) {
  * @param {object} ally
  */
 export function respawnBeside(dead, ally) {
-  const inv = dead.inv;
-  inv.dead = false;
-  inv.halfHearts = Math.min(CONTINUE_HALF_HEARTS, inv.maxHalfHearts ?? CONTINUE_HALF_HEARTS);
-  inv.invuln = 48;
-  inv.shovePixels = 0;
-  inv.shoveDir = 0;
+  standUpAfterDeath(dead);
   if (ally?.link && dead.link) {
     dead.link.x = ally.link.x;
     dead.link.y = ally.link.y;
@@ -123,6 +209,26 @@ export function respawnBeside(dead, ally) {
   dead.uwOccRoomId = ally?.uwOccRoomId ?? null;
   dead.uwDoorwayBlockSide = ally?.uwDoorwayBlockSide ?? null;
   return dead;
+}
+
+/**
+ * Streaming-anchor room a co-op regroup should move to, or null when the
+ * ally is already in that cell.
+ *
+ * Copying x,y onto a leftover ally leaves both heroes past `canClaimAnchorCross`.
+ * Nobody can then rebase, the east neighbour of their cell never streams, and
+ * look-ahead into a missing grid is solid — "can't walk off the right of this
+ * leftover screen".
+ *
+ * @param {number} anchorRoomId
+ * @param {object | null | undefined} ally
+ * @returns {number | null}
+ */
+export function regroupAnchorRoomId(anchorRoomId, ally) {
+  if (!ally?.link || anchorRoomId == null) return null;
+  const occ = occupyingRoom(anchorRoomId, ally.link.x, ally.link.y).roomId & 0xff;
+  if (occ === (anchorRoomId & 0xff)) return null;
+  return occ;
 }
 
 /**

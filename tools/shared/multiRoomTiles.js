@@ -9,9 +9,9 @@ import {
   OW_FIRST_UNWALKABLE,
   OW_WALKABLE_REMAP,
   UW_FIRST_UNWALKABLE,
+  collisionSamplePoints,
   combineVerticalCollidingTiles,
   normalizeOwTile,
-  objectHotspotOffset,
   tileAtPlayPixel,
 } from './collision.js';
 import { PLAY_H, PLAY_W, roomPlayOrigin } from './continuousCamera.js';
@@ -65,29 +65,19 @@ export function getObjectCollidingTileMulti(
     opts.walkableRemap
     ?? (firstUnwalkable === UW_FIRST_UNWALKABLE ? [] : OW_WALKABLE_REMAP);
   const solidFallback = opts.solidFallback ?? firstUnwalkable;
-  const offset = objectHotspotOffset(dir, isLink);
-  let sampleY = objY + LINK_HOTSPOT_Y;
-  let sampleX = objX;
-
-  const vertical = Boolean(dir & (DIR.UP | DIR.DOWN));
-  const horizontal = Boolean(dir & (DIR.LEFT | DIR.RIGHT));
-
-  // Continuous mode: always apply the NES hotspot offset. The single-screen
-  // `sampleY < $DD` guard would freeze look-ahead once Y crosses into a
-  // southern neighbor's anchor-relative coordinates.
-  if (vertical || horizontal) {
-    sampleY = vertical ? sampleY + offset : sampleY;
-    sampleX = horizontal ? sampleX + offset : sampleX;
-  }
-
-  sampleX = Math.floor(sampleX / 8) * 8;
+  const points = collisionSamplePoints(objX, objY, dir, { isLink, continuous: true });
   const origin = roomPlayOrigin(anchorRoomId);
-  const worldX = origin.ox + sampleX;
-  const worldPlayY = origin.oy + (sampleY - HUD_HEIGHT);
+  const worldX = origin.ox + points[0].x;
+  const worldPlayY = origin.oy + (points[0].y - HUD_HEIGHT);
   let tile = tileAtWorld(grids, worldX, worldPlayY, solidFallback);
 
-  if (vertical) {
-    const tile2 = tileAtWorld(grids, worldX + 8, worldPlayY, solidFallback);
+  if (points[1]) {
+    const tile2 = tileAtWorld(
+      grids,
+      origin.ox + points[1].x,
+      origin.oy + (points[1].y - HUD_HEIGHT),
+      solidFallback,
+    );
     tile = combineVerticalCollidingTiles(tile, tile2);
   }
 

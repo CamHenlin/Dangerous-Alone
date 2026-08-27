@@ -102,7 +102,7 @@ export const CRAWL_ITEM_ABOVE_LINE = 40;
 /** `DemoLineAttrs` bits (`Z_02.asm:377`). */
 export const LINE_ATTR = Object.freeze({ TEXT: 0x80, ATTRS: 0x40, ITEM: 0x20 });
 
-/** `DemoItemColumnX1` / `DemoItemColumnX2`, plus the two centring special cases. */
+/** `DemoItemColumnX1` / `DemoItemColumnX2`, plus the two centering special cases. */
 export const ITEM_COLUMN_X = Object.freeze({ left: 0x44, right: 0xac, link: 0x68, triforce: 0x78 });
 /** `DemoLeftItemIds` entries `>= $30` are the Link / paper tableau, not items. */
 export const FINAL_ITEM_ID_BASE = 0x30;
@@ -280,18 +280,18 @@ function spawnCrawlItems(state, slot, tables) {
     return;
   }
   const rightId = tables.rightItemIds[row];
-  const centred = leftId === TRIFORCE_ITEM_ID;
+  const centered = leftId === TRIFORCE_ITEM_ID;
   state.items.push({
     slot,
     y,
-    x: centred ? ITEM_COLUMN_X.triforce : ITEM_COLUMN_X.left,
+    x: centered ? ITEM_COLUMN_X.triforce : ITEM_COLUMN_X.left,
     itemId: leftId,
   });
   if (rightId != null) {
     state.items.push({
       slot,
       y,
-      x: centred ? ITEM_COLUMN_X.triforce : ITEM_COLUMN_X.right,
+      x: centered ? ITEM_COLUMN_X.triforce : ITEM_COLUMN_X.right,
       itemId: rightId,
     });
   }

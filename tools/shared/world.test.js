@@ -168,6 +168,27 @@ test('Level 1 mouth enters when Y is off the NES $?D walk grid', () => {
   }
 });
 
+test('Level 1 leftover warp uses that screen\'s cave id, not the start cave', () => {
+  // Occupying $37 with the start screen still the stream anchor must not
+  // treat the dungeon mouth as cave $10. Callers pass the occupying pack.
+  const startPath = path.join(ROOT, 'assets', 'extracted', 'play', 'screens', '77.json');
+  const l1Path = path.join(ROOT, 'assets', 'extracted', 'play', 'screens', '37.json');
+  if (!fs.existsSync(startPath) || !fs.existsSync(l1Path)) return;
+  const start = JSON.parse(fs.readFileSync(startPath, 'utf8'));
+  const l1 = JSON.parse(fs.readFileSync(l1Path, 'utf8'));
+  const link = createLinkState(0x70, 0x80, DIR.UP);
+  assert.equal(start.attrs.caveId, 0x10);
+  assert.deepEqual(
+    checkCaveEntry(link, l1.tileGrid, start.attrs, 0x37),
+    { kind: 'cave', id: 0x10 },
+    'the start screen\'s caveId would open the sword cave from leftover $37',
+  );
+  assert.deepEqual(
+    checkCaveEntry(link, l1.tileGrid, l1.attrs, 0x37),
+    { kind: 'level', id: 1 },
+  );
+});
+
 test('Level 1 overworld exit spawn', () => {
   const spawn = overworldExitSpawn({ exitX: 7, exitY: 3 });
   assert.equal(spawn.x, 0x70);

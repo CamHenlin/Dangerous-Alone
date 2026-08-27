@@ -35,6 +35,7 @@ import {
   isFluteSecretRoom,
   nextWhirlwindLevel,
   stepWhirlwind,
+  whirlwindSpawnX,
 } from './whirlwind.js';
 
 test('moldorm expands to two 5-segment chains (InitMoldorm)', () => {
@@ -81,6 +82,23 @@ test('whirlwind carries link and finishes at $F0', () => {
   assert.equal(ww.done, true);
   assert.equal(ww.carrying, true);
   assert.ok(link.x >= 0xf0 - 2);
+});
+
+test('whirlwind spawn X is the leftover cell\'s west wall', () => {
+  assert.equal(whirlwindSpawnX(0x47, 0x80, 0x8d), 0);
+  assert.equal(whirlwindSpawnX(0x47, 0x80 + 256, 0x8d), 256);
+});
+
+test('a leftover whirlwind still catches Link and finishes in that cell', () => {
+  const startX = 256;
+  const ww = createWhirlwind(0x8d, startX);
+  const link = { x: startX + 0x80, y: 0x8d };
+  assert.equal(ww.x, startX);
+  assert.equal(ww.doneAt, startX + 0xf0);
+  while (ww.alive) stepWhirlwind(ww, link);
+  assert.equal(ww.done, true);
+  assert.equal(ww.carrying, true);
+  assert.ok(link.x >= startX + 0xf0 - 2);
 });
 
 test('candle flame moves then stands and damages', () => {

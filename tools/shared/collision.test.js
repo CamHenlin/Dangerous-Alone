@@ -7,6 +7,7 @@ import {
   getLinkCollidingTile,
   getMonsterCollidingTile,
   hitsUwBound,
+  boundBlocksDir,
   isOwTileWalkable,
   isOwWarpTile,
   normalizeOwTile,
@@ -21,13 +22,22 @@ test('OW ground $26 is walkable; rock $D8 is not', () => {
   assert.equal(isOwTileWalkable(0x89), false);
 });
 
-test('vertical look-ahead prefers a warp tile beside ornament solids', () => {
+test('vertical look-ahead prefers a cave mouth beside ornament solids', () => {
   assert.equal(isOwWarpTile(0x24), true);
   assert.equal(combineVerticalCollidingTiles(0xa5, 0x24), 0x24);
   assert.equal(combineVerticalCollidingTiles(0x24, 0xa1), 0x24);
-  // No warp: still NES max-id.
+  // No cave mouth: still NES max-id.
   assert.equal(combineVerticalCollidingTiles(0x26, 0xa5), 0xa5);
   assert.equal(combineVerticalCollidingTiles(0xa5, 0x26), 0xa5);
+});
+
+test('stairs next to a rock or block keep NES max-id', () => {
+  // Preferring $70 as a warp used to let vertical walks clip through the
+  // neighboring solid — the "funny" collision around a pushed grave / $B0.
+  assert.equal(combineVerticalCollidingTiles(0xd8, 0x70), 0xd8);
+  assert.equal(combineVerticalCollidingTiles(0x70, 0xd8), 0xd8);
+  assert.equal(combineVerticalCollidingTiles(0xb0, 0x70), 0xb0);
+  assert.equal(combineVerticalCollidingTiles(0x70, 0xb0), 0xb0);
 });
 
 test('cave-mouth columns stay walkable from either side of the mouth', () => {
@@ -94,6 +104,17 @@ test('UW BoundByRoom edges match ObjectRoomBoundsUW compare sense', () => {
   assert.equal(hitsUwBound(0x78, 0x5e, DIR.UP), false);
   assert.equal(hitsUwBound(0x78, 0x5d, DIR.UP), true);
   assert.equal(hitsUwBound(0x78, 0xbd, DIR.DOWN), true);
+});
+
+test('boundBlocksDir matches BoundDirection* compare sense', () => {
+  const box = { minX: 0x21, maxX: 0xd0, minY: 0x5e, maxY: 0xbd };
+  assert.equal(boundBlocksDir(0x20, 0x5d, DIR.LEFT, box), true);
+  assert.equal(boundBlocksDir(0x20, 0x5d, DIR.UP, box), true);
+  assert.equal(boundBlocksDir(0x20, 0x5d, DIR.RIGHT, box), false);
+  assert.equal(boundBlocksDir(0x20, 0x5d, DIR.DOWN, box), false);
+  assert.equal(boundBlocksDir(0x21, 0x5e, DIR.LEFT, box), false);
+  assert.equal(boundBlocksDir(0xd0, 0x8d, DIR.RIGHT, box), true);
+  assert.equal(boundBlocksDir(0xcf, 0x8d, DIR.RIGHT, box), false);
 });
 
 test('UW left look-ahead samples ObjX−8 (not an extra tile early)', () => {

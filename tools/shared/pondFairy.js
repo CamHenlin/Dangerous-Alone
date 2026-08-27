@@ -152,6 +152,7 @@ export function ensurePondFairyRuntime(e) {
   e.fillingHearts = 0;
   e.nesHearts = null;
   e.pondHearts = createPondOrbitHearts();
+  e.pondVisitor = /** @type {number | null} */ (null);
   return e;
 }
 
@@ -204,24 +205,24 @@ function rotateHeartLocation(h) {
   const ang = h.angleWhole & 0x1f;
   const sine = PATRA_SINES[ang & 0x0f];
   const { lo: xLo, hi: xHi } = shiftMultiply(QSPEED, sine, 6);
-  if ((ang & 0x18) >= 0x10) {
+    if ((ang & 0x18) >= 0x10) {
     let f = (h.xFrac & 0xff) - xLo;
-    let x = (h.x & 0xff) - xHi;
+    let x = h.x - xHi;
     if (f < 0) {
       f &= 0xff;
       x -= 1;
     }
     h.xFrac = f;
-    h.x = x & 0xff;
+    h.x = x;
   } else {
     let f = (h.xFrac & 0xff) + xLo;
-    let x = (h.x & 0xff) + xHi;
+    let x = h.x + xHi;
     if (f > 0xff) {
       f &= 0xff;
       x += 1;
     }
     h.xFrac = f;
-    h.x = x & 0xff;
+    h.x = x;
   }
 
   const cosIdx = (ang + 8) & 0x0f;
@@ -230,22 +231,22 @@ function rotateHeartLocation(h) {
   const yQuad = (ang - 8) & 0x1f;
   if ((yQuad & 0x18) >= 0x10) {
     let f = (h.yFrac & 0xff) - yLo;
-    let y = (h.y & 0xff) - yHi;
+    let y = h.y - yHi;
     if (f < 0) {
       f &= 0xff;
       y -= 1;
     }
     h.yFrac = f;
-    h.y = y & 0xff;
+    h.y = y;
   } else {
     let f = (h.yFrac & 0xff) + yLo;
-    let y = (h.y & 0xff) + yHi;
+    let y = h.y + yHi;
     if (f > 0xff) {
       f &= 0xff;
       y += 1;
     }
     h.yFrac = f;
-    h.y = y & 0xff;
+    h.y = y;
   }
 }
 
@@ -273,8 +274,10 @@ export function stepPondOrbitHearts(fairy) {
       h.angleFrac = 0;
       h.xFrac = 0;
       h.yFrac = 0;
-      h.x = fairy.x & 0xff;
-      h.y = ((fairy.y & 0xff) - POND_HEART_RADIUS) & 0xff;
+      // World coords, not 8-bit room-local: masking parked the ring on
+      // every camera's (0x78, $7D) and it looked like it orbited every hero.
+      h.x = fairy.x;
+      h.y = fairy.y - POND_HEART_RADIUS;
     }
 
     decreaseHeartAngle(h);
@@ -292,6 +295,42 @@ export function visiblePondHearts(fairy) {
 }
 
 /**
+ * True while UpdatePondFairy is drawing the ring.
+ * @param {import('./enemies.js').Enemy | null | undefined} fairy
+ */
+export function pondFairyOrbiting(fairy) {
+  const state = fairy?.pondState ?? 0;
+  return state === 1 || state === 2;
+}
+
+/**
+ * ObjState $40: the visitor is halted and must not take hits. An ally in
+ * the same world keeps fighting — knocking the visitor off Y=$AD used to
+ * leave the orbit hearts stranded on screen.
+ * @param {import('./enemies.js').Enemy | null | undefined} fairy
+ * @param {number | null | undefined} playerIndex
+ */
+export function pondFairyProtectsVisitor(fairy, playerIndex) {
+  if (!pondFairyOrbiting(fairy)) return false;
+  if (playerIndex == null) return true;
+  return (fairy.pondVisitor ?? 0) === (playerIndex | 0);
+}
+
+/**
+ * Foes in the fountain room freeze for the ceremony so they cannot walk
+ * into the visitor. An ally fighting elsewhere in Hyrule is unaffected —
+ * a world-wide clock freeze would stall their screen too.
+ * @param {import('./enemies.js').Enemy | null | undefined} fairy
+ * @param {import('./enemies.js').Enemy | null | undefined} enemy
+ */
+export function pondFairyFreezesEnemy(fairy, enemy) {
+  if (!pondFairyOrbiting(fairy) || !enemy) return false;
+  if (enemy.objType === POND_FAIRY) return false;
+  if (fairy.homeRoomId == null) return false;
+  return ((enemy.homeRoomId ?? fairy.homeRoomId) & 0xff) === (fairy.homeRoomId & 0xff);
+}
+
+/**
  * @typedef {object} PondFairyStepResult
  * @property {boolean} haltLink
  * @property {boolean} playHeartTune
@@ -304,7 +343,7 @@ export function visiblePondHearts(fairy) {
  * @param {import('./enemies.js').Enemy} e
  * @param {{ halfHearts?: number, maxHalfHearts?: number, swordBlocked?: number }} inv
  * @param {{ x: number, y: number }} link
- * @param {{ roomId?: number | null }} [opts]
+ * @param {{ roomId?: number | null, playerIndex?: number }} [opts]
  * @returns {PondFairyStepResult}
  */
 export function stepPondFairy(e, inv, link, opts = {}) {
@@ -327,12 +366,26 @@ export function stepPondFairy(e, inv, link, opts = {}) {
     return out;
   }
 
+  const playerIndex = opts.playerIndex;
   if (e.pondState === 0) {
     if (!linkAtPondEdge(link)) return out;
     e.pondState = 1;
+    e.pondVisitor = playerIndex ?? 0;
     e.fillingHearts = 0x40;
     e.nesHearts = nesHeartsFromInv(inv);
     // Fall through — World_FillHearts runs same frame after the flag is set.
+  } else if (
+    playerIndex != null
+    && e.pondVisitor != null
+    && playerIndex !== e.pondVisitor
+  ) {
+    // An ally in the same world must not be filled, halted, or used to hide
+    // the ring — but they also must not steal the visitor's step.
+    if (pondFairyOrbiting(e)) {
+      out.showOrbitHearts = true;
+      out.hearts = visiblePondHearts(e);
+    }
+    return out;
   }
 
   if (e.fillingHearts && e.nesHearts) {

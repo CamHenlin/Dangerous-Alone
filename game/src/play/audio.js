@@ -31,6 +31,8 @@ const ENVELOPE_FRAMES = 33;
 const TUNE1_DUTY = 0x86;
 const SONG_VOICES = ['sq1', 'sq2', 'triangle', 'noise'];
 const DISPOSE_KEY = '__zeldaAudioDispose';
+/** SampleRequest bits for the three boss roars (`boss_roar_1/2/3`). */
+const BOSS_ROAR_SAMPLE_BITS = new Set([0x10, 0x20, 0x40]);
 
 /**
  * @typedef {object} AudioApi
@@ -46,6 +48,7 @@ const DISPOSE_KEY = '__zeldaAudioDispose';
  * @property {(v: number) => void} setVolume
  * @property {() => number} getVolume
  * @property {() => string | null} currentMusic
+ * @property {() => number} currentMusicGen
  */
 
 /**
@@ -555,10 +558,19 @@ export function createAudio(pack) {
       if (mixer.effect === 0x20) return;
       mixer = { ...mixer, effect: 0x20 };
     }
+    // Adjacent-room boss rumble is the same: DriveSample every UW frame
+    // while LevelBlock bits 5–6 are set. DMC is one shot, so ignore the
+    // request until the slot is free rather than stacking PCM.
+    const roarClaim = sfx.kind === 'sample' && BOSS_ROAR_SAMPLE_BITS.has(sfx.bit);
+    if (roarClaim) {
+      if (mixer.sample !== 0) return;
+      mixer = { ...mixer, sample: sfx.bit };
+    }
     const gen = sfxGen;
     void unlock().then(() => {
       if (gen !== sfxGen) {
         if (seaClaim && mixer.effect === 0x20) mixer = { ...mixer, effect: 0 };
+        if (roarClaim && mixer.sample === sfx.bit) mixer = { ...mixer, sample: 0 };
         return;
       }
       const c = ensureSfxCtx();
@@ -680,6 +692,9 @@ export function createAudio(pack) {
     },
     currentMusic() {
       return musicName;
+    },
+    currentMusicGen() {
+      return musicGen;
     },
   };
 }

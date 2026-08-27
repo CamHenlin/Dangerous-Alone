@@ -183,6 +183,25 @@ export function bossRoarSfx(objType) {
 }
 
 /**
+ * Adjacent-room rumble from LevelBlock floor-item bits 5–6 (`bossNoise`).
+ * Same three DMC slots as `bossRoarSfx`; 0 is silence.
+ * @param {number | null | undefined} noiseType
+ * @returns {string | null}
+ */
+export function bossNoiseSfx(noiseType) {
+  switch (noiseType & 0x03) {
+    case 1:
+      return 'boss_roar_1';
+    case 2:
+      return 'boss_roar_2';
+    case 3:
+      return 'boss_roar_3';
+    default:
+      return null;
+  }
+}
+
+/**
  * Arrow damage vs bosses (Ganon final blow wants silver = tier 2).
  * @param {number} objType
  * @param {number} arrowTier 1 wood, 2 silver

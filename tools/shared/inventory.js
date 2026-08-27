@@ -143,10 +143,10 @@ export function trySpendArrowShot(inv) {
 }
 
 /**
- * Cycle B selection among owned items.
+ * B items this bag can put on the slot, in cycle order.
  * @param {ReturnType<typeof createInventory>} inv
  */
-export function cycleBItem(inv) {
+export function ownedBItems(inv) {
   const owned = [];
   if (inv.bombs > 0 || inv.selectedB === B_ITEM.BOMB) owned.push(B_ITEM.BOMB);
   if (inv.boomerang > 0 || inv.magicBoomerang > 0) owned.push(B_ITEM.BOOMERANG);
@@ -160,12 +160,20 @@ export function cycleBItem(inv) {
   if (inv.flute > 0) owned.push(B_ITEM.FLUTE);
   if (inv.rod > 0) owned.push(B_ITEM.ROD);
   if (inv.bow > 0 && inv.arrow > 0) owned.push(B_ITEM.BOW);
-  if (owned.length === 0) {
+  if (inv.bombs > 0 && !owned.includes(B_ITEM.BOMB)) owned.unshift(B_ITEM.BOMB);
+  return [...new Set(owned)];
+}
+
+/**
+ * Cycle B selection among owned items.
+ * @param {ReturnType<typeof createInventory>} inv
+ */
+export function cycleBItem(inv) {
+  const uniq = ownedBItems(inv);
+  if (uniq.length === 0) {
     inv.selectedB = B_ITEM.NONE;
     return inv.selectedB;
   }
-  if (inv.bombs > 0 && !owned.includes(B_ITEM.BOMB)) owned.unshift(B_ITEM.BOMB);
-  const uniq = [...new Set(owned)];
   const idx = Math.max(0, uniq.indexOf(inv.selectedB));
   inv.selectedB = uniq[(idx + 1) % uniq.length];
   return inv.selectedB;

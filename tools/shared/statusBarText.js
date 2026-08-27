@@ -8,11 +8,14 @@
  */
 
 /**
- * @param {number} value 0–255
- * @returns {string} exactly 3 characters (space-padded)
+ * @param {number} value
+ * @param {number} [max=255] NES field saturates at 255; a 3-glyph co-op
+ *   counter passes 999 so 510 still prints as "510"
+ * @returns {string} exactly 3 characters (space-padded) unless `max` ≥ 1000
  */
-export function formatStatusCount(value) {
-  const v = Math.max(0, Math.min(255, value | 0));
+export function formatStatusCount(value, max = 255) {
+  const cap = Math.max(0, max | 0);
+  const v = Math.max(0, Math.min(cap, value | 0));
   const ones = v % 10;
   const tens = Math.floor(v / 10) % 10;
   const hundreds = Math.floor(v / 100);

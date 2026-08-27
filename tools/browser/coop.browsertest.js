@@ -2,8 +2,9 @@
  * Two-player play tests for the world-split cases the goldens do not cover.
  *
  * Caves, file Continue (not F9), join/leave inside a labyrinth, independent
- * B slots, story beats that hold everyone, leftover-room death, and the
- * ending folding split-screen back to one NES frame.
+ * B slots, story beats that hold everyone, leftover-room death, the ending
+ * folding split-screen back to one NES frame, and one player's words never
+ * painting in another player's quadrant.
  *
  * Run with `npm run test:browser`.
  */
@@ -21,6 +22,8 @@ const SHOP_CAVE = 0x1d;
 const TAKE_ANY_CAVE = 0x11;
 /** Magical sword under a gravestone — three-page old-man speech. */
 const GRAVE_SWORD_CAVE = 0x13;
+/** Wooden sword cave `$10` on the start screen. */
+const SWORD_CAVE = 0x10;
 /** L4 `$01` is dark. */
 const L4_DARK_ROOM = 0x01;
 
@@ -131,6 +134,48 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test('player two can walk into a labyrinth while player one is in a cave', async () => {
+    // Shared caveLatch used to swallow leftover $37's stairs after player
+    // one walked into the sword cave, and the mouth used the start screen's
+    // caveId so it opened the wrong interior.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(10);
+    await ignoreHits(game);
+
+    const PLAY_H = 176;
+    await pose(game, 1, 0x70, 0x8d - 4 * PLAY_H, 0x08);
+    await game.step(20);
+    assert.equal((await hero(game, 1)).world, 'overworld');
+    assert.equal((await hero(game, 1)).linkRoom, 0x37, 'player two must occupy leftover $37');
+
+    await pose(game, 0, 0x40, 0x50, 0x08);
+    await game.press(['ArrowUp'], 24);
+    const inCave = await hero(game, 0);
+    assert.equal(
+      inCave.world,
+      `cave:${SWORD_CAVE}`,
+      `player one should be in the sword cave (world=${inCave.world})`,
+    );
+
+    await pose(game, 1, 0x70, 0x80 - 4 * PLAY_H, 0x08);
+    await game.step(30);
+    const after = await game.state();
+    assert.equal(
+      after.heroes[1].world,
+      'dungeon:1',
+      `player two froze on the overworld mouth (world=${after.heroes[1].world})`,
+    );
+    assert.equal(after.heroes[0].world, `cave:${SWORD_CAVE}`);
+    assert.equal(after.talking, 0, 'dungeon intro stole the cave reader');
+    assert.equal(after.story?.holding, true, 'labyrinth entry should have opened for player two');
+    assert.equal(after.story?.finished?.[0], true, 'player one in the cave is not a story reader');
+    await pose(game, 0, 0x78, 0xb0, 0x08);
+    const y = (await hero(game, 0)).y;
+    await game.press(['ArrowUp'], 20);
+    assert.ok((await hero(game, 0)).y < y, 'player one froze for player two\'s dungeon intro');
+    await game.close();
+  });
+
   test('leaving a cave does not black out the ally still inside', async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await game.step(5);
@@ -146,11 +191,101 @@ describe('coop play', { concurrency: false }, () => {
     const after = await game.state();
     assert.equal(after.heroes[1].world, 'overworld');
     assert.equal(after.heroes[0].world, `cave:${SHOP_CAVE}`);
+    assert.equal(after.dialogue, true, 'player two leaving closed the shopkeeper');
+    assert.equal(after.talking, 0, 'player one is still the reader');
 
     await game.press(['ArrowUp'], 20);
     const walked = await hero(game, 0);
     assert.ok(walked.y < y, 'player one could not walk in the cave');
     assert.equal(walked.world, `cave:${SHOP_CAVE}`);
+    await game.close();
+  });
+
+  test("a dungeon intro does not replace the ally's cave speech", async () => {
+    // One shared box used to close the sword cave's old man when player two
+    // walked out, then paint labyrinth-entry pages into the cave quadrant.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    await game.step(2);
+    assert.equal((await game.state()).talking, 0);
+    assert.equal((await game.state()).dialogue, true, 'the old man should have spoken');
+
+    await game.openCave(SWORD_CAVE, 1);
+    await game.leaveCave(1);
+    const left = await game.state();
+    assert.equal(left.heroes[1].world, 'overworld');
+    assert.equal(left.heroes[0].world, `cave:${SWORD_CAVE}`);
+    assert.equal(left.dialogue, true, 'player two leaving closed the old man');
+    assert.equal(left.talking, 0);
+
+    await game.enterLevel(1, 1);
+    await game.step(2);
+    const split = await game.state();
+    assert.equal(split.heroes[1].world, 'dungeon:1');
+    assert.equal(split.talking, 0, 'dungeon intro stole the cave reader');
+    assert.equal(split.story?.holding, true);
+    assert.equal(split.story?.finished?.[0], true, 'the cave visitor is not a story reader');
+    await pose(game, 0, 0x78, 0xb0, 0x08);
+    const yCave = (await hero(game, 0)).y;
+    await game.press(['ArrowUp'], 20);
+    assert.ok((await hero(game, 0)).y < yCave, 'the cave visitor froze for the dungeon intro');
+
+    await mashStory(game, 1);
+    const afterStory = await game.state();
+    assert.equal(afterStory.talking, 0);
+    assert.equal(afterStory.dialogue, true, 'finishing the dungeon intro closed the old man');
+    await game.close();
+  });
+
+  test('player two\'s old man speaks while player one is still reading the cave', async () => {
+    // One shared box used to swallow the labyrinth NPC: player one's sword
+    // cave kept textBox.active, so tryOpenPersonDialogue returned before
+    // player two's old man in $41 could talk.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    await game.step(2);
+    assert.equal((await game.state()).heroes[0].dialogue, true, 'the cave old man should have spoken');
+
+    await game.enterLevel(1, 1);
+    await mashStory(game, 1);
+    await ignoreHits(game);
+    await game.goRoom(0x41, 0x08, 1);
+    await pose(game, 1, 0x78, 0x8d, 0x08);
+    await game.step(8);
+
+    const st = await game.state();
+    assert.equal(st.heroes[0].world, `cave:${SWORD_CAVE}`);
+    assert.equal(st.heroes[0].dialogue, true, 'the cave speech must keep crawling');
+    assert.equal(st.heroes[1].world, 'dungeon:1');
+    assert.equal(st.heroes[1].linkRoom, 0x41, 'player two must be in the old-man cell');
+    assert.equal(st.heroes[1].dialogue, true, 'the labyrinth old man should have spoken');
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    assert.ok(views[0].dialogueText.length > 0, 'player one must still see the cave speech');
+    assert.ok(views[1].dialogueText.length > 0, 'player two must see the old man');
+    assert.notEqual(
+      views[0].dialogueText,
+      views[1].dialogueText,
+      'player one painted player two\'s old-man line',
+    );
+    await game.close();
+  });
+
+  test('player two entering a labyrinth does not restart player one\'s overworld song', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(10);
+    await ignoreHits(game);
+    assert.equal((await game.state()).music, 'overworld');
+
+    await game.enterLevel(1, 1);
+    await game.step(5);
+    const st = await game.state();
+    assert.equal(st.heroes[0].world, 'overworld');
+    assert.equal(st.heroes[1].world, 'dungeon:1');
+    assert.equal(st.music, 'overworld', 'an ally underground must not cut the overworld playlist');
     await game.close();
   });
 
@@ -323,6 +458,33 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test('each quadrant shows that reader\'s page of a briefing, not the ally\'s', async () => {
+    // One shared storyBox seeked after the last view used to paint player
+    // two's later page into player one's quadrant.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await pose(game, 0, 0x70, 0x8d, 0x08);
+    await pose(game, 1, 0x80, 0x8d, 0x08);
+    await game.page.evaluate(() => window.zeldaDebug.briefing(1));
+    await game.step(2);
+    await game.press([KEYS[0].a], 4);
+    await game.press([KEYS[1].a], 4);
+    await game.press([KEYS[1].a], 4);
+    await game.step(2);
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    assert.equal(views[0].dialogueKind, 'briefing');
+    assert.equal(views[1].dialogueKind, 'briefing');
+    assert.ok(views[0].dialogueText.length > 0, 'player one should still be on the first page');
+    assert.ok(views[1].dialogueText.length > 0, 'player two should have turned a page');
+    assert.notEqual(
+      views[0].dialogueText,
+      views[1].dialogueText,
+      'player one painted player two\'s briefing page',
+    );
+    await game.close();
+  });
+
   test('a candle outside does not spend the blue use in a dark cell', async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await game.step(10);
@@ -381,6 +543,106 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test('dying onto a leftover ally rebases the overworld so they can keep walking east', async () => {
+    // Player two lives in leftover $78 while player one holds $77. Copying
+    // x,y on death used to leave both past the seam lip, so nobody could
+    // claim the stream and $79 never loaded — look-ahead into a missing
+    // grid is solid, which pins them on the right of $78.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.returnToOverworld(0x77, { x: 0x40, y: 0x8d, dir: 0x01 }, 0);
+    await pose(game, 0, 0x40, 0x8d, 0x01, 0x77);
+    await pose(game, 1, 0xe0, 0x8d, 0x01, 0x78);
+    await game.step(4);
+    const split = await game.state();
+    assert.equal(split.heroes[0].linkRoom, 0x77);
+    assert.equal(split.heroes[1].linkRoom, 0x78);
+    assert.equal(split.heroes[0].worldRoomId, 0x77, 'player one still holds the stream');
+
+    await game.page.evaluate(() => window.zeldaDebug.kill(0));
+    const after = await waitUntilAlive(game, 0);
+    assert.equal(after.deadMenu, false, 'someone is still standing');
+    assert.equal(after.heroes[0].linkRoom, 0x78);
+    assert.equal(after.heroes[1].linkRoom, 0x78);
+    assert.equal(
+      after.heroes[1].worldRoomId,
+      0x78,
+      'regroup must make $78 the stream so the east seam is real',
+    );
+
+    const x = after.heroes[1].localX;
+    await game.press(['KeyL'], 90);
+    const walked = await hero(game, 1);
+    assert.ok(
+      walked.linkRoom === 0x79 || walked.localX > x + 8,
+      `player two stayed stuck in $${walked.linkRoom.toString(16)} `
+        + `x=$${walked.localX.toString(16)}`,
+    );
+    await game.close();
+  });
+
+  test('dying in a dungeon restarts there when the ally is on the overworld', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await pose(game, 0, 0x78, 0xdd, 0x04);
+    await pose(game, 1, 0x40, 0x8d, 0x08);
+    await game.press(['ArrowDown'], 20);
+    await game.step(10);
+    const split = await game.state();
+    assert.equal(split.heroes[0].world, 'overworld', 'player one should be outside');
+    assert.equal(split.heroes[1].world, 'dungeon:1');
+
+    await game.goRoom(0x74, 0x01, 1);
+    assert.equal((await hero(game, 1)).linkRoom, 0x74);
+
+    await game.page.evaluate(() => window.zeldaDebug.kill(1));
+    const after = await waitUntilAlive(game, 1);
+    assert.equal(after.deadMenu, false, 'someone is still standing');
+    assert.equal(after.heroes[0].world, 'overworld', 'player one must stay on the map');
+    assert.equal(after.heroes[1].world, 'dungeon:1');
+    assert.equal(after.heroes[1].dead, false);
+    assert.equal(after.heroes[1].halfHearts, 6, 'three hearts, as continue does');
+    assert.equal(after.heroes[1].linkRoom, 0x73, 'ROM continue is the labyrinth door');
+    await game.close();
+  });
+
+  test('a dungeon foe does not follow a death regroup into a cave', async () => {
+    // P2 died on a Stalfos in L1 while P1 was in a cave. They used to
+    // teleport into the cave and leave the sprite on the shared playfield.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    await game.page.evaluate(() => {
+      const p = window.zeldaDebug.state().heroes[1];
+      window.zeldaDebug.plantFoe({ player: 1, objType: 0x2a, x: p.x, y: p.y });
+    });
+    await game.step(2);
+    const planted = await game.page.evaluate(() => window.zeldaDebug.foes(1));
+    assert.ok(
+      planted.some((e) => e.objType === 0x2a),
+      'the Stalfos was never planted in the labyrinth',
+    );
+
+    await game.page.evaluate(() => window.zeldaDebug.kill(1));
+    const after = await waitUntilAlive(game, 1);
+    assert.equal(after.heroes[0].world, `cave:${SWORD_CAVE}`);
+    assert.equal(after.heroes[1].world, 'dungeon:1', 'a dungeon death stays in that labyrinth');
+    assert.equal(after.heroes[1].linkRoom, 0x73, 'ROM continue is the entrance');
+    assert.equal(after.heroes[1].dead, false);
+    const worlds = await game.page.evaluate(() => window.zeldaDebug.worlds());
+    assert.ok(worlds.live.includes('dungeon:1'), 'the labyrinth they died in stayed loaded');
+    const caveFoes = await game.page.evaluate(() => window.zeldaDebug.foes(0));
+    assert.equal(
+      caveFoes.some((e) => e.objType === 0x2a),
+      false,
+      'the Stalfos followed player two into the cave',
+    );
+    await game.close();
+  });
+
   test('the ending folds split-screen back to one NES frame', async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await game.step(5);
@@ -395,6 +657,29 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(st.canvasW, 256);
     const wide = await game.page.evaluate(() => document.querySelector('canvas')?.width ?? 0);
     assert.ok(wide <= 256, `the canvas should fold to 256, got ${wide}`);
+    await game.close();
+  });
+
+  test('the ending closes leftover cave speech', async () => {
+    // Player two saving Zelda used to keep player one's old-man box on the
+    // shared cinematic frame, so "THE SWORD IS YOURS" sat over the peace line.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    await game.step(2);
+    const before = await game.state();
+    assert.equal(before.heroes[0].dialogue, true, 'the old man should have spoken');
+    assert.equal(before.dialogue, true);
+
+    await game.page.evaluate(() => window.zeldaDebug.ending());
+    await game.step(2);
+    const st = await game.state();
+    assert.equal(st.ending, true);
+    assert.equal(st.cinematic, true);
+    assert.equal(st.dialogue, false, 'cave speech must not sit over the ending');
+    assert.equal(st.heroes[0].dialogue, false);
+    assert.equal(st.heroes[1].dialogue, false);
     await game.close();
   });
 
@@ -450,6 +735,22 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test("a joiner copies player one's B slot", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=1' });
+    await game.step(5);
+    await game.page.evaluate(() => window.zeldaDebug.selectB(0, 'bomb'));
+    const host = await game.state();
+    assert.equal(host.heroes[0].selectedB, 'bomb');
+
+    await game.page.evaluate(() => window.zeldaDebug.join(1));
+    await game.step(2);
+    const joined = await game.state();
+    assert.equal(joined.heroes.filter((h) => h.active).length, 2);
+    assert.equal(joined.heroes[1].selectedB, 'bomb', 'player two sat down with an empty B');
+    assert.equal(joined.heroes[0].selectedB, 'bomb');
+    await game.close();
+  });
+
   test('file continue restores a host who was in a cave', async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await game.step(5);
@@ -482,7 +783,10 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
-  test('a labyrinth-entry beat holds the ally still outside', async () => {
+  test('a labyrinth-entry beat does not land in the ally\'s overworld view', async () => {
+    // Player two walking into L1 used to open the Eagle dossier in every
+    // non-cave quadrant, so player one read "THE AIR CHANGES ON THE FIRST
+    // STAIR" — and the dungeon stub line — while still standing on the beach.
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await game.step(5);
     await ignoreHits(game);
@@ -490,32 +794,41 @@ describe('coop play', { concurrency: false }, () => {
     const parked = await hero(game, 0);
 
     await game.enterLevel(1, 1);
+    await game.step(4);
+    await game.press([KEYS[1].a], 4);
+    await game.press([KEYS[1].a], 4);
     await game.step(2);
     const opened = await game.state();
     assert.equal(opened.dialogue, true, 'the entry speech should have opened');
     assert.equal(opened.story?.holding, true);
     assert.equal(opened.heroes[1].world, 'dungeon:1');
     assert.equal(opened.heroes[0].world, 'overworld');
+    assert.equal(opened.story?.finished?.[0], true, 'player one is not a story reader');
+    assert.equal(opened.story?.finished?.[1], false);
+
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    assert.equal(views[0].dialogueText, '', 'player one painted player two\'s labyrinth speech');
+    assert.equal(views[0].dialogueKind, null);
+    assert.equal(views[0].stubText, '', 'the dungeon stub leaked into the overworld view');
+    assert.match(
+      views[1].dialogueText,
+      /LABYRINTH|EAGLE|STAIR|SHALLOW/,
+      `player two should be reading the Eagle dossier, got ${JSON.stringify(views[1].dialogueText)}`,
+    );
+    assert.equal(views[1].dialogueKind, 'levelEntry');
+    assert.match(views[1].stubText, /^L1/, `dungeon stub missing, got ${JSON.stringify(views[1].stubText)}`);
 
     await game.press(['ArrowRight'], 20);
-    assert.equal((await hero(game, 0)).x, parked.x, 'player one walked during the entry speech');
+    assert.ok((await hero(game, 0)).x > parked.x, 'player one froze for player two\'s entry speech');
 
     await mashStory(game, 1);
-    const mid = await game.state();
-    assert.equal(mid.story?.holding, true, 'the world released before player one finished');
-    assert.equal(mid.story?.finished?.[1], true);
-    assert.equal(mid.story?.finished?.[0], false);
-    await game.press(['ArrowRight'], 20);
-    assert.equal((await hero(game, 0)).x, parked.x, 'player one walked while still the last reader');
-
-    await mashStory(game, 0);
     await game.step(5);
     const done = await game.state();
     assert.equal(done.dialogue, false);
     assert.ok(!done.story?.holding, 'the entry speech should have closed');
     assert.equal(done.heroes[0].world, 'overworld');
     assert.equal(done.heroes[1].world, 'dungeon:1');
-    const x = done.heroes[0].x;
+    const x = (await hero(game, 0)).x;
     await game.press(['ArrowRight'], 20);
     assert.ok((await hero(game, 0)).x > x, 'player one could not walk after the speech');
     await game.close();
@@ -552,6 +865,10 @@ describe('coop play', { concurrency: false }, () => {
     await pose(game, 1, 0x78, 0xb0, 0x08);
     await pose(game, 2, 0x78, 0x8d, 0x08);
     await pose(game, 3, 0x78, 0x8d, 0x08);
+    await game.step(8);
+    // Player four's own box can now open on the cellar bow; one shared panel
+    // used to queue that speech behind the shop and leave them free to walk.
+    await game.dismissDialogue();
     const before = (await game.state()).heroes;
 
     await game.press(['ArrowRight'], 20);
@@ -602,6 +919,41 @@ describe('coop play', { concurrency: false }, () => {
     assert.ok(after.raft, 'the ride should still belong to player one');
     assert.equal(after.raft.owner, 0);
     assert.ok(after.heroes[0].y <= y0, 'player one should still be scrolling on the raft');
+    await game.close();
+  });
+
+  test('player two can raft south from the island while player one is in the sword cave', async () => {
+    // Screenshot: P1 reading the sword-cave box, P2 on `$45`'s south dock.
+    // Taking the raft south froze both — leftover planning used the stream
+    // anchor, and `$55` loads finished as the cave.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    await game.returnToOverworld(0x45, { x: 0x80, y: 0xcd, dir: 0x04 }, 1);
+    await pose(game, 1, 0x80, 0xcd, 0x04);
+    assert.ok((await hero(game, 0)).world?.startsWith('cave:'));
+    assert.equal((await hero(game, 1)).world, 'overworld');
+
+    let boarded = null;
+    for (let i = 0; i < 48 && !boarded; i += 1) {
+      await game.press([KEYS[1].down], 1);
+      const st = await game.state();
+      if (st.heroes[1].rafting) boarded = st;
+    }
+    const last = boarded ?? (await game.state());
+    assert.ok(
+      boarded,
+      `player two should have boarded the raft south (room=$${last.heroes[1].linkRoom?.toString(16)} x=${last.heroes[1].x} y=${last.heroes[1].y} rafting=${last.heroes[1].rafting})`,
+    );
+    const y0 = boarded.heroes[1].y;
+    await game.step(16);
+    const after = await game.state();
+    assert.ok(
+      after.heroes[1].rafting || after.heroes[1].y !== y0,
+      'the southbound ride froze after boarding',
+    );
+    assert.ok((await hero(game, 0)).world?.startsWith('cave:'), 'player one was pulled out of the cave');
     await game.close();
   });
 
@@ -790,6 +1142,150 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test("a leftover fountain ring stays with the fairy, not around player one", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 0x78 + 256, 0xad, 0x04);
+    await game.step(4);
+    const split = (await game.state()).heroes;
+    assert.notEqual(split[1].linkRoom, split[0].linkRoom, 'player two should be in the east screen');
+
+    await game.page.evaluate((home) => {
+      window.zeldaDebug.plantFoe({ player: 1, objType: 0x2f, home, x: 0x78, y: 0x7d });
+    }, split[1].linkRoom);
+    await game.step(8);
+    await game.page.evaluate(() => window.zeldaDebug.present());
+
+    const gfx = await game.page.evaluate(() => window.zeldaDebug.itemGfx());
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    const foes = await game.page.evaluate(() => window.zeldaDebug.foes(1));
+    const fairy = foes.find((e) => e.objType === 0x2f);
+    const ow = gfx.find((g) => g.id === 'overworld');
+    assert.ok(fairy, 'the fountain fairy should still be in player two\'s world');
+    assert.ok(ow?.pondHearts > 0, 'the fountain should have grown orbit hearts');
+    for (const h of ow.pondHeartPos ?? []) {
+      assert.ok(
+        Math.abs(h.x - fairy.x) < 0x40 && Math.abs(h.y - fairy.y) < 0x40,
+        `heart at ${h.x},${h.y} left the fairy at ${fairy.x},${fairy.y}`,
+      );
+    }
+    const p1 = await hero(game, 0);
+    assert.ok(
+      Math.abs((ow.pondHeartPos?.[0]?.x ?? 0) - p1.x) > 0x20
+        || Math.abs((ow.pondHeartPos?.[0]?.y ?? 0) - p1.y) > 0x20,
+      'the ring sat on player one instead of the fairy',
+    );
+    assert.equal(views[0].pondVisible, false, 'player one must not wear the fountain ring');
+    assert.equal(views[1].pondVisible, true, 'player two must see the orbit');
+    await game.close();
+  });
+
+  test('a cave camera does not wear player two\'s fountain ring', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    await pose(game, 1, 0x78 + 256, 0xad, 0x04);
+    await game.step(4);
+    const split = (await game.state()).heroes;
+    assert.ok(split[0].world?.startsWith('cave:'), 'player one should be in the cave');
+
+    await game.page.evaluate((home) => {
+      window.zeldaDebug.plantFoe({ player: 1, objType: 0x2f, home, x: 0x78, y: 0x7d });
+    }, split[1].linkRoom);
+    await game.step(8);
+    await game.page.evaluate(() => window.zeldaDebug.present());
+
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    const gfx = await game.page.evaluate(() => window.zeldaDebug.itemGfx());
+    const cave = gfx.find((g) => String(g.id).startsWith('cave:'));
+    assert.equal(views[0].pondVisible, false, 'the cave camera wore the fountain ring');
+    assert.equal(views[1].pondVisible, true, 'player two must see the orbit');
+    assert.equal(cave?.pondVisible ?? 0, 0, 'cave item sprites must not hold the ring');
+    await game.close();
+  });
+
+  test('a fountain visitor cannot be hit, and only that room freezes', async () => {
+    // Knockback off Y=$AD used to interrupt the heal and leave the orbit
+    // hearts stranded. Halt the visitor and freeze fountain-room foes so an
+    // ally fighting elsewhere is still hittable.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await game.page.evaluate(() => window.zeldaDebug.killScreen());
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 0x78 + 256, 0xad, 0x04);
+    await game.step(4);
+    const split = (await game.state()).heroes;
+    assert.notEqual(split[1].linkRoom, split[0].linkRoom, 'player two should be in the east screen');
+
+    await game.page.evaluate(() => window.zeldaDebug.killScreen());
+    await game.page.evaluate(() => {
+      window.zeldaDebug.setHearts(0, 12, 12);
+      window.zeldaDebug.setHearts(1, 4, 12);
+    });
+    const planted = await game.page.evaluate((rooms) => {
+      const p1 = window.zeldaDebug.state().heroes[0];
+      const p2 = window.zeldaDebug.state().heroes[1];
+      window.zeldaDebug.plantFoe({ player: 1, objType: 0x2f, home: rooms.fountain, x: 0x78, y: 0x7d });
+      const onVisitor = window.zeldaDebug.plantFoe({
+        player: 1,
+        objType: 0x07,
+        home: rooms.fountain,
+        x: p2.x,
+        y: p2.y,
+      });
+      const walker = window.zeldaDebug.plantFoe({
+        player: 1,
+        objType: 0x07,
+        home: rooms.fountain,
+        x: p2.x + 0x28,
+        y: 0x8d,
+      });
+      window.zeldaDebug.plantShot({
+        player: 0,
+        x: p1.x,
+        y: p1.y,
+        kind: 0x53,
+        dir: 0x01,
+        speed: 0,
+      });
+      return { onVisitor, walker };
+    }, { fountain: split[1].linkRoom, ally: split[0].linkRoom });
+
+    const before = await game.state();
+    const p1Before = before.heroes[0].halfHearts;
+
+    await game.step(12);
+    await game.page.evaluate(() => window.zeldaDebug.present());
+
+    const after = await game.state();
+    const foes = await game.page.evaluate(() => window.zeldaDebug.foes(1));
+    const gfx = await game.page.evaluate(() => window.zeldaDebug.itemGfx());
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    const ow = gfx.find((g) => g.id === 'overworld');
+    const walker = foes.find((e) => e.id === planted.walker.id);
+
+    assert.ok(
+      after.heroes[1].halfHearts > 4,
+      'player two should keep filling instead of taking a hit',
+    );
+    assert.equal(
+      after.heroes[1].y & 0xff,
+      0xad,
+      'knockback shoved player two off the pond edge',
+    );
+    assert.equal(walker?.x, planted.walker.x, 'the fountain-room octorok kept walking');
+    assert.ok(ow?.pondHearts > 0, 'the orbit hearts vanished after the hit');
+    assert.equal(views[1].pondVisible, true, 'player two must still see the orbit');
+    assert.ok(
+      after.heroes[0].halfHearts < p1Before,
+      'player one fighting elsewhere must still be hittable',
+    );
+    await game.close();
+  });
+
   test("player two's wood shield parries a rock", async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await game.step(5);
@@ -812,6 +1308,31 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(after.heroes[1].halfHearts, before, 'player two took a rock they were facing');
     const shot = (after.projectiles ?? []).find((p) => p.kind === 0x53);
     assert.ok(shot?.bouncing, 'the rock should have bounced off player two');
+    await game.close();
+  });
+
+  test("player two's wood shield parries an arrow", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await game.page.evaluate(() => window.zeldaDebug.killScreen());
+    await pose(game, 0, 0x30, 0x8d, 0x01);
+    await pose(game, 1, 0xc0, 0x8d, 0x01);
+    const before = (await hero(game, 1)).halfHearts;
+    await game.page.evaluate(() =>
+      window.zeldaDebug.plantShot({
+        player: 1,
+        x: 0xc0,
+        y: 0x8d,
+        kind: 0x5b,
+        dir: 0x02,
+        speed: 0,
+      }),
+    );
+    await game.step(4);
+    const after = await game.state();
+    assert.equal(after.heroes[1].halfHearts, before, 'player two took an arrow they were facing');
+    const shot = (after.projectiles ?? []).find((p) => p.kind === 0x5b);
+    assert.ok(shot?.bouncing, 'the arrow should have bounced off player two');
     await game.close();
   });
 
@@ -962,6 +1483,56 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test('player two can pick up a fresh drop without the NES wait', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await pose(game, 0, 0x30, 0x8d, 0x01);
+    await pose(game, 1, 0xc0, 0x8d, 0x01);
+    await game.page.evaluate(() =>
+      window.zeldaDebug.plantDrop({
+        player: 1,
+        x: 0xc0,
+        y: 0x8d,
+        itemId: 0x0f,
+      }),
+    );
+    const before = (await game.state()).rupees;
+    await game.step(8);
+    assert.ok(
+      (await game.state()).rupees > before,
+      'player two had to wait out the solo pickup delay',
+    );
+    await game.close();
+  });
+
+  test("player two's leftover fairy is not yanked onto player one's screen", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 256 + 0xf0, 0x8d, 0x01);
+    await game.step(2);
+    assert.ok((await hero(game, 1)).x > 255, 'player two should be leftover east');
+    await game.page.evaluate(() => {
+      window.zeldaDebug.setHearts(1, 4, 16);
+      const p = window.zeldaDebug.state().heroes[1];
+      window.zeldaDebug.plantDrop({
+        player: 1,
+        x: p.x,
+        y: p.y,
+        itemId: 0x23,
+        lifetime: 0xee,
+      });
+    });
+    await game.step(8);
+    assert.ok(
+      (await hero(game, 1)).halfHearts > 4,
+      'the leftover fairy flew onto player one\'s camera instead of staying with player two',
+    );
+    await game.close();
+  });
+
   test("player two's ladder stays off player one's screen", async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await splitCellarOverworld(game);
@@ -987,6 +1558,44 @@ describe('coop play', { concurrency: false }, () => {
     const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
     assert.equal(views[1].whirlVisible, true, 'player two must see the whirlwind');
     assert.equal(views[0].whirlVisible, false, 'player one in the cellar must not see the whirlwind');
+    await game.close();
+  });
+
+  test('player two can play the recorder while player one is in a cave', async () => {
+    // Debug kit already owns the triforce. Playing the recorder used the
+    // stream-anchor room (the cave mouth) and then kept stepping cave
+    // warps / seam crosses while the tornado flew, which froze the ticker
+    // when getImageData or enterLevel threw.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.openCave(TAKE_ANY_CAVE, 0);
+    await pose(game, 1, 0x70, 0x8d, 0x01);
+    await game.page.evaluate(() => {
+      window.zeldaDebug.inv.flute = 1;
+      window.zeldaDebug.selectB(1, 'flute');
+    });
+    const before = await game.page.evaluate(() => window.zeldaDebug.probe().frame);
+    await game.press([KEYS[1].b], 2);
+    await game.step(8);
+    assert.equal(game.pageErrors.length, 0, game.pageErrors.join('\n'));
+    const mid = await game.state();
+    assert.equal(mid.heroes[0].world, `cave:${TAKE_ANY_CAVE}`);
+    assert.equal(mid.heroes[1].world, 'overworld', 'the recorder swallowed player two');
+    const y = mid.heroes[0].y;
+    await game.press(['ArrowUp'], 16);
+    assert.notEqual((await hero(game, 0)).y, y, 'player one froze in the cave');
+    await game.step(130);
+    assert.equal(game.pageErrors.length, 0, game.pageErrors.join('\n'));
+    const after = await game.state();
+    assert.equal(after.heroes[0].world, `cave:${TAKE_ANY_CAVE}`);
+    assert.equal(
+      after.heroes[1].world,
+      'dungeon:1',
+      `player two should have ridden the whirlwind (world=${after.heroes[1].world})`,
+    );
+    const later = await game.page.evaluate(() => window.zeldaDebug.probe().frame);
+    assert.ok(later > before + 8, 'the sim stopped advancing');
     await game.close();
   });
 
@@ -1119,6 +1728,35 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(after.heroes[0].halfHearts, before, 'player one took a rock they were facing');
     const shot = (after.projectiles ?? []).find((p) => p.kind === 0x53);
     assert.ok(shot?.bouncing, 'the rock should have bounced off player one');
+    await game.close();
+  });
+
+  test("player two's wood shield still works if they turn onto a rock this frame", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await game.page.evaluate(() => window.zeldaDebug.killScreen());
+    await pose(game, 0, 0x30, 0x8d, 0x01);
+    await pose(game, 1, 0xc0, 0x8d, 0x02);
+    const before = (await hero(game, 1)).halfHearts;
+    await game.page.evaluate(() =>
+      window.zeldaDebug.plantShot({
+        player: 1,
+        x: 0xc0,
+        y: 0x8d,
+        kind: 0x53,
+        dir: 0x02,
+        speed: 0,
+      }),
+    );
+    await game.press([KEYS[1].right], 4);
+    const after = await game.state();
+    assert.equal(
+      after.heroes[1].halfHearts,
+      before,
+      'player two took a rock they turned to face this frame',
+    );
+    const shot = (after.projectiles ?? []).find((p) => p.kind === 0x53);
+    assert.ok(shot?.bouncing, 'the rock should bounce after player two turns into it');
     await game.close();
   });
 
@@ -1277,6 +1915,237 @@ describe('coop play', { concurrency: false }, () => {
     const after = (await game.state()).heroes;
     assert.equal(after[0].halfHearts, before[0], 'player one should not take leftover contact');
     assert.ok(after[1].halfHearts < before[1], 'player two should take a hit from the leftover foe');
+    await game.close();
+  });
+
+  test("player two defeating a leftover boss opens that room's shutter", async () => {
+    // Room-clear used the streaming anchor. Player two killing Aquamentus
+    // in leftover L1 `$35` left the east triforce shutter shut and hid the
+    // heart container.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1], 1);
+    await ignoreHits(game);
+    await game.goRoom(0x45);
+    await pose(game, 0, 0x78, 0x8d, 0x08);
+    await pose(game, 1, 0x78, 0x8d - 176, 0x08);
+    await game.step(4);
+    const posed = await game.state();
+    assert.equal(posed.heroes[0].linkRoom, 0x45, 'player one should hold south $45 as the anchor');
+    assert.equal(posed.heroes[1].linkRoom, 0x35, 'player two must occupy leftover $35');
+    assert.equal(
+      (posed.doors ?? []).includes('53:east'),
+      false,
+      'the east shutter must start shut',
+    );
+
+    await game.page.evaluate(() => {
+      const p = window.zeldaDebug.state().heroes[1];
+      window.zeldaDebug.plantFoe({ player: 1, objType: 0x07, x: p.x, y: p.y, home: 0x35 });
+    });
+    await game.step(2);
+    const blocked = await game.state();
+    const leftoverFoes = await game.page.evaluate(() =>
+      window.zeldaDebug.foes(1).filter((e) => e.home === 0x35),
+    );
+    assert.ok(leftoverFoes.length >= 1, 'the leftover foe was never planted');
+    assert.equal(
+      (blocked.doors ?? []).includes('53:east'),
+      false,
+      'the east shutter opened before the leftover foe died',
+    );
+
+    await game.page.evaluate(() => window.zeldaDebug.killScreen());
+    await game.step(1);
+    const sliding = await game.state();
+    assert.equal(
+      (sliding.doors ?? []).includes('53:east'),
+      false,
+      'the east shutter must stay solid while it slides',
+    );
+    assert.ok(
+      (sliding.shutterAnims ?? []).some(
+        (a) => a.roomId === 0x35 && a.side === 'east' && a.kind === 'open',
+      ),
+      `shutter slide never started (${JSON.stringify(sliding.shutterAnims)})`,
+    );
+
+    await game.step(10);
+    const after = await game.state();
+    assert.ok(
+      after.doors.includes('53:east'),
+      `leftover $35 east shutter stayed shut (open=${(after.doors ?? []).join(',')})`,
+    );
+    assert.equal((after.shutterAnims ?? []).length, 0, 'the slide should have finished');
+    assert.ok(
+      (after.clearedRooms ?? []).includes(0x35),
+      'leftover $35 was not marked cleared',
+    );
+    assert.ok(
+      (after.floorItems ?? []).some((it) => it.roomId === 0x35 && it.type === 0x1a),
+      'the leftover heart container never appeared',
+    );
+    await game.close();
+  });
+
+  test("player two collecting a leftover key flags the room taken", async () => {
+    // Same path as map / compass / bow / heart container: the floor item
+    // belongs to the leftover cell. Taking it used to grant the bag without
+    // hiding the sprite or recording takenItems, so keys kept incrementing.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 0x40 + 256, 0x8d, 0x01);
+    await game.step(4);
+    const posed = await game.state();
+    assert.equal(posed.heroes[0].linkRoom, 0x73, 'player one should hold the $73 anchor');
+    assert.equal(posed.heroes[1].linkRoom, 0x74, 'player two must occupy leftover $74');
+
+    const before = posed.keys;
+    await game.page.evaluate(() => window.zeldaDebug.placeRoomItem(1, 0x19));
+    await game.step(8);
+    const taken = await game.state();
+    assert.equal(taken.keys, before + 1, `keys ${before} → ${taken.keys}`);
+    assert.equal(
+      (taken.heroes[1].floorItems ?? []).some((it) => it.type === 0x19),
+      false,
+      'leftover $74 still shows the key',
+    );
+    assert.ok(
+      (taken.heroes[1].takenRooms ?? []).includes(0x74),
+      `takenRooms=${(taken.heroes[1].takenRooms ?? []).join(',')}`,
+    );
+    await game.step(16);
+    assert.equal((await game.state()).keys, before + 1, 'a second touch granted another key');
+    await game.close();
+  });
+
+  test("player two's dungeon key stays taken while player one is in a cave", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await game.openCave(SWORD_CAVE, 0);
+    // Stay in the entrance — $74's ROM key sits at $C0 and would race the
+    // placed item for takenItems. Left-side tile is empty.
+    await pose(game, 1, 0x40, 0x8d, 0x01);
+
+    const before = (await game.state()).keys;
+    await game.page.evaluate(() => window.zeldaDebug.placeRoomItem(1, 0x19));
+    await game.step(8);
+    const taken = await game.state();
+    assert.equal(taken.heroes[0].world, `cave:${SWORD_CAVE}`);
+    assert.equal(taken.heroes[1].linkRoom, 0x73);
+    assert.equal(taken.keys, before + 1, `keys ${before} → ${taken.keys}`);
+    assert.equal(
+      (taken.heroes[1].floorItems ?? []).some((it) => it.type === 0x19),
+      false,
+      'player two still sees the key from their dungeon world',
+    );
+    assert.ok(
+      (taken.heroes[1].takenRooms ?? []).includes(0x73),
+      `takenRooms=${(taken.heroes[1].takenRooms ?? []).join(',')}`,
+    );
+
+    // Hard-load wipes the live roomItems map. takenItems must hide the
+    // replacement, or walking out and back (or goRoom) respawns the key.
+    await game.goRoom(0x73, 0x08, 1);
+    await pose(game, 1, 0x40, 0x8d, 0x01);
+    await game.step(8);
+    const back = await game.state();
+    assert.equal(back.keys, before + 1, 'reloading $73 granted the key again');
+    assert.equal(
+      (back.heroes[1].floorItems ?? []).some((it) => it.type === 0x19),
+      false,
+      'the floor key came back after a hard room load',
+    );
+    await game.close();
+  });
+
+  test('player two collecting a leftover compass hides it for good', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 0x40 + 256, 0x8d, 0x01);
+    await game.step(4);
+    await game.page.evaluate(() => window.zeldaDebug.placeRoomItem(1, 0x16));
+    await game.step(8);
+    const after = await game.state();
+    assert.equal(
+      (after.heroes[1].floorItems ?? []).some((it) => it.type === 0x16),
+      false,
+      'the leftover compass sprite stayed on the floor',
+    );
+    assert.ok((after.heroes[1].takenRooms ?? []).includes(0x74));
+    await game.step(16);
+    assert.equal(
+      ((await game.state()).heroes[1].floorItems ?? []).some((it) => it.type === 0x16),
+      false,
+      'the compass reappeared under player two',
+    );
+    await game.close();
+  });
+
+  test('player two dying does not restart the song while player one is alive', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(10);
+    const before = await game.state();
+    assert.equal(before.music, 'overworld');
+    const gen = before.musicGen;
+    await game.page.evaluate(() => window.zeldaDebug.kill(1));
+    await game.step(8);
+    const dying = await game.state();
+    assert.equal(dying.heroes[1].dead, true);
+    assert.equal(dying.heroes[1].spinning, true, 'they spin before regrouping');
+    assert.equal(dying.deadMenu, false);
+    assert.equal(dying.music, 'overworld', 'the dying tune cut the song');
+    assert.equal(dying.musicGen, gen, 'the dying tune restarted the song');
+    const after = await waitUntilAlive(game, 1);
+    assert.equal(after.music, 'overworld');
+    assert.equal(after.musicGen, gen, 'respawn restarted the song');
+    await game.close();
+  });
+
+  test('collecting a compass does not restart dungeon music', async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 0xc0, 0x8d, 0x01);
+    await game.step(8);
+    const before = await game.state();
+    assert.equal(before.music, 'underworld');
+    const gen = before.musicGen;
+    await game.page.evaluate(() => window.zeldaDebug.placeRoomItem(1, 0x16));
+    await game.step(8);
+    const after = await game.state();
+    assert.equal(
+      (after.heroes[1].floorItems ?? []).some((it) => it.type === 0x16),
+      false,
+      'player two should have picked up the compass',
+    );
+    assert.equal(after.music, 'underworld', 'the compass cut the dungeon song');
+    assert.equal(after.musicGen, gen, 'the compass restarted the dungeon song');
+    await game.close();
+  });
+
+  test("player two's triforce piece refills player two", async () => {
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await enterLabyrinth(game, [1]);
+    await ignoreHits(game);
+    await pose(game, 0, 0x40, 0x8d, 0x01);
+    await pose(game, 1, 0xc0, 0x8d, 0x01);
+    await game.page.evaluate(() => {
+      window.zeldaDebug.setHearts(0, 3, 6);
+      window.zeldaDebug.setHearts(1, 2, 6);
+    });
+    await game.page.evaluate(() => window.zeldaDebug.placeRoomItem(1, 0x1b));
+    await game.step(8);
+    assert.equal((await hero(game, 1)).halfHearts, 2, 'the shard healed before the ceremony');
+    await game.step(400);
+    const after = await game.state();
+    assert.equal(after.heroes[1].halfHearts, 6, 'player two was not refilled');
+    assert.equal(after.heroes[0].halfHearts, 3, 'player one was filled instead of the finder');
     await game.close();
   });
 });

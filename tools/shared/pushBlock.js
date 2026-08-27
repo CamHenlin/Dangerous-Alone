@@ -1,4 +1,4 @@
-import { DIR } from './collision.js';
+import { DIR, HUD_HEIGHT, LINK_HOTSPOT_Y, collisionSamplePoints } from './collision.js';
 import { SECRET } from './roomSecrets.js';
 
 /** ObjType $68 — must clear room before push (RoomAllDead). */
@@ -256,3 +256,81 @@ export const BLOCK_STAIRS_POS = Object.freeze({ x: 0xd0, y: 0x60 });
 
 /** UW stairs primary metatile (WriteSquareUW expands to $70–$73). */
 export const BLOCK_STAIRS_TILE = 0x70;
+
+/** 16×16 sprite / tile square of a push block. */
+export const PUSH_BLOCK_SIZE = 16;
+
+/**
+ * Write a WriteSquareUW 2×2 into a 22×32 play grid at screen pixels.
+ * @param {number[][]} tileGrid
+ * @param {number} screenX
+ * @param {number} screenY  includes HUD
+ * @param {number} primary
+ */
+export function writeSquareAtPlayGrid(tileGrid, screenX, screenY, primary) {
+  if (!tileGrid?.length) return;
+  const [ul, ll, ur, lr] = pushBlockSquareTiles(primary);
+  const tiles = [
+    [ul, ur],
+    [ll, lr],
+  ];
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 2; col += 1) {
+      const c = Math.floor((screenX + col * 8) / 8);
+      const r = Math.floor((screenY + row * 8 - HUD_HEIGHT) / 8);
+      if (tileGrid[r]) tileGrid[r][c] = tiles[row][col];
+    }
+  }
+}
+
+/**
+ * @param {PushBlock | null | undefined} block
+ * @param {number} x  screen X
+ * @param {number} y  screen Y (includes HUD)
+ */
+export function pointInPushBlock(block, x, y) {
+  if (!block) return false;
+  return (
+    x >= block.x
+    && x < block.x + PUSH_BLOCK_SIZE
+    && y >= block.y
+    && y < block.y + PUSH_BLOCK_SIZE
+  );
+}
+
+/**
+ * While MOVING, home is already floor and dest is not yet $B0. Probe the
+ * sprite the same way tiles are probed so Link cannot walk through it.
+ * @param {PushBlock | null | undefined} block
+ * @param {number} linkX
+ * @param {number} linkY
+ * @param {number} dir
+ */
+export function movingPushBlockBlocksDir(block, linkX, linkY, dir) {
+  if (!block || block.state !== PUSH_STATE.MOVING || !dir) return false;
+  return collisionSamplePoints(linkX, linkY, dir).some((p) => pointInPushBlock(block, p.x, p.y));
+}
+
+/**
+ * @param {PushBlock | null | undefined} block
+ * @param {number} linkX
+ * @param {number} linkY
+ */
+export function standingInMovingPushBlock(block, linkX, linkY) {
+  if (!block || block.state !== PUSH_STATE.MOVING) return false;
+  const x = Math.floor(linkX / 8) * 8;
+  const y = linkY + LINK_HOTSPOT_Y;
+  return pointInPushBlock(block, x, y);
+}
+
+/**
+ * tileOpts overlay so walk / shove / eject all see the sliding sprite.
+ * @param {PushBlock | null | undefined} block
+ */
+export function pushBlockWalkOpts(block) {
+  if (!block || block.state !== PUSH_STATE.MOVING) return {};
+  return {
+    blockedBy: (x, y, dir) => movingPushBlockBlocksDir(block, x, y, dir),
+    standingBlocked: (x, y) => standingInMovingPushBlock(block, x, y),
+  };
+}

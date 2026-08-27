@@ -6,6 +6,8 @@ import {
   BOSS,
   bossHp,
   bossNeedsArrow,
+  bossNoiseSfx,
+  bossRoarSfx,
   enemyUsesUwRoomBounds,
   isBossType,
   isZelda,
@@ -41,6 +43,17 @@ test('boss type helpers', () => {
   assert.equal(enemyUsesUwRoomBounds(BOSS.MANHANDLA), true);
   assert.equal(enemyUsesUwRoomBounds(BOSS.GLEEOK_HEAD), true);
   assert.equal(enemyUsesUwRoomBounds(0x10), false); // red octorok
+});
+
+test('adjacent-room boss noise maps to the same DMC slots as Init', () => {
+  assert.equal(bossNoiseSfx(0), null);
+  assert.equal(bossNoiseSfx(1), 'boss_roar_1');
+  assert.equal(bossNoiseSfx(2), 'boss_roar_2');
+  assert.equal(bossNoiseSfx(3), 'boss_roar_3');
+  assert.equal(bossNoiseSfx(undefined), null);
+  assert.equal(bossRoarSfx(BOSS.AQUAMENTUS), 'boss_roar_1');
+  assert.equal(bossRoarSfx(BOSS.DODONGO), 'boss_roar_2');
+  assert.equal(bossRoarSfx(BOSS.MANHANDLA), 'boss_roar_3');
 });
 
 test('Manhandla stays inside UW BoundByRoom under chase-pad bounds', () => {

@@ -11,6 +11,8 @@ import {
   findPondFairy,
   linkAtPondEdge,
   nesHeartsFromInv,
+  pondFairyFreezesEnemy,
+  pondFairyProtectsVisitor,
   stepPondFairy,
   stepWorldFillHearts,
 } from './pondFairy.js';
@@ -127,6 +129,60 @@ test('orbit hearts appear while halted', () => {
   assert.equal(sawHeart, true);
 });
 
+test('orbit hearts stay around a world-offset fairy', () => {
+  const fairy = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
+  assert.ok(fairy);
+  fairy.x = 0x178;
+  fairy.y = 0x7d + 176;
+  const inv = createInventory();
+  inv.maxHalfHearts = 10;
+  inv.halfHearts = 2;
+  const link = { x: 0x78, y: POND_EDGE_Y };
+
+  let hearts = [];
+  for (let i = 0; i < 40; i += 1) {
+    const r = stepPondFairy(fairy, inv, link);
+    if (r.hearts.length > 0) {
+      hearts = r.hearts;
+      break;
+    }
+  }
+  assert.ok(hearts.length > 0, 'the ring never appeared');
+  for (const h of hearts) {
+    assert.ok(
+      Math.abs(h.x - fairy.x) < 0x40 && Math.abs(h.y - fairy.y) < 0x40,
+      `heart at ${h.x},${h.y} left the fairy at ${fairy.x},${fairy.y}`,
+    );
+    assert.ok(h.x > 0xff, '8-bit wrap parked the ring on the anchor screen');
+  }
+});
+
+test('only the visiting hero is filled and halted', () => {
+  const fairy = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
+  const visitor = createInventory();
+  visitor.maxHalfHearts = 8;
+  visitor.halfHearts = 2;
+  const ally = createInventory();
+  ally.maxHalfHearts = 8;
+  ally.halfHearts = 2;
+  const atPond = { x: 0x78, y: POND_EDGE_Y };
+  const away = { x: 0x30, y: 0x8d };
+
+  const start = stepPondFairy(fairy, visitor, atPond, { playerIndex: 1 });
+  assert.equal(start.haltLink, true);
+  const other = stepPondFairy(fairy, ally, away, { playerIndex: 0 });
+  assert.equal(other.haltLink, false, 'an ally at the fountain must keep walking');
+  assert.equal(ally.halfHearts, 2, 'an ally must not be filled');
+  assert.equal(other.showOrbitHearts, true, 'the ring must stay in the fountain world');
+
+  for (let i = 0; i < 800 && fairy.pondState !== 3; i += 1) {
+    stepPondFairy(fairy, visitor, atPond, { playerIndex: 1 });
+    stepPondFairy(fairy, ally, away, { playerIndex: 0 });
+  }
+  assert.equal(visitor.halfHearts, 8);
+  assert.equal(ally.halfHearts, 2);
+});
+
 test('findPondFairy ignores streamed neighbor fountain rooms', () => {
   const home = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
   const neighbor = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d + 176 });
@@ -136,6 +192,36 @@ test('findPondFairy ignores streamed neighbor fountain rooms', () => {
   assert.equal(findPondFairy([neighbor, home], 0x39), home);
   assert.equal(findPondFairy([neighbor, home], 0x43), neighbor);
   assert.equal(findPondFairy([neighbor], 0x39), null);
+});
+
+test('the visitor is protected and fountain-room foes freeze', () => {
+  const fairy = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
+  assert.ok(fairy);
+  fairy.homeRoomId = 0x39;
+  const inv = createInventory();
+  inv.maxHalfHearts = 8;
+  inv.halfHearts = 2;
+  const link = { x: 0x78, y: POND_EDGE_Y };
+
+  const start = stepPondFairy(fairy, inv, link, { playerIndex: 1, roomId: 0x39 });
+  assert.equal(start.haltLink, true);
+  assert.equal(pondFairyProtectsVisitor(fairy, 1), true);
+  assert.equal(pondFairyProtectsVisitor(fairy, 0), false, 'an ally must still be hittable');
+
+  const lynel = { objType: OBJ.RED_LYNEL, homeRoomId: 0x39 };
+  const far = { objType: OBJ.RED_OCTOROK_SLOW, homeRoomId: 0x77 };
+  assert.equal(pondFairyFreezesEnemy(fairy, lynel), true);
+  assert.equal(pondFairyFreezesEnemy(fairy, far), false, 'a foe on another screen must keep walking');
+  assert.equal(pondFairyFreezesEnemy(fairy, fairy), false, 'the fairy herself is not a frozen foe');
+});
+
+test('no protection or freeze before the ceremony starts', () => {
+  const fairy = createEnemy({ objType: OBJ.POND_FAIRY, x: 0x78, y: 0x7d });
+  assert.ok(fairy);
+  fairy.homeRoomId = 0x39;
+  const lynel = { objType: OBJ.RED_LYNEL, homeRoomId: 0x39 };
+  assert.equal(pondFairyProtectsVisitor(fairy, 0), false);
+  assert.equal(pondFairyFreezesEnemy(fairy, lynel), false);
 });
 
 test('neighbor fairy does not burn when Link walks Y=$AD in another room', () => {

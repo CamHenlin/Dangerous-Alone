@@ -3,7 +3,12 @@
  */
 
 import { DIR } from './collision.js';
+import {
+  BOMB_UPGRADE_STEP,
+  paidBombUpgradeCount,
+} from './bombUpgrade.js';
 import { CONTINUE_HALF_HEARTS } from './continueMenu.js';
+import { SOLO_BOMB_BAG } from './coopEconomy.js';
 import {
   doorSlotKey,
   dungeonNeighbor,
@@ -29,6 +34,8 @@ export const PERSISTED_INV_KEYS = Object.freeze([
   'sword',
   'bombs',
   'maxBombs',
+  /** Unscaled ROM bag. `maxBombs` is this times the party size. */
+  'bombBag',
   'candle',
   'boomerang',
   'magicBoomerang',
@@ -79,6 +86,63 @@ export function slotStorageKey(slot) {
 export function nameUnlocksSecondQuest(name) {
   const padded = String(name ?? '').toUpperCase();
   return padded.slice(0, SECOND_QUEST_NAME.length) === SECOND_QUEST_NAME;
+}
+
+/**
+ * Quest-clear flag written when Zelda is rescued. `0` in play, `1` after
+ * quest 1, `2` after quest 2. Continue uses this so a quit during the
+ * ending still promotes the file (`SwitchProfileToSecondQuest`).
+ * @param {unknown} value
+ */
+export function normalizeQuestCompleted(value) {
+  const n = Number(value) | 0;
+  return n === 1 || n === 2 ? n : 0;
+}
+
+/**
+ * A quest-1 file that already rescued Zelda boots into the second quest,
+ * the same as Start on the ending tableau.
+ *
+ * Newer files store `questCompleted`. Older ones only have the Triforce of
+ * Power and Zelda's cell (or a visit there) because the ending autosaved
+ * before the flag existed.
+ * @param {object | null | undefined} payload
+ */
+export function saveStartsSecondQuest(payload) {
+  if (!payload || payload.inv?.quest === 2) return false;
+  if (normalizeQuestCompleted(payload.questCompleted) === 1) return true;
+  return saveLooksLikeZeldaRescued(payload);
+}
+
+/**
+ * @param {Iterable<unknown> | undefined} list
+ * @param {number} room
+ */
+function roomListHas(list, room) {
+  const id = room & 0xff;
+  return [...(list ?? [])].some((x) => (Number(x) & 0xff) === id);
+}
+
+/**
+ * Pre-flag saves: Ganon is dead and Link was already in (or had entered)
+ * Zelda's cell. Beating Ganon alone is not enough — that walk is still Q1.
+ * @param {object} payload
+ */
+export function saveLooksLikeZeldaRescued(payload) {
+  if (!payload?.inv?.triforceOfPower) return false;
+  const quest = payload.inv.quest === 2 ? 2 : 1;
+  const zeldaRoom = L9_ENCOUNTER[quest].zeldaRoom;
+  const pos = payload.position;
+  if (Number(pos?.dungeon?.level) === 9) {
+    const room = Number(pos.dungeon.roomId ?? pos.roomId) & 0xff;
+    if (room === zeldaRoom) return true;
+  }
+  const dungeons = payload.dungeons;
+  if (!dungeons || typeof dungeons !== 'object') return false;
+  const d9 =
+    dungeons[dungeonProgressKey(quest, 9)] ?? dungeons['9'] ?? dungeons[9];
+  if (!d9) return false;
+  return roomListHas(d9.visited, zeldaRoom) || roomListHas(d9.cleared, zeldaRoom);
 }
 
 /**
@@ -256,6 +320,7 @@ export function serializeGameState(state) {
     /** Phase 22: one-shot story beats already spoken (`item:10`, `level:3`). */
     toldStory: toSortedArray(state.toldStory ?? []),
     dungeons: serializeDungeonProgress(state.dungeonProgress),
+    questCompleted: normalizeQuestCompleted(state.questCompleted),
     /**
      * Everyone who was sitting down. Player one's hearts and pose are
      * also on `inv` / `position`, so a reader that only knows version 1
@@ -351,6 +416,27 @@ export function createSaveStore(storage = globalThis.localStorage) {
 }
 
 /**
+ * Old files stored the already-scaled `maxBombs` and omitted `bombBag`.
+ * Infer the ROM bag from that cap and the seated party, then lift it if
+ * a paid bomb-upgrade room is still in `taken` (the old man stays gone).
+ * @param {object} snap
+ * @param {number} [partySize]
+ * @param {object} [dungeons]
+ */
+export function restoreBombBag(snap, partySize = 1, dungeons = null) {
+  const n = Math.max(1, partySize | 0);
+  let bag = snap?.bombBag;
+  if (bag == null && snap?.maxBombs != null) {
+    bag = Math.round(Number(snap.maxBombs) / n);
+  }
+  if (bag == null || !Number.isFinite(bag) || bag < SOLO_BOMB_BAG) {
+    bag = SOLO_BOMB_BAG;
+  }
+  const paid = paidBombUpgradeCount(dungeons);
+  return Math.max(bag, SOLO_BOMB_BAG + paid * BOMB_UPGRADE_STEP);
+}
+
+/**
  * Apply a loaded payload onto mutable runtime bags.
  * @param {object} payload
  * @param {object} target
@@ -364,6 +450,10 @@ export function createSaveStore(storage = globalThis.localStorage) {
  */
 export function applyLoadedSave(payload, target) {
   applyInventorySnapshot(target.inv, payload.inv);
+  const partySize = Array.isArray(payload.party) && payload.party.length
+    ? payload.party.length
+    : 1;
+  target.inv.bombBag = restoreBombBag(payload.inv, partySize, payload.dungeons);
   target.owSecretsRevealed.clear();
   for (const k of payload.owSecretsRevealed ?? []) target.owSecretsRevealed.add(k);
   target.caveTaken.clear();
@@ -398,6 +488,7 @@ export function applyLoadedSave(payload, target) {
       dungeon: null,
     },
     party: Array.isArray(payload.party) ? payload.party : [],
+    questCompleted: normalizeQuestCompleted(payload.questCompleted),
   };
 }
 

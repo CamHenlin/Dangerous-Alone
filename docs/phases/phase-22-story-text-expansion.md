@@ -179,7 +179,7 @@ to 19 without shortening a single line of story.
 | 2026-08-13 | The box opens during the item-lift pose rather than after it | An open box freezes the world in a labyrinth, so the pose holds under the text instead of racing it |
 | 2026-08-13 | `items.js` has no ROM fallback | The NES says nothing at a pickup, so there is no 1986 line to fall back to — a deleted entry is silence, and that is the honest behaviour |
 | 2026-08-13 | The epilogue is a new phase, not a longer `PeaceText` | `EndingFlashLongTimer` ends the peace submode on a fixed timer; anything past ~70 glyphs types into a screen that has already gone |
-| 2026-08-13 | Epilogue pages are set as a block, not centred line by line | Per-line centring is right for the ROM's one-line boxes and turns a wrapped paragraph into a diamond |
+| 2026-08-13 | Epilogue pages are set as a block, not centered line by line | Per-line centering is right for the ROM's one-line boxes and turns a wrapped paragraph into a diamond |
 | 2026-08-13 | Most person entries live in `byTextId` with a comment naming the labyrinth | Resolving real spawns showed each text belongs to one dungeon; a compound key would be redundant, and redundancy drifts |
 | 2026-08-13 | A queued beat dies with its situation | `closeDialogue()` in place of bare `textBox.close()` — every forced close is a mode change, and a shopkeeper's follow-up has no business opening over the overworld |
 | 2026-08-13 | The missed-treasure audit is held to one page per line | It lands after a dozen pages the player already read and is the part they did not ask for |

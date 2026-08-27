@@ -94,7 +94,7 @@ PROMPT_TEMPLATE = (
     "Keep the same subject, shape and silhouette as the original. "
     "{transparency_note}"
     "The result must fill the entire frame edge to edge with the same layout as "
-    "the input: do not centre the subject, do not shrink it, and do not add any "
+    "the input: do not center the subject, do not shrink it, and do not add any "
     "empty or plain background around it. "
     "Crisp, detailed, pixel art in an SNES style, no blur, no text, no background scenery."
 )
@@ -424,7 +424,7 @@ def tile_to_png(grid, palette16, path, size, transparent_slot0=False):
     Image.fromarray(rgb).resize(wh, Image.NEAREST).save(path)
 
 
-def crop_centre(img, context):
+def crop_center(img, context):
     """Keep only the middle cell of a context grid the model drew."""
     if context <= 1:
         return img
@@ -541,7 +541,7 @@ def shade_from_luminance(img, slot_map, keep_flat=(0,), highpass=HIGHPASS_RADIUS
             .filter(ImageFilter.GaussianBlur(radius=highpass)),
             dtype=np.float32,
         )
-        # Re-centre so the residual still has a meaningful mean per slot.
+        # Re-center so the residual still has a meaningful mean per slot.
         lum = lum - blurred + float(lum.mean())
     shade = np.full(slot_map.shape, BASE_SHADE, dtype=np.uint8)
     for s in range(4):
@@ -794,7 +794,7 @@ def build_prompt(palette16, sheet_id, base, kind="background", description=None)
     context_note = ""
     if CONTEXT > 1:
         # Never call this a grid of tiles. Doing so made FLUX draw the grid —
-        # borders between the nine cells — and since we crop the centre cell,
+        # borders between the nine cells — and since we crop the center cell,
         # every square came back with a line down its edge and the map ended up
         # striped. Describe it as one continuous scene instead.
         context_note = (
@@ -803,7 +803,7 @@ def build_prompt(palette16, sheet_id, base, kind="background", description=None)
             "scale and position, with no borders, frames, seams, panels or dividing "
             "lines anywhere in it. Terrain must flow smoothly across the whole image "
             "without any repeating grid pattern. "
-            # The centre is cut out and laid next to other tiles, so its four
+            # The center is cut out and laid next to other tiles, so its four
             # edges have to be drawable neighbours. Saying so is worth more than
             # it sounds: the model otherwise composes each render as a picture
             # with a natural focal point and quiet edges, and quiet edges are
@@ -1097,9 +1097,9 @@ def main():
                     render_grid, palette16, src, GEN_PX,
                     transparent_slot0=(sheet["kind"] == "sprites"),
                 )
-                # Only the centre cell was ever the subject; the rest was
+                # Only the center cell was ever the subject; the rest was
                 # context so the model could draw the joins.
-                crop_centre(backend.generate(src, GEN_PX, GEN_PX, prompt, SEED),
+                crop_center(backend.generate(src, GEN_PX, GEN_PX, prompt, SEED),
                             CONTEXT).save(cached)
                 done += 1
                 print(f"  [{done}/{len(jobs)}] {sheet['id']} {UNIT} @{base}")

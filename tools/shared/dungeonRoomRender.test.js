@@ -3,10 +3,12 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { composeDoorFrameTiles } from './dungeonRoomLayout.js';
+import { composeDoorFrameTiles, doorFaceIndex, doorFacePlayRect } from './dungeonRoomLayout.js';
 import {
   DOOR_OVERLAY_CLEAR_TILES,
+  renderDoorFaceRgba,
   renderDoorFrameOverlayRgba,
+  renderDungeonRoomRgba,
 } from './dungeonRoomRender.js';
 import { finalizeLevelMeta } from './dungeons.js';
 
@@ -92,4 +94,50 @@ test('renderDoorFrameOverlayRgba: overhead opaque, opening transparent', () => {
   assert.ok(tileGrid[20][15] !== 0, 'south outer wall still occludes');
   assert.equal(alphaAtTile(20, 15), 255);
   assert.ok(DOOR_OVERLAY_CLEAR_TILES.has(0x24));
+});
+
+function dummyUwPaint() {
+  return {
+    paletteSet: {
+      rows: [
+        [0x0f, 0x00, 0x10, 0x30],
+        [0x0f, 0x00, 0x10, 0x30],
+        [0x0f, 0x00, 0x10, 0x30],
+        [0x0f, 0x00, 0x10, 0x30],
+      ],
+    },
+    patternBins: new Map([
+      ['common_background', new Uint8Array(0x400)],
+      ['underworld_bg', new Uint8Array(0x800)],
+      ['common_misc', new Uint8Array(0x100)],
+    ]),
+  };
+}
+
+test('renderDungeonRoomRgba: collision stays shut while the nametable shows the cavity', () => {
+  const room = {
+    roomId: 0x21,
+    doors: {
+      north: { type: 'open', code: 0 },
+      south: { type: 'shutter', code: 7 },
+      west: { type: 'wall', code: 1 },
+      east: { type: 'wall', code: 1 },
+    },
+    squares: Array.from({ length: 14 }, () => Array(24).fill(0)),
+  };
+  const { tileGrid } = renderDungeonRoomRgba(room, {
+    ...dummyUwPaint(),
+    openSides: ['north', 'south'],
+    collisionOpenSides: ['north'],
+  });
+  // Closed shutter face plants $A8/$A9; open face has $24 in the cavity.
+  assert.equal(tileGrid[19][15], 0xa9, 'walk grid keeps the closed shutter');
+});
+
+test('renderDoorFaceRgba crops to the play-area door rect', () => {
+  const rect = doorFacePlayRect('south');
+  const face = renderDoorFaceRgba('south', doorFaceIndex(7, false), dummyUwPaint());
+  assert.equal(face.width, rect.w);
+  assert.equal(face.height, rect.h);
+  assert.equal(face.rgba.length, rect.w * rect.h * 4);
 });

@@ -209,6 +209,9 @@ export function createCaveScene(deps) {
    * @type {(string | null)[] | null}
    */
   let warePriceLabels = null;
+  /** Last ware refresh — palette rebuild has to paint the same shelf. */
+  let lastTaken = /** @type {Set<string> | null} */ (null);
+  let lastInv = /** @type {object | null} */ (null);
 
   /**
    * @param {object} nextCave
@@ -246,6 +249,8 @@ export function createCaveScene(deps) {
    *   Pass to replace labels; omit to keep the previous set.
    */
   function refreshWares(taken, hidden = false, inv = null, priceLabels) {
+    lastTaken = taken;
+    lastInv = inv;
     waresHidden = hidden;
     if (priceLabels !== undefined) warePriceLabels = priceLabels;
     wareLayer.removeChildren().forEach((c) =>
@@ -281,6 +286,30 @@ export function createCaveScene(deps) {
     // fires freeze until you look at them.
     if (!cave) return;
     if (Math.random() < 0.15) paintFires();
+  }
+
+  /**
+   * Drop cached NPC / fire / ware textures before a palette-set destroy.
+   * Entering a labyrinth rebuilds the item cache, and a live cave still
+   * sampling those textures blacks the GL context.
+   */
+  function releaseCachedTextures() {
+    if (npcSprite) npcSprite.texture = Texture.EMPTY;
+    for (const spr of fireSprites) spr.texture = Texture.EMPTY;
+    for (const child of wareLayer.children) {
+      if (child.texture) child.texture = Texture.EMPTY;
+    }
+  }
+
+  function rebuildCachedTextures() {
+    if (!cave) return;
+    paintNpc(cave.dweller);
+    const tex = enemySprites.textureForCaveSprite(CAVE_FIRE_TILE, {
+      mirror: true,
+      spritePal: CAVE_FIRE_PAL,
+    });
+    for (const spr of fireSprites) spr.texture = tex;
+    if (lastTaken) refreshWares(lastTaken, waresHidden, lastInv);
   }
 
   function close() {
@@ -335,5 +364,7 @@ export function createCaveScene(deps) {
     tick,
     close,
     destroy,
+    releaseCachedTextures,
+    rebuildCachedTextures,
   };
 }

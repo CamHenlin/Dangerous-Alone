@@ -20,12 +20,13 @@ import {
   spawnOverworldEnemies,
   stepEnemy,
   OW_ENEMY_BOUNDS,
+  UW_ENEMY_BOUNDS,
   trySwordHitEnemy,
   wallmasterHoldsPlayer,
   wallmasterIsCapturing,
 } from './enemies.js';
 import { SWORD } from './inventory.js';
-import { SWORD_PHASE, createSwordState } from './sword.js';
+import { ROD_MELEE_DAMAGE, SWORD_PHASE, createSwordState, tryStartRod } from './sword.js';
 
 test('red octorok HP is one wood sword ($10)', () => {
   assert.equal(hpForType(OBJ.RED_OCTOROK_SLOW), 0x10);
@@ -62,11 +63,23 @@ test('wood sword kills octorok', () => {
   assert.equal(e.alive, false);
 });
 
+test('rod melee deals $20 even with a wood sword equipped', () => {
+  const e = createEnemy({ objType: OBJ.RED_OCTOROK_SLOW, x: 0x80, y: 0x80 });
+  e.hp = 0x40;
+  const sword = createSwordState();
+  tryStartRod(sword, DIR.RIGHT);
+  sword.phase = SWORD_PHASE.HIT;
+  sword.timer = 3;
+  assert.equal(trySwordHitEnemy(e, sword, 0x80 - 20, 0x80, SWORD.WOOD), true);
+  assert.equal(e.hp, 0x40 - ROD_MELEE_DAMAGE);
+});
+
 test('stepEnemy moves and stays in bounds', () => {
   const e = createEnemy({ objType: OBJ.RED_OCTOROK_SLOW, x: 0x40, y: 0x80 });
   e.dir = DIR.LEFT;
   for (let i = 0; i < 200; i += 1) stepEnemy(e, OW_ENEMY_BOUNDS);
-  assert.ok(e.x >= OW_ENEMY_BOUNDS.minX);
+  // NES BoundByRoom uses `X < min` (not clamp), so one pixel past the lip is legal.
+  assert.ok(e.x >= OW_ENEMY_BOUNDS.minX - 1);
   assert.ok(e.x <= OW_ENEMY_BOUNDS.maxX);
 });
 
@@ -460,4 +473,69 @@ test('darknut refaces after landing on a square, not before the move', () => {
   assert.equal(e.x, 0x81);
   assert.equal(e.gridOffset, 0);
   assert.equal(e.dir, DIR.DOWN);
+});
+
+test('BoundByRoom does not snap a darknut off the UW spawn grid', () => {
+  // NES spawn X=$20 / Y=$5D sits 1px past ObjectRoomBoundsUW. bounce() used
+  // to clamp onto $21,$5E (off-grid) and reverse, pinning the foe in the
+  // north-west corner.
+  const e = createEnemy({ objType: OBJ.BLUE_DARKNUT, x: 0x20, y: 0x5d, dir: DIR.LEFT });
+  e.turnTimer = 0xff;
+  e.gridOffset = 0;
+  e.qSpeedFrac = 0x40;
+  e.posFrac = 0;
+  stepEnemy(e, UW_ENEMY_BOUNDS, null, {
+    chase: { x: 0x90, y: 0x8d },
+    rngByte: () => 0xff,
+  });
+  assert.equal(
+    e.x === 0x21 && e.y === 0x5e,
+    false,
+    `both-axis clamp to $21,$5E (x=${e.x} y=${e.y})`,
+  );
+  assert.ok(e.x === 0x20 || e.y === 0x5d, `moved on both axes from the lip (x=${e.x} y=${e.y})`);
+  assert.ok(e.dir === DIR.DOWN || e.dir === DIR.RIGHT, `dir=${e.dir}`);
+});
+
+test('a darknut at the north-west lip walks out instead of reversing into the corner', () => {
+  const e = createEnemy({ objType: OBJ.BLUE_DARKNUT, x: 0x20, y: 0x5d, dir: DIR.LEFT });
+  const chase = { x: 0x90, y: 0x8d };
+  for (let i = 0; i < 240; i += 1) {
+    stepEnemy(e, UW_ENEMY_BOUNDS, null, { chase, rngByte: () => (i * 17) & 0xff });
+  }
+  const inCorner = e.x <= 0x28 && e.y <= 0x65;
+  assert.equal(inCorner, false, `stuck at ${e.x},${e.y} dir=${e.dir}`);
+});
+
+test('a darknut does not bounce on the west lip when chase is through the wall', () => {
+  // Wanderer_TargetPlayer refaces into BoundByRoom; TryNextDir then only
+  // offers UP/DOWN, so they patrolled a 16px strip in the north-west corner.
+  const e = createEnemy({ objType: OBJ.BLUE_DARKNUT, x: 0x20, y: 0x5d, dir: DIR.LEFT });
+  const chase = { x: 0, y: 0 };
+  for (let i = 0; i < 240; i += 1) {
+    stepEnemy(e, UW_ENEMY_BOUNDS, null, { chase, rngByte: () => 0 });
+  }
+  const inNwPocket = e.x <= 0x30 && e.y <= 0x6d;
+  assert.equal(
+    inNwPocket,
+    false,
+    `NW pocket at ${e.x.toString(16)},${e.y.toString(16)} dir=${e.dir}`,
+  );
+});
+
+test('a darknut can walk the north BoundByRoom lip without being forced down', () => {
+  // bounce() used to see Y=$5D < minY=$5E after every step and rewrite facing
+  // to DOWN, so anyone on the NES-legal north spawn row could not patrol.
+  const e = createEnemy({ objType: OBJ.BLUE_DARKNUT, x: 0x80, y: 0x5d, dir: DIR.RIGHT });
+  e.turnTimer = 0xff;
+  e.gridOffset = 0;
+  e.qSpeedFrac = 0x40;
+  e.posFrac = 0;
+  stepEnemy(e, UW_ENEMY_BOUNDS, null, {
+    chase: { x: 0xc0, y: 0x5d },
+    rngByte: () => 0xff,
+  });
+  assert.equal(e.dir, DIR.RIGHT);
+  assert.equal(e.y, 0x5d);
+  assert.equal(e.x, 0x81);
 });

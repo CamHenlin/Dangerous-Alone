@@ -293,8 +293,8 @@ function drawFrame(tiles, attrs, cols, attrCols, rowOffset, titleGap) {
  */
 export function titlePlacement(title) {
   const len = title.length;
-  const centre = Math.round((PANEL_COLS - len) / 2);
-  const start = Math.max(FRAME.leftCol + 4, centre - (centre % 2));
+  const center = Math.round((PANEL_COLS - len) / 2);
+  const start = Math.max(FRAME.leftCol + 4, center - (center % 2));
   return { start, gapFrom: start - 1, gapTo: start + len };
 }
 
@@ -339,7 +339,7 @@ export function composeStoryboard(panels, opts = {}) {
       if (row == null) return;
       const text = String(line ?? '').toUpperCase();
       if (!text) return;
-      // Left-aligned, like the ROM's storyboard. Centring individual lines
+      // Left-aligned, like the ROM's storyboard. Centering individual lines
       // reads as ragged indentation once a paragraph wraps.
       writeText(
         tiles,

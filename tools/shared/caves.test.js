@@ -223,6 +223,18 @@ test('take-any / door / moblin taken flags are per OW room', () => {
     tryBuyCaveSlot(inv, takeAny, 2, { taken, roomId: 0x2f }).ok,
     true,
   );
+  // Room $00 is a real OW screen, and cave worlds default `roomId` to 0.
+  // Looting against that default must not empty the raft-island take-any.
+  const takenAtDefault = new Set();
+  assert.equal(
+    tryBuyCaveSlot(inv, takeAny, 2, { taken: takenAtDefault, roomId: 0 }).ok,
+    true,
+  );
+  assert.equal(
+    tryBuyCaveSlot(inv, takeAny, 2, { taken: takenAtDefault, roomId: 0x2f }).ok,
+    true,
+    'P3 take-any must survive a flag written against cave-world roomId 0',
+  );
 
   // ROM list prices are 5/10/20 — charge the largest (20), not find()>0 → 5.
   const door = {

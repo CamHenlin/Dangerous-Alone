@@ -137,6 +137,16 @@ test('holding on stairs does not repeatedly reset posFrac', () => {
   assert.equal(link.posFrac, 0x20, 'only the transition clears the fraction');
 });
 
+test('leftover standingTile wins over the host screen\'s stairs', () => {
+  const link = createLinkState(0x80 - 256 * 3, 0x80, 0x02);
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x74));
+  assert.equal(overworldLinkQSpeed(link, grid), LINK_QSPEED_STAIRS);
+  assert.equal(
+    overworldLinkQSpeed(link, grid, { standingTile: () => 0x26 }),
+    LINK_QSPEED,
+  );
+});
+
 // --- N1: UpdateBubble uses UpdateCommonWanderer with turn rate $40 ---
 
 test('bubbles use the common wanderer at turn rate $40', () => {
@@ -217,6 +227,24 @@ test('triforce ceremony flashes then fills hearts to full', () => {
   assert.equal(sawFlash, true, 'palette must flash during the fanfare');
   assert.equal(inv.halfHearts, 6, 'hearts end full');
   assert.equal(triforceCeremonyActive(c), false);
+});
+
+test('triforce ceremony records the finder so co-op fills the right hero', () => {
+  const c = createTriforceCeremony();
+  startTriforceCeremony(c, 1);
+  assert.equal(c.playerIndex, 1);
+  const finder = createInventory();
+  finder.maxHalfHearts = 6;
+  finder.halfHearts = 1;
+  const other = createInventory();
+  other.maxHalfHearts = 6;
+  other.halfHearts = 2;
+  let finished = false;
+  for (let i = 0; i < 4000 && !finished; i += 1) {
+    finished = stepTriforceCeremony(c, finder).finished;
+  }
+  assert.equal(finder.halfHearts, 6, 'the finder must be topped up');
+  assert.equal(other.halfHearts, 2, 'an ally must keep their own meter');
 });
 
 // --- B1/B2: CheckMazes ---

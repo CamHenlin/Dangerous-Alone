@@ -177,7 +177,7 @@ export function stepLadderObject(ladder, link) {
  * @param {'overworld' | 'dungeon'} opts.mode
  * @param {number} [opts.roomId]
  * @param {boolean} [opts.inDoorway]
- * @param {number} [opts.inputDir] facing-matched input
+ * @param {number} [opts.inputDir] direction held this frame
  * @param {LadderObject | null} [opts.existing]
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [opts.tileOpts]
  * @returns {LadderObject | null}
@@ -188,23 +188,25 @@ export function tryPlaceLadder(link, opts) {
   if ((link.gridOffset ?? 0) !== 0) return null;
   if (opts.mode === 'overworld' && !isOwLadderRoom(opts.roomId ?? 0)) return null;
 
-  const inputDir = opts.inputDir ?? 0;
-  if (!inputDir || inputDir !== link.dir) return null;
+  // `main.js` places the ladder before `stepLink` adopts this frame's facing,
+  // so probe with the held direction — not last frame's `link.dir`.
+  const dir = opts.inputDir ?? 0;
+  if (!dir) return null;
 
   const hit = getLinkCollidingTile(
     opts.tileGrid ?? [],
     link.x,
     link.y,
-    link.dir,
+    dir,
     opts.tileOpts ?? {},
   );
   if (!isLadderWaterTile(hit.tile, opts.mode)) return null;
 
-  const off = ladderOffsetForDir(link.dir);
+  const off = ladderOffsetForDir(dir);
   return {
     x: (link.x + off.x) & 0xff,
     y: (link.y + off.y) & 0xff,
-    dir: link.dir,
+    dir,
     state: 1,
   };
 }

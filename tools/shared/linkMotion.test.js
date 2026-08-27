@@ -14,8 +14,10 @@ import {
   isLinkStandingSolid,
   linkWalkSprite,
   onGrid,
+  onWalkGrid,
   overworldLinkQSpeed,
   pickSingleDir,
+  snapLinkToWalkGrid,
   snapToGridCellStart,
   stepLink,
   stepShove,
@@ -222,6 +224,61 @@ test('shove on open ground moves full frame step', () => {
   assert.equal(r.moved, 4);
   assert.equal(r.shovePixels, 0x1c);
   assert.equal(link.x, 0x78 - 4);
+  assert.equal(link.gridOffset, -4);
+  assert.equal(onWalkGrid(link.x, link.y), false);
+});
+
+test('a full 32px shove from the walk grid ends on the walk grid', () => {
+  const link = createLinkState(0x78, 0x8d, DIR.LEFT);
+  let left = 0x20;
+  for (let i = 0; i < 8; i += 1) {
+    const r = stepShove(link, openGrid(), DIR.LEFT, left, { pixelsPerFrame: 4 });
+    left = r.shovePixels;
+    assert.equal(r.blocked, false);
+  }
+  assert.equal(left, 0);
+  assert.equal(link.x, 0x78 - 0x20);
+  assert.equal(link.gridOffset, 0);
+  assert.equal(onWalkGrid(link.x, link.y), true);
+});
+
+test('a blocked 4px shove rewinds onto the walk grid instead of sticking', () => {
+  const grid = openGrid();
+  for (let r = 0; r < 22; r += 1) {
+    for (let c = 0; c < 8; c += 1) grid[r][c] = 0xd8;
+  }
+  const link = createLinkState(0x48, 0x8d, DIR.LEFT);
+  stepShove(link, grid, DIR.LEFT, 0x20, { pixelsPerFrame: 4 });
+  assert.equal(onWalkGrid(link.x, link.y), true);
+  assert.equal(link.gridOffset, 0);
+  const xAfter = link.x;
+  stepShove(link, grid, DIR.LEFT, 0x20, { pixelsPerFrame: 4 });
+  assert.equal(link.x, xAfter, 'a second blocked hit must not accumulate 4px');
+  assert.equal(onWalkGrid(link.x, link.y), true);
+});
+
+test('snapLinkToWalkGrid rewinds a 4px knockback remainder', () => {
+  const link = createLinkState(0x74, 0x8d, DIR.LEFT);
+  assert.equal(onWalkGrid(link.x, link.y), false);
+  snapLinkToWalkGrid(link);
+  assert.equal(link.x, 0x78);
+  assert.equal(link.y, 0x8d);
+  assert.equal(onWalkGrid(link.x, link.y), true);
+});
+
+test('snapLinkToWalkGrid keeps the NES west-lip remainder', () => {
+  const link = createLinkState(0x11, 0x8d, DIR.LEFT);
+  snapLinkToWalkGrid(link);
+  assert.equal(link.x, 0x11);
+  assert.equal(onWalkGrid(link.x, link.y), true);
+  assert.equal(onGrid(link.x, link.y), false);
+});
+
+test('walking after an off-grid pose leaves the 4px lattice', () => {
+  const link = createLinkState(0x74, 0x8d, DIR.RIGHT);
+  stepLink(link, openGrid(), DIR.RIGHT);
+  assert.notEqual(link.x & 7, 4, 'must not keep walking the knockback remainder');
+  assert.ok(link.x >= 0x78, `expected snap toward $78 then right, x=${link.x}`);
 });
 
 test('ejectLinkFromSolid slides out of an embedded wall', () => {
@@ -370,6 +427,19 @@ test('mountain stair QSpeed $30 can climb OW $3C without snap softlock', () => {
     link.y < startY - 8,
     `expected climb off stair mouth, start=$${startY.toString(16)} y=$${link.y.toString(16)}`,
   );
+});
+
+test('mountain stairs still advance the walk cycle', () => {
+  const screenPath = path.join(ROOT, 'assets/extracted/play/screens/3c.json');
+  const { tileGrid } = JSON.parse(fs.readFileSync(screenPath, 'utf8'));
+  const link = createLinkState(0x70, 0xcd, DIR.UP);
+  const frames = new Set();
+  for (let i = 0; i < 48; i += 1) {
+    const qs = overworldLinkQSpeed(link, tileGrid);
+    stepLink(link, tileGrid, DIR.UP, qs, 0x3c);
+    if (link.moving) frames.add(link.animFrame);
+  }
+  assert.equal(frames.size, 2, 'QSpeed $30 stalls froze the walk cycle on stairs');
 });
 
 test('L4 $71: left stops against face at X=$40, not a tile early', () => {

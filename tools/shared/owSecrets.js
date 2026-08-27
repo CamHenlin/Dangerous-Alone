@@ -31,6 +31,24 @@ export const SECRET_STAIRS_TILES = Object.freeze([0x70, 0x71, 0x72, 0x73]);
  */
 export const SECRET_CAVE_TILES = Object.freeze([0xf3, 0x24, 0xf3, 0x24]);
 
+/** Grave CHR after a push (the square that slides off the warp). */
+export const GRAVE_PUSH_TILES = Object.freeze([0xbc, 0xbd, 0xbe, 0xbf]);
+
+/** Bracelet-rock CHR after a push. */
+export const ROCK_PUSH_TILES = Object.freeze([0xc8, 0xc9, 0xca, 0xcb]);
+
+/**
+ * ChangeTileObjTiles($26) at the shove origin while the sprite slides —
+ * OW sand / gray floor, not stairs.
+ */
+export const OW_FLOOR_TILES = Object.freeze([0x26, 0x26, 0x26, 0x26]);
+
+/**
+ * LevelInfoOW ShortcutOrItemPosArray (PRG $19329). Packed: X high nibble,
+ * Y/16 low. UpdateRockOrGravestone writes $70 here, not under the rock.
+ */
+export const OW_SHORTCUT_POS_PACKED = Object.freeze([0x57, 0x49, 0x99, 0x69]);
+
 /** Hold frames before a grave/rock slides (UpdateRockOrGravestone ≈ $10). */
 export const GRAVE_PUSH_HOLD = 0x10;
 
@@ -105,15 +123,172 @@ export function collectScreenSecrets(squares, primarySquares, attrs = {}, quest 
  * @param {number} [marker=0xe7] secret marker (default stairs)
  */
 export function revealSecretTiles(tileGrid, row, col, marker = 0xe7) {
+  const tiles = tilesForSecretMarker(marker);
+  return writePlaySquareTiles(tileGrid, row, col, tiles);
+}
+
+/**
+ * @param {number[][]} tileGrid
+ * @param {number} row
+ * @param {number} col
+ * @param {readonly number[]} tiles UL, LL, UR, LR
+ */
+export function writePlaySquareTiles(tileGrid, row, col, tiles) {
   const tr = row * 2;
   const tc = col * 2;
-  const [ul, ll, ur, lr] = tilesForSecretMarker(marker);
-  if (!tileGrid[tr] || tileGrid[tr][tc] == null) return false;
+  const [ul, ll, ur, lr] = tiles;
+  if (!tileGrid[tr] || tileGrid[tr][tc] == null || !tileGrid[tr + 1]) return false;
   tileGrid[tr][tc] = ul;
   tileGrid[tr + 1][tc] = ll;
   tileGrid[tr][tc + 1] = ur;
   tileGrid[tr + 1][tc + 1] = lr;
   return true;
+}
+
+/**
+ * Square the grave/rock slides onto (one 16px step in the shove dir).
+ * @param {{ row: number, col: number }} secret
+ * @param {number} facingDir
+ * @returns {{ row: number, col: number } | null}
+ */
+export function gravePushDestSquare(secret, facingDir) {
+  let row = secret.row;
+  let col = secret.col;
+  if (facingDir & DIR.UP) row -= 1;
+  else if (facingDir & DIR.DOWN) row += 1;
+  else if (facingDir & DIR.LEFT) col -= 1;
+  else if (facingDir & DIR.RIGHT) col += 1;
+  else return null;
+  if (row < 0 || col < 0 || row > 10 || col > 15) return null;
+  return { row, col };
+}
+
+/**
+ * CHR for the pushed grave/rock at dest (so collision matches the sprite).
+ * @param {number} [marker]
+ */
+export function tilesForPushedBlock(marker) {
+  if (marker === 0xe5) return ROCK_PUSH_TILES;
+  return GRAVE_PUSH_TILES;
+}
+
+/**
+ * Room shortcut / item XY from LevelBlockAttrsF bits 5–4.
+ * @param {number} [stairPositionIndex]
+ */
+export function owShortcutStairsPos(stairPositionIndex) {
+  const packed = OW_SHORTCUT_POS_PACKED[(stairPositionIndex ?? 0) & 3];
+  const x = packed & 0xf0;
+  const y = (packed & 0x0f) << 4;
+  return {
+    x,
+    y,
+    col: x >> 4,
+    row: (y - HUD_HEIGHT) >> 4,
+  };
+}
+
+/**
+ * Persist key for the dest square a grave/rock slides onto.
+ * @param {number} mapIndex
+ * @param {{ row: number, col: number }} dest
+ * @param {number} [marker]
+ */
+export function pushDestKey(mapIndex, dest, marker = 0xe8) {
+  return `${mapIndex}:${dest.row}:${dest.col}:pushdest:${marker & 0xff}`;
+}
+
+/**
+ * @param {string} key
+ * @returns {{ mapIndex: number, row: number, col: number, marker: number } | null}
+ */
+export function parsePushDestKey(key) {
+  const m = /^(\d+):(\d+):(\d+):pushdest:(\d+)$/.exec(String(key ?? ''));
+  if (!m) return null;
+  return {
+    mapIndex: Number(m[1]),
+    row: Number(m[2]),
+    col: Number(m[3]),
+    marker: Number(m[4]),
+  };
+}
+
+/**
+ * NES UpdateRockOrGravestone: origin → $26, dest → rock/grave CHR, stairs
+ * at GetShortcutOrItemXYForRoom (may equal origin, e.g. the magic-sword grave).
+ * @param {number[][]} tileGrid
+ * @param {{ row: number, col: number, marker?: number }} secret
+ * @param {number} facingDir
+ * @param {{ stairPositionIndex?: number, stairs?: { row: number, col: number } }} [opts]
+ */
+export function applyGravePushTiles(tileGrid, secret, facingDir, opts = {}) {
+  const dest = gravePushDestSquare(secret, facingDir);
+  const destTiles = [...tilesForPushedBlock(secret.marker)];
+  const originOk = writePlaySquareTiles(tileGrid, secret.row, secret.col, OW_FLOOR_TILES);
+  let destWritten = false;
+  if (originOk && dest) {
+    destWritten = writePlaySquareTiles(tileGrid, dest.row, dest.col, destTiles);
+  }
+  const stairs =
+    opts.stairs
+    ?? (opts.stairPositionIndex != null
+      ? owShortcutStairsPos(opts.stairPositionIndex)
+      : { row: secret.row, col: secret.col });
+  const stairsOk = writePlaySquareTiles(
+    tileGrid,
+    stairs.row,
+    stairs.col,
+    SECRET_STAIRS_TILES,
+  );
+  return {
+    opened: originOk && stairsOk,
+    dest: destWritten ? dest : null,
+    destTiles: destWritten ? destTiles : null,
+    stairs,
+  };
+}
+
+/**
+ * Re-apply dest block tiles after a screen reload.
+ * @param {number[][]} tileGrid
+ * @param {number} mapIndex
+ * @param {Set<string>} revealed
+ */
+export function restorePushDests(tileGrid, mapIndex, revealed) {
+  /** @type {{ col: number, row: number, tiles: readonly number[] }[]} */
+  const patches = [];
+  for (const key of revealed ?? []) {
+    const dest = parsePushDestKey(key);
+    if (!dest || dest.mapIndex !== (mapIndex & 0xff)) continue;
+    const tiles = tilesForPushedBlock(dest.marker);
+    if (writePlaySquareTiles(tileGrid, dest.row, dest.col, tiles)) {
+      patches.push({ col: dest.col, row: dest.row, tiles });
+    }
+  }
+  return patches;
+}
+
+/**
+ * Origin sand for a revealed push secret (reload). Stairs go on after dest.
+ * @param {number[][]} tileGrid
+ * @param {{ row: number, col: number }} secret
+ */
+export function restorePushedOriginFloor(tileGrid, secret) {
+  if (!writePlaySquareTiles(tileGrid, secret.row, secret.col, OW_FLOOR_TILES)) return null;
+  return { col: secret.col, row: secret.row, tiles: OW_FLOOR_TILES };
+}
+
+/**
+ * Shortcut-table stairs for a revealed push secret (reload).
+ * @param {number[][]} tileGrid
+ * @param {{ stairPositionIndex?: number }} [attrs]
+ */
+export function restorePushedStairs(tileGrid, attrs = {}) {
+  const stairs = owShortcutStairsPos(attrs.stairPositionIndex);
+  if (!writePlaySquareTiles(tileGrid, stairs.row, stairs.col, SECRET_STAIRS_TILES)) {
+    return null;
+  }
+  return { col: stairs.col, row: stairs.row, tiles: SECRET_STAIRS_TILES };
 }
 
 /**
@@ -284,11 +459,22 @@ export function tryPushGraveSecret(
       if (held < GRAVE_PUSH_HOLD) continue;
     }
 
-    if (revealSecretTiles(tileGrid, secret.row, secret.col, secret.marker)) {
-      revealed.add(key);
-      holdTimers?.delete(key);
-      opened.push(secret);
+    const applied = applyGravePushTiles(tileGrid, secret, facingDir, {
+      stairPositionIndex: opts.stairPositionIndex,
+      stairs: opts.stairs,
+    });
+    if (!applied.opened) continue;
+    revealed.add(key);
+    if (applied.dest) {
+      revealed.add(pushDestKey(mapIndex, applied.dest, secret.marker ?? 0xe8));
     }
+    holdTimers?.delete(key);
+    opened.push({
+      ...secret,
+      dest: applied.dest,
+      destTiles: applied.destTiles,
+      stairs: applied.stairs,
+    });
   }
 
   // Decay timers for secrets no longer pushed.

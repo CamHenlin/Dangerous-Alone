@@ -179,6 +179,23 @@ export function roomAllDead(enemies) {
 }
 
 /**
+ * Whether this cell's foe list is allowed to fire a room-clear.
+ *
+ * An empty list is "all dead" in the NES RoomAllDead sense, but that is
+ * also what a camera cull looks like: the remaining living foes were
+ * despawned, not defeated. Only a spawn-latched visit (old-man / empty /
+ * persistents-only rooms included) or leftover clear-counting records
+ * (corpses still in the table) may count. Dying in a fight and continuing
+ * at the entrance must not latch the death cell as cleared.
+ *
+ * @param {{ npc?: boolean, objType?: number, immortal?: boolean }[] | null | undefined} enemies
+ * @param {boolean} spawned spawn latch still held for this cell
+ */
+export function roomMayClear(enemies, spawned) {
+  return Boolean(spawned) || roomHasClearCountingType(enemies ?? []);
+}
+
+/**
  * CheckSecretTriggerRingleader — slot 1 empty → kill remaining clear-counting foes.
  * @param {import('./enemies.js').Enemy[]} enemies
  * @returns {boolean} true if a cascade ran
@@ -200,7 +217,7 @@ export function tryRingleaderClear(enemies) {
  * @param {object | null} roomItem
  * @param {boolean} allDead
  * @param {number} [effectOverride] room specialItem.effectType when no floor item
- * @param {{ lastBossDefeated?: boolean }} [opts]
+ * @param {{ lastBossDefeated?: boolean, hadFight?: boolean }} [opts]
  * @returns {{ shutter: boolean, revealItem: boolean, effect: number }}
  */
 export function applyRoomClear(roomItem, allDead, effectOverride, opts = {}) {
@@ -219,7 +236,11 @@ export function applyRoomClear(roomItem, allDead, effectOverride, opts = {}) {
     || effect === SECRET.FOES_FOR_ITEM
     || effect === SECRET.LAST_BOSS
     || effect === SECRET.MONEY_OR_LIFE
-    || effect === SECRET.RINGLEADER;
+    || effect === SECRET.RINGLEADER
+    // Named KillAll is ROM bit 1, but several fight rooms (L9 `$21` Patra)
+    // store effect 0 and still have a type-7 shutter. Empty rooms must not
+    // auto-open — only a clear-counting fight.
+    || (effect === SECRET.NONE && Boolean(opts.hadFight));
   let revealItem = false;
   const revealEffects = effect === SECRET.FOES_FOR_ITEM || effect === SECRET.LAST_BOSS;
   if (roomItem && !roomItem.taken && revealEffects && !roomItem.visible) {

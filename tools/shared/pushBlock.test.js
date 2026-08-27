@@ -163,7 +163,7 @@ test('a leftover shove lines up in room-local space', () => {
   );
 });
 
-test('L1 $42 push block is the centre-left $B0 at $70,$90', {
+test('L1 $42 push block is the center-left $B0 at $70,$90', {
   skip: !fs.existsSync(romPath),
 }, () => {
   const prg = fs.readFileSync(romPath).subarray(16);

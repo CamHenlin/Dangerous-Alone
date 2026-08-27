@@ -60,6 +60,18 @@ test('magic shield parries fireball', () => {
   assert.equal(shotBlockedByShield(p, { dir: DIR.RIGHT }, inv), SHIELD_RESULT.PARRY);
 });
 
+test('wood shield parries a facing arrow', () => {
+  const inv = createInventory();
+  const p = createProjectile({ kind: PROJ.ARROW, x: 0x80, y: 0x80, dir: DIR.LEFT });
+  assert.equal(shotBlockedByShield(p, { dir: DIR.RIGHT }, inv), SHIELD_RESULT.PARRY);
+});
+
+test('wood shield parries a silver arrow', () => {
+  const inv = createInventory();
+  const p = createProjectile({ kind: PROJ.SILVER_ARROW, x: 0x80, y: 0x80, dir: DIR.LEFT });
+  assert.equal(shotBlockedByShield(p, { dir: DIR.RIGHT }, inv), SHIELD_RESULT.PARRY);
+});
+
 test('bounceProjectile reverses facing and clears damage', () => {
   const p = createProjectile({ kind: PROJ.ROCK, x: 0x80, y: 0x80, dir: DIR.LEFT, damage: 2 });
   bounceProjectile(p);

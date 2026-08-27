@@ -163,6 +163,12 @@ test('hitsMapEdgeLimit only at absolute map rim', () => {
   assert.equal(hitsMapEdgeLimit(0x00, 0x8d, DIR.LEFT, 0x45), false);
   assert.equal(hitsMapEdgeLimit(0x80, 0x4d, DIR.UP, 0x05), true);
   assert.equal(hitsMapEdgeLimit(0x80, 0x3d, DIR.UP, 0x45), false);
+  assert.equal(
+    hitsMapEdgeLimit(0x11 - PLAY_W * 2, 0x8d, DIR.LEFT, 0x42),
+    true,
+    'leftover on $40 still hits the west map rim from inland $42',
+  );
+  assert.equal(hitsMapEdgeLimit(0x80 - PLAY_W * 2, 0x8d, DIR.LEFT, 0x42), false);
 });
 
 test('clampMapEdgePos opens neighbor sides', () => {
@@ -170,6 +176,78 @@ test('clampMapEdgePos opens neighbor sides', () => {
   assert.equal(mid.x, -20);
   const edge = clampMapEdgePos(-20, 0x8d, 0x40);
   assert.equal(edge.x, 0x11);
+});
+
+test('clampMapEdgePos keeps leftover poses two rooms from the anchor', () => {
+  // One-room leftover is inside the current ±PLAY_W window. Two rooms away
+  // is a friend who kept walking. Freezing them at the first seam is the
+  // "can't move left off this leftover screen" bug.
+  const y = 0x8d;
+  const west = clampMapEdgePos(0x80 - PLAY_W * 2, y, 0x47);
+  assert.equal(west.x, 0x80 - PLAY_W * 2, `west two-room leftover clamped to ${west.x}`);
+  assert.equal(west.y, y);
+  const east = clampMapEdgePos(0x80 + PLAY_W * 2, y, 0x47);
+  assert.equal(east.x, 0x80 + PLAY_W * 2, `east two-room leftover clamped to ${east.x}`);
+  const north = clampMapEdgePos(0x80, y - PLAY_H * 2, 0x47);
+  assert.equal(north.y, y - PLAY_H * 2, `north two-room leftover clamped to ${north.y}`);
+  const south = clampMapEdgePos(0x80, y + PLAY_H * 2, 0x47);
+  assert.equal(south.y, y + PLAY_H * 2, `south two-room leftover clamped to ${south.y}`);
+});
+
+test('clampMapEdgePos keeps leftover poses three rooms from the anchor', () => {
+  const y = 0x8d;
+  const west = clampMapEdgePos(0x80 - PLAY_W * 3, y, 0x47);
+  assert.equal(west.x, 0x80 - PLAY_W * 3, `west three-room leftover clamped to ${west.x}`);
+  const east = clampMapEdgePos(0x80 + PLAY_W * 3, y, 0x47);
+  assert.equal(east.x, 0x80 + PLAY_W * 3, `east three-room leftover clamped to ${east.x}`);
+  const north = clampMapEdgePos(0x80, y - PLAY_H * 3, 0x47);
+  assert.equal(north.y, y - PLAY_H * 3, `north three-room leftover clamped to ${north.y}`);
+  const south = clampMapEdgePos(0x80, y + PLAY_H * 3, 0x47);
+  assert.equal(south.y, y + PLAY_H * 3, `south three-room leftover clamped to ${south.y}`);
+});
+
+test('clampMapEdgePos keeps a leftover one pixel past the neighbour window', () => {
+  const y = 0x8d;
+  const west = clampMapEdgePos(-PLAY_W - 1, y, 0x47);
+  assert.equal(west.x, -PLAY_W - 1, `west seam+1 clamped to ${west.x}`);
+  const east = clampMapEdgePos(PLAY_W * 2, y, 0x47);
+  assert.equal(east.x, PLAY_W * 2, `east seam+1 clamped to ${east.x}`);
+  const northY = HUD_HEIGHT - PLAY_H - 1;
+  const north = clampMapEdgePos(0x80, northY, 0x47);
+  assert.equal(north.y, northY, `north seam+1 clamped to ${north.y}`);
+  const southY = HUD_HEIGHT + PLAY_H * 2;
+  const south = clampMapEdgePos(0x80, southY, 0x47);
+  assert.equal(south.y, southY, `south seam+1 clamped to ${south.y}`);
+});
+
+test('clampMapEdgePos keeps a diagonal two-room leftover', () => {
+  const x = 0x80 - PLAY_W * 2;
+  const y = 0x8d - PLAY_H * 2;
+  const pos = clampMapEdgePos(x, y, 0x47);
+  assert.equal(pos.x, x, `diagonal leftover x clamped to ${pos.x}`);
+  assert.equal(pos.y, y, `diagonal leftover y clamped to ${pos.y}`);
+});
+
+test('clampMapEdgePos keeps leftover on the west map rim while the anchor is inland', () => {
+  // $42 is two rooms east of the map's west rim. A leftover ally on $40 at
+  // local x=$80 sits at anchor x=$80-512. The rim clamp belongs to $40, not
+  // to $42's neighbour window.
+  const x = 0x80 - PLAY_W * 2;
+  const pos = clampMapEdgePos(x, 0x8d, 0x42);
+  assert.equal(pos.x, x, `inland-anchor leftover on $40 clamped to ${pos.x}`);
+  const rim = clampMapEdgePos(x - 0x80, 0x8d, 0x42);
+  assert.equal(rim.x, 0x11 - PLAY_W * 2, `west map rim from leftover $40 got ${rim.x}`);
+});
+
+test('clampMapEdgePos still holds the absolute map rim', () => {
+  const west = clampMapEdgePos(-20, 0x8d, 0x40);
+  assert.equal(west.x, 0x11);
+  const east = clampMapEdgePos(PLAY_W + 40, 0x8d, 0x4f);
+  assert.equal(east.x, 0xe0);
+  const north = clampMapEdgePos(0x80, 0x20, 0x07);
+  assert.equal(north.y, 0x4d);
+  const south = clampMapEdgePos(0x80, 0x200, 0x77);
+  assert.equal(south.y, 0xcd);
 });
 
 test('roomsForCamera includes neighbors', () => {

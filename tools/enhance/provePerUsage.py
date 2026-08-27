@@ -101,7 +101,7 @@ def main():
             if not cached.exists():
                 src = ai.CACHE_DIR / f"{key}_in.png"
                 ai.tile_to_png(ctx, palette16, src, ai.GEN_PX)
-                ai.crop_centre(
+                ai.crop_center(
                     backend.generate(src, ai.GEN_PX, ai.GEN_PX, prompt, ai.SEED),
                     ai.CONTEXT).save(cached)
                 print(f"  generated tile {idx} row {row}")

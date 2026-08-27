@@ -3,14 +3,19 @@ import assert from 'node:assert/strict';
 import { DIR } from './collision.js';
 import {
   BLUE_KEESE_INIT_SPEED,
+  DIRECTIONS8,
+  FAIRY_FLYING_MAX_SPEED_FRAC,
   FLYER_STATE,
   KEESE_FLYING_MAX_SPEED_FRAC,
   RED_BLACK_KEESE_INIT_SPEED,
+  boundFlyer,
   flyerSpeedThresholdTransition,
   flyerSpeedToPxPerFrame,
   flyerWholeSpeed,
   keeseInitFlyerSpeed,
   moveFlyer,
+  reverseDir8,
+  turnRandomlyDir8,
 } from './flyerMove.js';
 import { OBJ, createEnemy, stepEnemy } from './enemies.js';
 
@@ -73,4 +78,25 @@ test('keese travel slower than the old 1px/frame movers', () => {
   assert.ok(e.flyerSpeed <= 0xc0 || e.flyerState === FLYER_STATE.SLOW_DOWN
     || e.flyerState === FLYER_STATE.DELAY
     || e.flyerState === FLYER_STATE.SPEED_UP);
+});
+
+test('TurnRandomlyDir8 keeps, turns right, or turns left', () => {
+  const up = DIR.UP;
+  assert.equal(turnRandomlyDir8(up, 0xa0), up);
+  assert.equal(turnRandomlyDir8(up, 0x50), DIRECTIONS8[1]);
+  assert.equal(turnRandomlyDir8(up, 0x4f), DIRECTIONS8[7]);
+});
+
+test('BoundFlyer reverses 8-way heading at the room lip', () => {
+  const e = { x: 0xe0, y: 0x80, dir: DIR.RIGHT };
+  const bounds = { minX: 0x11, maxX: 0xdf, minY: 0x4e, maxY: 0xcc };
+  assert.equal(boundFlyer(e, bounds), true);
+  assert.equal(e.x, bounds.maxX);
+  assert.equal(e.dir, reverseDir8(DIR.RIGHT));
+  assert.equal(e.dir, DIR.LEFT);
+});
+
+test('fairy max speed is slower than keese', () => {
+  assert.equal(flyerSpeedToPxPerFrame(FAIRY_FLYING_MAX_SPEED_FRAC), 0.625);
+  assert.ok(FAIRY_FLYING_MAX_SPEED_FRAC < KEESE_FLYING_MAX_SPEED_FRAC);
 });

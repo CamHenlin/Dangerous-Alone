@@ -7,11 +7,12 @@
  * without going through the title.
  */
 
+import { B_ITEM, ownedBItems } from './inventory.js';
 import { activePlayers } from './player.js';
 
 /**
  * The lowest-numbered player still in the game — the one a joiner stands
- * next to, and the one the music and the continue menu still answer to.
+ * next to, and the one the continue menu still answers to.
  * @param {readonly object[]} players
  */
 export function hostPlayer(players) {
@@ -58,6 +59,29 @@ export function fillJoiningHearts(joinerInv, hostInv) {
   joinerInv.shovePixels = 0;
   joinerInv.paralyzed = 0;
   return joinerInv;
+}
+
+/**
+ * Put something on a joiner's B so the HUD and the button agree.
+ *
+ * A new inventory view starts at `none`. B still drops a bomb from an empty
+ * slot when the bag has some, so player two looked unarmed and threw one.
+ * Mirror the host when that item is still in the bag; otherwise take the
+ * first owned item so an empty host slot does not leave the joiner empty.
+ *
+ * @param {object} joinerInv
+ * @param {object} hostInv
+ */
+export function copyJoiningBSlot(joinerInv, hostInv) {
+  if (!joinerInv) return null;
+  const owned = ownedBItems(joinerInv);
+  const hostSlot = hostInv?.selectedB;
+  if (hostSlot && hostSlot !== B_ITEM.NONE && owned.includes(hostSlot)) {
+    joinerInv.selectedB = hostSlot;
+  } else {
+    joinerInv.selectedB = owned[0] ?? B_ITEM.NONE;
+  }
+  return joinerInv.selectedB;
 }
 
 /**

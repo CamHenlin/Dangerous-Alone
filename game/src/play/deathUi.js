@@ -24,7 +24,7 @@ const SCREEN_H = 240;
 const PLAY_TOP = HUD_HEIGHT;
 const PLAY_H = SCREEN_H - PLAY_TOP;
 
-/** "GAME OVER" is centred on the play area (`Mode11GameOverTransferBuf`). */
+/** "GAME OVER" is centered on the play area (`Mode11GameOverTransferBuf`). */
 const GAME_OVER_TEXT = 'GAME OVER';
 const GAME_OVER_X = 0x58;
 const GAME_OVER_Y = 0x68;

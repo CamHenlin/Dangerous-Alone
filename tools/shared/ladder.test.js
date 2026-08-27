@@ -24,6 +24,53 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT } from './paths.js';
 
+const UW_TILE = Object.freeze({
+  firstUnwalkable: UW_FIRST_UNWALKABLE,
+  walkableRemap: /** @type {number[]} */ ([]),
+});
+
+/**
+ * @param {number[][]} grid
+ * @param {ReturnType<typeof createLinkState>} link
+ * @param {number} dir
+ * @param {number} frames
+ * @param {(link: ReturnType<typeof createLinkState>) => boolean} [done]
+ */
+function walkWithLadder(grid, link, dir, frames, done) {
+  /** @type {import('./ladder.js').LadderObject | null} */
+  let ladder = null;
+  for (let i = 0; i < frames; i += 1) {
+    const opts = { ...UW_TILE, ladder, ladderMode: 'dungeon' };
+    if ((link.gridOffset || 0) === 0) {
+      ladder = tryPlaceLadder(link, {
+        tileGrid: grid,
+        inv: { ladder: 1 },
+        mode: 'dungeon',
+        inputDir: dir,
+        existing: ladder,
+        tileOpts: UW_TILE,
+      });
+      opts.ladder = ladder;
+    }
+    stepLink(link, grid, dir, LINK_QSPEED, UW_ROOM_BOUNDS, opts);
+    if (ladder) ladder = stepLadderObject(ladder, link);
+    if (done?.(link)) return { ladder, frames: i + 1 };
+  }
+  return { ladder, frames };
+}
+
+function loadDungeonRoom(questLevel, roomId) {
+  const path = join(ROOT, `assets/extracted/dungeons/q1/level_${questLevel}/level.json`);
+  if (!existsSync(path)) return null;
+  const level = JSON.parse(readFileSync(path, 'utf8'));
+  const room = level.rooms.find((r) => r.roomId === roomId);
+  if (!room) return null;
+  return {
+    room,
+    grid: buildDungeonPlayGrid(room, dungeonPlayOrigin()),
+  };
+}
+
 test('owning ladder does not remap all UW water', () => {
   const opts = dungeonTileOptsWithLadder({ ladder: 1 });
   const n = normalizeOwTile(LADDER_TILE, opts.firstUnwalkable, opts.walkableRemap);
@@ -50,6 +97,24 @@ test('ladder places one tile ahead when facing UW water', () => {
   assert.equal(ladder.y, 0x93);
   assert.equal(ladder.dir, DIR.RIGHT);
   assert.equal(ladder.state, 1);
+});
+
+test('held direction places the ladder before facing catches up', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x74));
+  for (let r = 0; r < 22; r += 1) {
+    for (let c = 18; c < 24; c += 1) grid[r][c] = LADDER_TILE;
+  }
+  const link = { x: 0x80, y: 0x90, dir: DIR.UP, gridOffset: 0 };
+  const ladder = tryPlaceLadder(link, {
+    tileGrid: grid,
+    inv: { ladder: 1 },
+    mode: 'dungeon',
+    inputDir: DIR.RIGHT,
+    tileOpts: UW_TILE,
+  });
+  assert.ok(ladder);
+  assert.equal(ladder.dir, DIR.RIGHT);
+  assert.equal(ladder.x, 0x90);
 });
 
 test('ladder only allows one tile of water; further water is blocked', () => {
@@ -122,35 +187,36 @@ test('standing on ladder water is not solid (no push-back)', () => {
 });
 
 test('L1 $23: vertical stepladder crosses the water channel', () => {
-  const path = join(ROOT, 'assets/extracted/dungeons/q1/level_1/level.json');
-  if (!existsSync(path)) return;
-  const level = JSON.parse(readFileSync(path, 'utf8'));
-  const room = level.rooms.find((r) => r.roomId === 0x23);
-  assert.ok(room);
-  const grid = buildDungeonPlayGrid(room, dungeonPlayOrigin());
-  const base = { firstUnwalkable: UW_FIRST_UNWALKABLE, walkableRemap: [] };
+  const packed = loadDungeonRoom(1, 0x23);
+  if (!packed) return;
   const link = createLinkState(0x80, 0x9d, DIR.UP);
-  /** @type {import('./ladder.js').LadderObject | null} */
-  let ladder = null;
-  for (let i = 0; i < 160; i += 1) {
-    const opts = { ...base, ladder, ladderMode: 'dungeon' };
-    if ((link.gridOffset || 0) === 0) {
-      ladder = tryPlaceLadder(link, {
-        tileGrid: grid,
-        inv: { ladder: 1 },
-        mode: 'dungeon',
-        inputDir: DIR.UP,
-        existing: ladder,
-        tileOpts: base,
-      });
-      opts.ladder = ladder;
-    }
-    stepLink(link, grid, DIR.UP, LINK_QSPEED, UW_ROOM_BOUNDS, opts);
-    if (ladder) ladder = stepLadderObject(ladder, link);
-    if (link.y <= 0x7d && link.gridOffset === 0) break;
-  }
+  walkWithLadder(packed.grid, link, DIR.UP, 160, (l) => l.y <= 0x7d && l.gridOffset === 0);
   assert.ok(
     link.y <= 0x7d,
     `expected north bank, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`,
   );
+});
+
+test('L5 $26: stepladder crosses the one-square moat on every side', () => {
+  const packed = loadDungeonRoom(5, 0x26);
+  if (!packed) return;
+  const { grid } = packed;
+
+  const crossings = [
+    { name: 'west outer → island', x: 0x21, y: 0x8d, dir: DIR.RIGHT, done: (l) => l.x >= 0x40 },
+    { name: 'island → west outer', x: 0x40, y: 0x8d, dir: DIR.LEFT, done: (l) => l.x <= 0x21 },
+    { name: 'island → east outer', x: 0xb0, y: 0x8d, dir: DIR.RIGHT, done: (l) => l.x >= 0xd0 },
+    { name: 'east outer → island', x: 0xd0, y: 0x8d, dir: DIR.LEFT, done: (l) => l.x <= 0xb0 },
+    { name: 'north outer → island', x: 0x80, y: 0x6d, dir: DIR.DOWN, done: (l) => l.y >= 0x8d },
+    { name: 'island → north outer', x: 0x80, y: 0x8d, dir: DIR.UP, done: (l) => l.y <= 0x6d },
+  ];
+
+  for (const c of crossings) {
+    const link = createLinkState(c.x, c.y, c.dir);
+    walkWithLadder(grid, link, c.dir, 160, (l) => c.done(l) && l.gridOffset === 0);
+    assert.ok(
+      c.done(link),
+      `${c.name}: expected far bank, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`,
+    );
+  }
 });

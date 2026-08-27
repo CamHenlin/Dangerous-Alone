@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   canLeave,
+  copyJoiningBSlot,
   createPadStartEdges,
   fillJoiningHearts,
   hostPadIndex,
@@ -11,7 +12,7 @@ import {
   seatForJoiningPad,
   snapToHost,
 } from './coopRoster.js';
-import { createInventory } from './inventory.js';
+import { B_ITEM, createInventory } from './inventory.js';
 import { createInventoryView, createPlayer } from './player.js';
 
 function hero(index, { active = true, x = 0, y = 0 } = {}) {
@@ -57,6 +58,38 @@ test('a joiner gets a full glass at the host\'s containers', () => {
   assert.equal(joiner.inv.maxHalfHearts, 10);
   assert.equal(joiner.inv.halfHearts, 10);
   assert.equal(joiner.inv.dead, false);
+});
+
+test('a joiner copies the host B slot', () => {
+  const shared = createInventory();
+  shared.bombs = 8;
+  shared.boomerang = 1;
+  const host = createInventoryView(shared);
+  const joiner = createInventoryView(shared);
+  host.selectedB = B_ITEM.BOOMERANG;
+  copyJoiningBSlot(joiner, host);
+  assert.equal(joiner.selectedB, B_ITEM.BOOMERANG);
+  assert.equal(host.selectedB, B_ITEM.BOOMERANG);
+});
+
+test('a joiner takes the first owned item when the host slot is empty', () => {
+  const shared = createInventory();
+  shared.bombs = 8;
+  shared.candle = 1;
+  const host = createInventoryView(shared);
+  const joiner = createInventoryView(shared);
+  host.selectedB = B_ITEM.NONE;
+  copyJoiningBSlot(joiner, host);
+  assert.equal(joiner.selectedB, B_ITEM.BOMB);
+  assert.equal(host.selectedB, B_ITEM.NONE);
+});
+
+test('a joiner stays empty when the bag has nothing to put on B', () => {
+  const shared = createInventory();
+  const host = createInventoryView(shared);
+  const joiner = createInventoryView(shared);
+  copyJoiningBSlot(joiner, host);
+  assert.equal(joiner.selectedB, B_ITEM.NONE);
 });
 
 test('a joiner stands on the host', () => {

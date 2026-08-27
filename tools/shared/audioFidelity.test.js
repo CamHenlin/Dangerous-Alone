@@ -264,7 +264,7 @@ test('decodeDpcm steps the delta counter by +/-2 with clamping', () => {
   assert.deepEqual([...decodeDpcm([0x01], 10)], [12, 10, 8, 6, 4, 2, 0, 0]);
 });
 
-test('decodeDpcm yields one sample per bit and dpcmToFloat centres it', () => {
+test('decodeDpcm yields one sample per bit and dpcmToFloat centers it', () => {
   const dac = decodeDpcm([0xaa, 0x55], 64);
   assert.equal(dac.length, 16);
   const pcm = dpcmToFloat(dac);

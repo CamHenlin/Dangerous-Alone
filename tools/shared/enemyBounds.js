@@ -38,13 +38,113 @@ export function enemyMotionBounds(mode, enemy, anchorRoomId, cam = null) {
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} a
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} b
  */
-function unionBounds(a, b) {
+export function unionBounds(a, b) {
   return {
     minX: Math.min(a.minX, b.minX),
     maxX: Math.max(a.maxX, b.maxX),
     minY: Math.min(a.minY, b.minY),
     maxY: Math.max(a.maxY, b.maxY),
   };
+}
+
+/**
+ * ObjectRoomBoundsOW used by BoundFlyer. `max*` is inclusive (`RoomBoundRight`
+ * / `RoomBoundDown` in the ROM are exclusive).
+ */
+export const FAIRY_SCREEN_BOUNDS_OW = Object.freeze({
+  minX: 0x11,
+  maxX: 0xdf,
+  minY: 0x4e,
+  maxY: 0xcc,
+});
+
+/** ObjectRoomBoundsUW, inclusive, matching BoundFlyer underworld. */
+export const FAIRY_SCREEN_BOUNDS_UW = Object.freeze({
+  minX: 0x21,
+  maxX: 0xcf,
+  minY: 0x5e,
+  maxY: 0xbc,
+});
+
+/**
+ * Translate a screen-local BoundFlyer box by a camera origin.
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} screen
+ * @param {{ camLocalX?: number, camLocalY?: number }} cam
+ */
+function offsetScreenBounds(screen, cam) {
+  const dx = cam?.camLocalX ?? 0;
+  const dy = cam?.camLocalY ?? 0;
+  return {
+    minX: screen.minX + dx,
+    maxX: screen.maxX + dx,
+    minY: screen.minY + dy,
+    maxY: screen.maxY + dy,
+  };
+}
+
+function boundsContain(box, x, y) {
+  return x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY;
+}
+
+function boundsCenterDist(box, x, y) {
+  const cx = (box.minX + box.maxX) / 2;
+  const cy = (box.minY + box.maxY) / 2;
+  return Math.abs(x - cx) + Math.abs(y - cy);
+}
+
+/**
+ * NES BoundFlyer box for a dropped fairy: the ObjectRoomBounds of the
+ * camera that currently holds it — not the 24px enemy chase pad, and not
+ * the union of every split-screen view. The pad is what let fairies fly
+ * off the visible playfield; the union is what let them cross to a
+ * teammate's leftover screen.
+ *
+ * @param {readonly { camLocalX?: number, camLocalY?: number }[]} cameras
+ * @param {number} x
+ * @param {number} y
+ * @param {{ camLocalX?: number, camLocalY?: number } | null} [fallback]
+ * @param {'overworld' | 'dungeon' | string} [mode]
+ */
+export function fairyFlightBounds(cameras, x, y, fallback = null, mode = 'overworld') {
+  const screen = mode === 'dungeon' ? FAIRY_SCREEN_BOUNDS_UW : FAIRY_SCREEN_BOUNDS_OW;
+  const list = [...(cameras ?? [])];
+  if (!list.length && fallback) list.push(fallback);
+  if (!list.length) return screen;
+  const boxes = list.map((cam) => offsetScreenBounds(screen, cam));
+  const holding = boxes.find((box) => boundsContain(box, x, y));
+  if (holding) return holding;
+  let best = boxes[0];
+  let bestD = boundsCenterDist(best, x, y);
+  for (let i = 1; i < boxes.length; i += 1) {
+    const d = boundsCenterDist(boxes[i], x, y);
+    if (d < bestD) {
+      best = boxes[i];
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * Chase pad covering every camera looking at this place. Leftover-room
+ * shots and wanderers used to clamp to whoever stepped the world first —
+ * player one's screen — and vanish into the anchor.
+ *
+ * @param {readonly { camLocalX?: number, camLocalY?: number }[]} cameras
+ * @param {{ camLocalX?: number, camLocalY?: number } | null} [fallback]
+ */
+export function chaseBoundsForCameras(cameras, fallback = null) {
+  const list = [...(cameras ?? [])];
+  if (!list.length && fallback) list.push(fallback);
+  if (!list.length) return OW_CHASE_BOUNDS;
+  let box = chaseBoundsForCamera(list[0].camLocalX ?? 0, list[0].camLocalY ?? 0);
+  for (let i = 1; i < list.length; i += 1) {
+    box = unionBounds(
+      box,
+      chaseBoundsForCamera(list[i].camLocalX ?? 0, list[i].camLocalY ?? 0),
+    );
+  }
+  return box;
 }
 
 /**

@@ -166,6 +166,6 @@ Two pacing limits are enforced by `npm test`:
   a few seconds rather than the sixteen the peace rate would give it. Start
   fills the current page, then turns it.
 
-`THANKS` and `PEACE` are centred line by line, the way the ROM's one-line boxes
-are. Epilogue pages are set as a block — one shared left margin, block centred
-— because centring each line of a wrapped paragraph turns it into a diamond.
+`THANKS` and `PEACE` are centered line by line, the way the ROM's one-line boxes
+are. Epilogue pages are set as a block — one shared left margin, block centered
+— because centering each line of a wrapped paragraph turns it into a diamond.

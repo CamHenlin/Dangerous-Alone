@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   allActiveDead,
+  coopDeathPlaysDyingTune,
   deathOutcome,
+  dungeonLevelOfWorldId,
   labyrinthForCellarAlly,
+  labyrinthWorldIdFor,
   livingPlayers,
+  regroupAnchorRoomId,
   respawnAlly,
   respawnBeside,
+  sameRespawnArea,
   shouldFollowAllyWorld,
+  shouldRestartInOwnDungeon,
+  standUpAfterDeath,
   targetableLinks,
   tryAutoRevive,
 } from './coopDeath.js';
@@ -80,12 +87,27 @@ test('someone else standing means you regroup, not game over', () => {
   const a = hero(0, { dead: true, x: 10, y: 10 });
   const b = hero(1, { x: 80, y: 90 });
   assert.equal(deathOutcome([a, b], a), 'respawn');
+  assert.equal(coopDeathPlaysDyingTune([a, b], a), false, 'the dying cue would cut the song');
+  const wipe = [hero(0, { dead: true }), hero(1, { dead: true })];
+  assert.equal(coopDeathPlaysDyingTune(wipe, wipe[0]), true);
   assert.equal(respawnAlly([a, b], a), b);
   respawnBeside(a, b);
   assert.equal(a.inv.dead, false);
   assert.equal(a.inv.halfHearts, CONTINUE_HALF_HEARTS);
   assert.equal(a.link.x, 80);
   assert.equal(a.link.y, 90);
+});
+
+test('respawn drops a mid-swing sword so a cave regroup can walk', () => {
+  const a = hero(0, { dead: true, x: 10, y: 10 });
+  const b = hero(1, { x: 0x78, y: 0xb8 });
+  a.sword = { phase: 2, timer: 6, dir: 1 };
+  a.inv.itemLiftTimer = 0x80;
+  respawnBeside(a, b);
+  assert.equal(a.sword.phase, 0);
+  assert.equal(a.sword.timer, 0);
+  assert.equal(a.inv.itemLiftTimer, 0);
+  assert.equal(a.link.x, 0x78);
 });
 
 test('dying upstairs does not follow an ally into a cellar', () => {
@@ -95,8 +117,19 @@ test('dying upstairs does not follow an ally into a cellar', () => {
   const b = hero(1);
   a.world = dungeon;
   b.world = cellar;
+  assert.equal(sameRespawnArea(a, b), true);
   assert.equal(shouldFollowAllyWorld(a, b), false);
+  assert.equal(shouldRestartInOwnDungeon(a, b), false);
   assert.equal(labyrinthForCellarAlly(b), 'dungeon:1');
+});
+
+test('regrouping onto leftover coords names that cell as the new stream', () => {
+  const a = hero(0, { x: 0x40, y: 0x8d });
+  const b = hero(1, { x: 0xe0 + 256, y: 0x8d });
+  assert.equal(regroupAnchorRoomId(0x77, b), 0x78);
+  assert.equal(regroupAnchorRoomId(0x77, a), null, 'still in the anchor');
+  respawnBeside(a, b);
+  assert.equal(regroupAnchorRoomId(0x77, a), 0x78, 'the dead now stand in the leftover cell');
 });
 
 test('regrouping copies the ally cell latch, not just their tile', () => {
@@ -127,7 +160,74 @@ test('dying in a cellar follows the ally back into the labyrinth', () => {
   const b = hero(1);
   a.world = cellar;
   b.world = dungeon;
+  assert.equal(sameRespawnArea(a, b), true);
   assert.equal(shouldFollowAllyWorld(a, b), true);
+  assert.equal(shouldRestartInOwnDungeon(a, b), false);
+});
+
+test('dying in a dungeon does not follow an ally onto the overworld', () => {
+  const ow = { id: 'overworld', mode: 'overworld' };
+  const dungeon = { id: 'dungeon:1', mode: 'dungeon' };
+  const a = hero(0, { dead: true, x: 0xc0, y: 0x8d });
+  const b = hero(1, { x: 0xd0, y: 0x8d });
+  a.world = dungeon;
+  b.world = ow;
+  assert.equal(sameRespawnArea(a, b), false);
+  assert.equal(shouldFollowAllyWorld(a, b), false);
+  assert.equal(shouldRestartInOwnDungeon(a, b), true);
+  assert.equal(labyrinthWorldIdFor(a.world), 'dungeon:1');
+  standUpAfterDeath(a);
+  assert.equal(a.inv.dead, false);
+  assert.equal(a.link.x, 0xc0, 'stay in the labyrinth until posed at the door');
+});
+
+test('dying in a dungeon does not follow an ally into a cave', () => {
+  const cave = { id: 'cave:16', mode: 'cave' };
+  const dungeon = { id: 'dungeon:1', mode: 'dungeon' };
+  const a = hero(0);
+  const b = hero(1);
+  a.world = dungeon;
+  b.world = cave;
+  assert.equal(shouldFollowAllyWorld(a, b), false);
+  assert.equal(shouldRestartInOwnDungeon(a, b), true);
+});
+
+test('dying in one labyrinth does not follow an ally into another', () => {
+  const a = hero(0);
+  const b = hero(1);
+  a.world = { id: 'dungeon:1', mode: 'dungeon' };
+  b.world = { id: 'dungeon:2', mode: 'dungeon' };
+  assert.equal(sameRespawnArea(a, b), false);
+  assert.equal(shouldRestartInOwnDungeon(a, b), true);
+});
+
+test('dying on the overworld does not follow an ally into a labyrinth', () => {
+  const a = hero(0, { dead: true, x: 0x40, y: 0x8d });
+  const b = hero(1, { x: 0x78, y: 0x4d });
+  a.world = { id: 'overworld', mode: 'overworld' };
+  b.world = { id: 'dungeon:1', mode: 'dungeon' };
+  assert.equal(shouldFollowAllyWorld(a, b), false);
+  assert.equal(shouldRestartInOwnDungeon(a, b), false);
+  standUpAfterDeath(a);
+  assert.equal(a.link.x, 0x40, 'the overworld death stays on the map');
+});
+
+test('both on the overworld still regroup', () => {
+  const ow = { id: 'overworld', mode: 'overworld' };
+  const a = hero(0);
+  const b = hero(1);
+  a.world = ow;
+  b.world = ow;
+  assert.equal(sameRespawnArea(a, b), true);
+  assert.equal(shouldFollowAllyWorld(a, b), false);
+  assert.equal(shouldRestartInOwnDungeon(a, b), false);
+});
+
+test('a cellar names the labyrinth it belongs to', () => {
+  assert.equal(dungeonLevelOfWorldId('cellar:3:127'), 3);
+  assert.equal(dungeonLevelOfWorldId('dungeon:3'), 3);
+  assert.equal(dungeonLevelOfWorldId('overworld'), null);
+  assert.equal(labyrinthForCellarAlly({ world: { id: 'cellar:3:127' } }), 'dungeon:3');
 });
 
 test('the last one down opens the continue menu', () => {

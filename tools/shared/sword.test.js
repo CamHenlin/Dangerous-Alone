@@ -3,9 +3,12 @@ import { test } from 'node:test';
 import { DIR } from './collision.js';
 import { SWORD } from './inventory.js';
 import {
+  ROD_MELEE_DAMAGE,
   SWORD_PHASE,
+  SWING_KIND,
   cancelSword,
   createSwordState,
+  isRodSwing,
   isSwordActive,
   rectsOverlap,
   stepSword,
@@ -16,7 +19,10 @@ import {
   swordDoesDamage,
   swordDrawPos,
   swordHitbox,
+  swordSpawnsShot,
   swordSpriteRotation,
+  swingMeleeDamage,
+  tryStartRod,
   tryStartSword,
 } from './sword.js';
 
@@ -109,4 +115,34 @@ test('arc progress advances across the hit window', () => {
   const p1 = swordArcProgress(sword);
   assert.ok(p1 > p0);
   assert.ok(a1 !== a0);
+});
+
+test('tryStartRod uses the sword swing without needing a blade', () => {
+  const sword = createSwordState();
+  assert.equal(tryStartRod(sword, DIR.UP), true);
+  assert.equal(isSwordActive(sword), true);
+  assert.equal(isRodSwing(sword), true);
+  assert.equal(sword.kind, SWING_KIND.ROD);
+  assert.equal(tryStartSword(sword, DIR.LEFT, SWORD.WOOD), false);
+  assert.equal(tryStartRod(sword, DIR.DOWN), false);
+});
+
+test('rod swing still fires MakeMagicShot at RECOVER_A', () => {
+  const sword = createSwordState();
+  assert.equal(tryStartRod(sword, DIR.RIGHT), true);
+  let spawnFrames = 0;
+  while (isSwordActive(sword)) {
+    const prev = sword.phase;
+    stepSword(sword);
+    if (swordSpawnsShot(sword, prev)) spawnFrames += 1;
+  }
+  assert.equal(spawnFrames, 1);
+  assert.equal(isRodSwing(sword), false);
+});
+
+test('rod melee is a fixed $20', () => {
+  const sword = createSwordState();
+  tryStartRod(sword, DIR.RIGHT);
+  assert.equal(swingMeleeDamage(sword, SWORD.WOOD), ROD_MELEE_DAMAGE);
+  assert.equal(swingMeleeDamage(sword, SWORD.MAGIC), ROD_MELEE_DAMAGE);
 });

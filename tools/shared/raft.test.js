@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DIR, OW_BOUNDS } from './collision.js';
-import { PLAY_H } from './continuousCamera.js';
+import { PLAY_H, localInRoom } from './continuousCamera.js';
 import { TRANSITION_SPAWN } from './world.js';
 import {
   RAFT_ALIGN_PX,
   createRaftRide,
   isRaftDockRoom,
   planRaftNorthApproach,
+  planRaftNorthApproachFromAnchor,
   raftDockX,
   snapRaftNorthEntry,
   stepRaftRide,
@@ -244,4 +245,25 @@ test('south-from-$45 plan targets dock mid-water so UpdateDock DOWN can start', 
   assert.ok(landed);
   assert.equal(link.y, 0x85);
   assert.equal(link.gridOffset, 0);
+});
+
+test('leftover island dock still plans the southbound raft against the occupying cell', () => {
+  // Player two on `$45` while the stream sits on `$77` (ally in the sword
+  // cave). Planning against the anchor never sees the dock and they freeze.
+  const local = { x: 0x80, y: OW_BOUNDS.bottom, dir: DIR.DOWN };
+  const leftover = localInRoom(0x45, 0x77, local.x, local.y);
+  assert.equal(
+    planRaftNorthApproach({ ...local, x: leftover.x, y: leftover.y }, 0x77, { raft: 1 }),
+    null,
+    'anchor-local leftover coords are not a `$77` dock',
+  );
+  const plan = planRaftNorthApproachFromAnchor(
+    { ...local, x: leftover.x, y: leftover.y },
+    0x77,
+    { raft: 1 },
+  );
+  const expected = planRaftNorthApproach(local, 0x45, { raft: 1 });
+  assert.ok(plan);
+  assert.deepEqual(plan, expected);
+  assert.equal(plan.nextRoomId, 0x55);
 });

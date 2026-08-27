@@ -222,6 +222,9 @@ export function createTextBox(deps = {}) {
     get meta() {
       return state.meta;
     },
+    get visibleText() {
+      return state.active ? visibleText(state) : '';
+    },
     /** Exposed for tests / debug readouts. */
     state,
   };

@@ -485,41 +485,56 @@ export function rebaseDeltaToRoom(fromRoomId, toRoomId) {
 }
 
 /**
+ * Absolute play-space rectangle of the 16×8 map, using NES rim pixels so a
+ * leftover hero two rooms from the streaming anchor is not frozen at the
+ * first seam, while walking off Hyrule still stops.
+ */
+function mapWorldBounds() {
+  return {
+    minX: OW_BOUNDS.left,
+    maxX: (MAP_W - 1) * PLAY_W + OW_BOUNDS.right,
+    minY: OW_BOUNDS.top - HUD_HEIGHT,
+    maxY: (MAP_H - 1) * PLAY_H + (OW_BOUNDS.bottom - HUD_HEIGHT),
+  };
+}
+
+/**
  * Map-edge movement limit for continuous overworld (no per-screen lips).
+ * `roomId` is the streaming anchor; leftover coords are still tested against
+ * the absolute map rim, not that room's neighbour window.
  * @param {number} x
  * @param {number} y
  * @param {number} dir
  * @param {number} roomId
  */
 export function hitsMapEdgeLimit(x, y, dir, roomId) {
-  const next = neighborRoomId(roomId, dir);
-  if (next != null) return false;
-  if (dir & DIR.UP) return y <= OW_BOUNDS.top;
-  if (dir & DIR.DOWN) return y >= OW_BOUNDS.bottom;
-  if (dir & DIR.LEFT) return x <= OW_BOUNDS.left;
-  if (dir & DIR.RIGHT) return x >= OW_BOUNDS.right;
+  const origin = roomPlayOrigin(roomId);
+  const worldX = origin.ox + x;
+  const worldY = origin.oy + (y - HUD_HEIGHT);
+  const b = mapWorldBounds();
+  if (dir & DIR.UP) return worldY <= b.minY;
+  if (dir & DIR.DOWN) return worldY >= b.maxY;
+  if (dir & DIR.LEFT) return worldX <= b.minX;
+  if (dir & DIR.RIGHT) return worldX >= b.maxX;
   return false;
 }
 
 /**
  * Clamp only against absolute map edges. Neighbor sides stay open so Link can
- * walk into the next screen's coordinate space before `detectRoomCross`.
+ * walk into the next screen's coordinate space before `detectRoomCross`,
+ * including leftover cells more than one room from the anchor.
  * @param {number} x
  * @param {number} y
  * @param {number} roomId
  */
 export function clampMapEdgePos(x, y, roomId) {
-  let minX = -PLAY_W;
-  let maxX = PLAY_W * 2 - 1;
-  let minY = HUD_HEIGHT - PLAY_H;
-  let maxY = HUD_HEIGHT + PLAY_H * 2 - 1;
-  if (neighborRoomId(roomId, DIR.LEFT) == null) minX = OW_BOUNDS.left;
-  if (neighborRoomId(roomId, DIR.RIGHT) == null) maxX = OW_BOUNDS.right;
-  if (neighborRoomId(roomId, DIR.UP) == null) minY = OW_BOUNDS.top;
-  if (neighborRoomId(roomId, DIR.DOWN) == null) maxY = OW_BOUNDS.bottom;
+  const origin = roomPlayOrigin(roomId);
+  const b = mapWorldBounds();
+  const worldX = clamp(origin.ox + x, b.minX, b.maxX);
+  const worldY = clamp(origin.oy + (y - HUD_HEIGHT), b.minY, b.maxY);
   return {
-    x: Math.max(minX, Math.min(maxX, x)),
-    y: Math.max(minY, Math.min(maxY, y)),
+    x: worldX - origin.ox,
+    y: worldY - origin.oy + HUD_HEIGHT,
   };
 }
 

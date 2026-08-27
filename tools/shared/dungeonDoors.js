@@ -1,4 +1,4 @@
-import { DIR, HUD_HEIGHT } from './collision.js';
+import { DIR, HUD_HEIGHT, UW_BOUNDS } from './collision.js';
 import { bombHits } from './bomb.js';
 import { PLAY_H, PLAY_W } from './continuousCamera.js';
 import { SCREEN_EDGE } from './world.js';
@@ -34,8 +34,20 @@ export const DOORWAY_NS_AXIS_SLACK = 8;
  * only NES `$8D`. `$9D` is the usual walk row; `$9E`/`$9F` are still cavity
  * tiles, and a one-pixel shove off `$9D` used to drop DoorwayDir and yank
  * Link back to the BoundByRoom lip (`X≥$D0`) mid-door.
+ *
+ * Detection stays this wide so those lanes still engage the corridor. Once
+ * Link is past BoundByRoom, {@link clampUwDoorwayPath} uses
+ * {@link DOORWAY_CORRIDOR_AXIS_SLACK} so skipped tile collision cannot walk
+ * him into the jamb.
  */
 export const DOORWAY_EW_AXIS_SLACK = 0x14;
+
+/**
+ * Perpendicular width of a door opening while DoorwayDir skips tiles.
+ * NES is exact (`X=$78` / `Y=$8D`); ±8 keeps the neighboring walk lane and
+ * a 16px sprite inside the 32px face.
+ */
+export const DOORWAY_CORRIDOR_AXIS_SLACK = 8;
 
 /**
  * N/S room exits allow a neighboring walk lane (±8). Door openings are 16px and
@@ -48,9 +60,14 @@ export const DOORWAY_EXIT_AXIS_SLACK = 8;
  * passable doors can be walked through to the geometric room seam (Phase-18
  * continuous UW). Max is exclusive. West still stops short of floor statues
  * at X=`$30` on the room-interior side; negative X is allowed past the lip.
+ *
+ * North includes the BoundByRoom lip through the first unique-floor row
+ * (`Y<$68`, same band as the key-door bump). Link's hotspot is ObjY+$0B, so
+ * standing on the door lip and walking left otherwise samples a maze block
+ * one square south and freezes — L3 `$6b` at the north door.
  */
 export const DOORWAY_DEPTH = Object.freeze({
-  north: Object.freeze({ min: HUD_HEIGHT - PLAY_H, max: 0x5e }),
+  north: Object.freeze({ min: HUD_HEIGHT - PLAY_H, max: 0x68 }),
   south: Object.freeze({ min: 0xbd, max: HUD_HEIGHT + PLAY_H + 1 }),
   west: Object.freeze({ min: -PLAY_W, max: 0x21 }),
   east: Object.freeze({ min: 0xcf, max: PLAY_W + 1 }),
@@ -294,6 +311,94 @@ export function clampUwDoorwayPath(link, room, opts = {}) {
 
   link.x = Math.max(minX, Math.min(maxX, link.x));
   link.y = Math.max(minY, Math.min(maxY, link.y));
+
+  clampUwDoorwayCorridorAxis(link, room, { doorState: state, roomIds });
+}
+
+/**
+ * True when Link is past BoundByRoom into a door hole. At the floor lip,
+ * walking along the wall must not magnetize onto the opening.
+ *
+ * Right/down NES bounds use `>=`, so `$D0`/`$BD` are still the room edge;
+ * the face starts on the next pixel.
+ *
+ * @param {{ x: number, y: number }} link
+ * @param {string} side
+ */
+export function inUwDoorOverflow(link, side) {
+  if (side === 'west') return link.x < UW_BOUNDS.left;
+  if (side === 'east') return link.x > UW_BOUNDS.right;
+  if (side === 'north') return link.y < UW_BOUNDS.top;
+  if (side === 'south') return link.y > UW_BOUNDS.bottom;
+  return false;
+}
+
+/**
+ * Past the inner floor lip into the door hole. BoundByRoom overflow is one
+ * pixel (`X<$21` / `Y<$5E` / `X>$D0`), which includes the 8-aligned floor
+ * cells `$20` and `$5D`. Those are still room floor — walking north along
+ * the west wall of L1 `$73`, or right along L9 `$23`'s north strip after a
+ * 1px knockback, must not magnetize onto the opening.
+ *
+ * @param {{ x: number, y: number }} link
+ * @param {string} side
+ */
+export function inUwDoorCavity(link, side) {
+  if (side === 'west') return link.x < 0x20;
+  if (side === 'east') return link.x >= 0xe0;
+  // Walk-grid north lip `$5D` is 1px into BoundByRoom (`Y<$5E`) — still floor.
+  if (side === 'north') return link.y < 0x5d;
+  if (side === 'south') return link.y > UW_BOUNDS.bottom;
+  return false;
+}
+
+/**
+ * Keep a corridor walker inside the 32px door face. Tile collision is off
+ * for DoorwayDir, so without this, holding the perpendicular axis walks
+ * into the jamb (west door at X≈`$18`, off `$8D`).
+ *
+ * @param {{ x: number, y: number, dir?: number, gridOffset?: number, posFrac?: number }} link
+ * @param {{ roomId?: number, doors?: Record<string, { type?: string }> } | null | undefined} room
+ * @param {{ doorState?: DoorState | null, roomIds?: Set<number> | null }} [opts]
+ */
+function clampUwDoorwayCorridorAxis(link, room, opts = {}) {
+  const state = opts.doorState ?? null;
+  const roomIds = opts.roomIds ?? null;
+  const inWest = inUwDoorCavity(link, 'west') && doorSideAllowsCross(room, state, 'west', roomIds);
+  const inEast = inUwDoorCavity(link, 'east') && doorSideAllowsCross(room, state, 'east', roomIds);
+  const inNorth = inUwDoorCavity(link, 'north') && doorSideAllowsCross(room, state, 'north', roomIds);
+  const inSouth = inUwDoorCavity(link, 'south') && doorSideAllowsCross(room, state, 'south', roomIds);
+
+  if (inWest || inEast) {
+    const lo = DOORWAY_CENTER_Y - DOORWAY_CORRIDOR_AXIS_SLACK;
+    const hi = DOORWAY_CENTER_Y + DOORWAY_CORRIDOR_AXIS_SLACK;
+    const y0 = link.y;
+    link.y = Math.max(lo, Math.min(hi, link.y));
+    if (link.y !== y0) rewindDoorwayPerpStep(link, 'y');
+  }
+  if (inNorth || inSouth) {
+    const lo = DOORWAY_CENTER_X - DOORWAY_CORRIDOR_AXIS_SLACK;
+    const hi = DOORWAY_CENTER_X + DOORWAY_CORRIDOR_AXIS_SLACK;
+    const x0 = link.x;
+    link.x = Math.max(lo, Math.min(hi, link.x));
+    if (link.x !== x0) rewindDoorwayPerpStep(link, 'x');
+  }
+}
+
+/**
+ * A mid-cell stride on the clamped axis would otherwise keep gridOffset
+ * growing against a wall that DoorwayDir is not allowed to enter.
+ *
+ * @param {{ dir?: number, gridOffset?: number, posFrac?: number }} link
+ * @param {'x' | 'y'} axis
+ */
+function rewindDoorwayPerpStep(link, axis) {
+  const horizontal = Boolean(link.dir & (DIR.LEFT | DIR.RIGHT));
+  const vertical = Boolean(link.dir & (DIR.UP | DIR.DOWN));
+  const sameAxis = (axis === 'x' && horizontal) || (axis === 'y' && vertical);
+  if (!sameAxis) return;
+  if (link.gridOffset != null) link.gridOffset = 0;
+  if (link.posFrac != null) link.posFrac = 0;
 }
 
 /**

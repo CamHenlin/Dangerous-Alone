@@ -145,6 +145,10 @@ export function shiftPositions(objs, dx, dy) {
     if (!o) continue;
     if (typeof o.x === 'number') o.x += dx;
     if (typeof o.y === 'number') o.y += dy;
+    // Floor-item homes live in the same space as x/y. Rebase must move them
+    // or a leftover heart snaps back to the old room after a seam cross.
+    if (typeof o.homeX === 'number') o.homeX += dx;
+    if (typeof o.homeY === 'number') o.homeY += dy;
     // Blade traps keep home-room anchors (rush target / retract limit) in the
     // same coordinate space as x/y. Soft-enter rebase must shift those too or
     // a neighbour trap rushes toward the new room's $78/$90.

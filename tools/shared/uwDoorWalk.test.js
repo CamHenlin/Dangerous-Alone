@@ -16,8 +16,9 @@ import {
   nearDoorway,
 } from './dungeonDoors.js';
 import { SCREEN_EDGE } from './world.js';
-import { createLinkState } from './linkMotion.js';
+import { UW_ROOM_BOUNDS, createLinkState, stepShove } from './linkMotion.js';
 import {
+  OPEN_UW_GRID,
   applyUwDoorCross,
   detectOwnedUwDoorCross,
   stepUwDoorHero,
@@ -221,6 +222,80 @@ test('the seam lip covers the door cavity, not a whole room', () => {
   assert.equal(canClaimAnchorCross(-0x13, DOORWAY_CENTER_Y), true);
   assert.equal(canClaimAnchorCross(-ANCHOR_SEAM_LIP, DOORWAY_CENTER_Y), true);
   assert.equal(canClaimAnchorCross(-ANCHOR_SEAM_LIP - 1, DOORWAY_CENTER_Y), false);
+});
+
+test('holding down in the west doorway stays in the opening, not the jamb', () => {
+  const room = openRoom(0x73);
+  const link = createLinkState(0x18, DOORWAY_CENTER_Y, DIR.DOWN);
+  for (let i = 0; i < 24; i += 1) {
+    stepUwDoorHero(link, room, DIR.DOWN, ctx(room));
+  }
+  assert.equal(uwDoorMotionMode(link, room, ctx(room)), 'corridor');
+  assert.ok(link.x < 0x21, `still in the west cavity, x=$${link.x.toString(16)}`);
+  assert.ok(
+    Math.abs(link.y - DOORWAY_CENTER_Y) <= 8,
+    `must not walk into the jamb, y=$${link.y.toString(16)}`,
+  );
+});
+
+test('north floor lip can walk right past an open door (L9 $23 screenshot)', () => {
+  // Y=$5D is walk-grid, 1px into BoundByRoom overflow. Corridor X-clamp used
+  // to treat that as the door hole, so Right after a shove did nothing.
+  const room = openRoom(0x23);
+  const lip = createLinkState(0x80, 0x5d, DIR.RIGHT);
+  const x0 = lip.x;
+  for (let i = 0; i < 24; i += 1) {
+    stepUwDoorHero(lip, room, DIR.RIGHT, ctx(room));
+  }
+  assert.ok(
+    lip.x > x0 + 8,
+    `must walk right along the north wall, x=$${lip.x.toString(16)}`,
+  );
+  assert.equal(lip.y, 0x5d, 'must stay on the north floor strip');
+});
+
+test('north-lip knockback with live DoorwayDir still walks right', () => {
+  // Walk-in latch keeps corridor mode on Y<$68. A $20 up-shove from $5E
+  // lands on walk-grid $5D; Right must not magnetize onto X=$78.
+  const room = openRoom(0x23);
+  const link = createLinkState(0x80, 0x5e, DIR.DOWN);
+  stepShove(link, OPEN_UW_GRID, DIR.UP, 0x20, {
+    roomId: UW_ROOM_BOUNDS,
+    pixelsPerFrame: 4,
+  });
+  assert.equal(link.y, 0x5d, `shove should land on the north lip, y=$${link.y.toString(16)}`);
+  const doorCtx = { ...ctx(room), doorwayBlockSide: 'north' };
+  const x0 = link.x;
+  for (let i = 0; i < 24; i += 1) {
+    stepUwDoorHero(link, room, DIR.RIGHT, doorCtx);
+  }
+  assert.ok(
+    link.x > x0 + 8,
+    `Right after a latched north shove stayed at x=$${link.x.toString(16)} y=$${link.y.toString(16)}`,
+  );
+});
+
+test('west floor column can walk north past the door (L1 $73 screenshot)', () => {
+  // X=$20 is the first 8-aligned floor cell. DoorwayDir still engages so the
+  // west door can be entered, but the corridor Y clamp must not freeze Link
+  // on the door row — there is open floor north of the opening.
+  const room = openRoom(0x73);
+  const atCenter = createLinkState(0x20, DOORWAY_CENTER_Y, DIR.UP);
+  for (let i = 0; i < 24; i += 1) {
+    stepUwDoorHero(atCenter, room, DIR.UP, ctx(room));
+  }
+  assert.equal(atCenter.x, 0x20);
+  assert.ok(
+    atCenter.y < DOORWAY_CENTER_Y - 8,
+    `must leave the door Y band, y=$${atCenter.y.toString(16)}`,
+  );
+
+  const atLip = createLinkState(0x20, 0x85, DIR.UP);
+  const y0 = atLip.y;
+  for (let i = 0; i < 16; i += 1) {
+    stepUwDoorHero(atLip, room, DIR.UP, ctx(room));
+  }
+  assert.ok(atLip.y < y0, `north from the floor lip, stayed at y=$${atLip.y.toString(16)}`);
 });
 
 test('a hero at x=$-13 in the west door can walk right into the room', () => {

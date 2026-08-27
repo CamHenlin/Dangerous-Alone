@@ -5,12 +5,15 @@ import {
   SAVE_VERSION,
   applyInventorySnapshot,
   applyLoadedSave,
+  restoreBombBag,
   closeBossApproachDoors,
   createSaveStore,
   hydrateDungeonProgress,
   resetGanonEncounter,
   resetGanonEncounterInStorage,
   resolveZeroHeartContinue,
+  saveLooksLikeZeldaRescued,
+  saveStartsSecondQuest,
   serializeDungeonProgress,
   serializeGameState,
   snapshotInventory,
@@ -112,6 +115,66 @@ test('createSaveStore persists three slots', () => {
 
   store.erase(0);
   assert.equal(store.listSlots()[0], null);
+});
+
+test('bombBag survives a save round trip', () => {
+  const inv = createInventory();
+  inv.bombBag = 12;
+  inv.maxBombs = 24;
+  const snap = snapshotInventory(inv);
+  assert.equal(snap.bombBag, 12);
+  const back = createInventory();
+  applyInventorySnapshot(back, snap);
+  assert.equal(back.bombBag, 12);
+  assert.equal(back.maxBombs, 24);
+});
+
+test('restoreBombBag infers a coop-scaled cap and lifts a paid upgrade', () => {
+  assert.equal(restoreBombBag({ maxBombs: 16, bombBag: 12 }, 2), 12);
+  assert.equal(
+    restoreBombBag({ maxBombs: 16 }, 2, { '1:5': { taken: ['23'] } }),
+    12,
+  );
+  assert.equal(restoreBombBag({ maxBombs: 12 }, 1), 12);
+});
+
+test('legacy saves restore a paid bomb upgrade the bag forgot', () => {
+  const inv = createInventory();
+  inv.maxBombs = 16;
+  const payload = serializeGameState({
+    name: 'LINK',
+    inv,
+    party: [{ index: 0 }, { index: 1 }],
+    dungeonProgress: new Map([
+      [
+        '1:5',
+        {
+          taken: new Set([0x17, 0x14]),
+          cleared: new Set(),
+          visited: new Set(),
+          pushed: new Set(),
+          doors: new Set(),
+        },
+      ],
+    ]),
+    roomId: 0x77,
+    x: 0,
+    y: 0,
+    dir: 1,
+  });
+  delete payload.inv.bombBag;
+  payload.inv.maxBombs = 16;
+  const target = {
+    inv: createInventory(),
+    owSecretsRevealed: new Set(),
+    caveTaken: new Set(),
+    owItemsTaken: new Set(),
+    hintMarks: new Set(),
+    toldStory: new Set(),
+    dungeonProgress: new Map(),
+  };
+  applyLoadedSave(payload, target);
+  assert.equal(target.inv.bombBag, 12, 'L5 old man was paid; bag must come back');
 });
 
 test('applyInventorySnapshot clears ephemeral state', () => {
@@ -362,4 +425,123 @@ test('a continue still knows which world each hero was standing in', () => {
   assert.equal(meta.position.mode, 'cave');
   assert.equal(meta.party[0].worldId, 'cave:29');
   assert.equal(meta.party[1].worldId, 'overworld');
+});
+
+test('quest 1 Zelda rescue is persisted and continue starts quest 2', () => {
+  const inv = createInventory();
+  inv.quest = 1;
+  inv.triforceOfPower = 1;
+  const payload = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'dungeon',
+    roomId: 0x32,
+    x: 0x80,
+    y: 0x80,
+    dir: 1,
+    dungeon: { level: 9, fromRoomId: 0x3b, roomId: 0x32 },
+    questCompleted: 1,
+  });
+  assert.equal(payload.questCompleted, 1);
+  assert.equal(saveStartsSecondQuest(payload), true);
+
+  const target = {
+    inv: createInventory(),
+    owSecretsRevealed: new Set(),
+    caveTaken: new Set(),
+    owItemsTaken: new Set(),
+    hintMarks: new Set(),
+    toldStory: new Set(),
+    dungeonProgress: new Map(),
+  };
+  const meta = applyLoadedSave(payload, target);
+  assert.equal(meta.questCompleted, 1);
+  assert.equal(saveStartsSecondQuest({ inv: target.inv, questCompleted: meta.questCompleted }), true);
+});
+
+test('quest 2 files and unfinished Q1 files do not auto-start the second quest', () => {
+  const q1 = serializeGameState({
+    inv: createInventory(),
+    questCompleted: 0,
+  });
+  assert.equal(saveStartsSecondQuest(q1), false);
+
+  const q1DoneOnQ2 = serializeGameState({
+    inv: { ...createInventory(), quest: 2 },
+    questCompleted: 1,
+  });
+  assert.equal(saveStartsSecondQuest(q1DoneOnQ2), false);
+
+  const q2Clear = serializeGameState({
+    inv: { ...createInventory(), quest: 2 },
+    questCompleted: 2,
+  });
+  assert.equal(saveStartsSecondQuest(q2Clear), false);
+  assert.equal(q2Clear.questCompleted, 2);
+});
+
+test('legacy Q1 saves in Zelda\'s cell start the second quest without the flag', () => {
+  const inv = createInventory();
+  inv.triforceOfPower = 1;
+  const inCell = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'dungeon',
+    roomId: 0x32,
+    x: 0x80,
+    y: 0x80,
+    dir: 1,
+    dungeon: { level: 9, fromRoomId: 0x3b, roomId: 0x32 },
+  });
+  assert.equal(inCell.questCompleted, 0);
+  assert.equal(saveLooksLikeZeldaRescued(inCell), true);
+  assert.equal(saveStartsSecondQuest(inCell), true);
+
+  const visitedCell = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'dungeon',
+    roomId: 0x73,
+    dungeon: { level: 9, fromRoomId: 0x3b, roomId: 0x73 },
+    dungeonProgress: new Map([
+      [
+        '1:9',
+        {
+          cleared: new Set(),
+          taken: new Set(),
+          visited: new Set([0x32, 0x42]),
+          pushed: new Set(),
+          doors: new Set(),
+          lastBoss: true,
+          map: 1,
+          compass: 1,
+        },
+      ],
+    ]),
+  });
+  assert.equal(saveStartsSecondQuest(visitedCell), true);
+
+  const ganonOnly = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'dungeon',
+    roomId: 0x52,
+    dungeon: { level: 9, fromRoomId: 0x3b, roomId: 0x52 },
+    dungeonProgress: new Map([
+      [
+        '1:9',
+        {
+          cleared: new Set([0x42]),
+          taken: new Set(),
+          visited: new Set([0x42, 0x52]),
+          pushed: new Set(),
+          doors: new Set(),
+          lastBoss: true,
+          map: 1,
+          compass: 1,
+        },
+      ],
+    ]),
+  });
+  assert.equal(saveStartsSecondQuest(ganonOnly), false, 'still south of Ganon');
 });

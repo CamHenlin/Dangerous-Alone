@@ -7,7 +7,7 @@ import {
   ENDING_COLS,
   EPILOGUE_MAX_ROWS,
   SCREEN_COLS,
-  centreCol,
+  centerCol,
   endingStory,
   flattenEndingLines,
   layoutEndingText,
@@ -37,11 +37,11 @@ test('a word longer than the budget gets its own line rather than a split', () =
   assert.deepEqual(lines, ['A', 'SUPERCALIFRAGILISTIC', 'WORD']);
 });
 
-test('lines are centred on the nametable', () => {
-  assert.equal(centreCol('AB'), 15);
-  assert.equal(centreCol('X'.repeat(SCREEN_COLS)), 0);
+test('lines are centered on the nametable', () => {
+  assert.equal(centerCol('AB'), 15);
+  assert.equal(centerCol('X'.repeat(SCREEN_COLS)), 0);
   // Over-long lines clamp to the left edge instead of going negative.
-  assert.equal(centreCol('X'.repeat(SCREEN_COLS + 8)), 0);
+  assert.equal(centerCol('X'.repeat(SCREEN_COLS + 8)), 0);
 });
 
 test('layout stacks rows from the top row down', () => {
@@ -122,14 +122,14 @@ test('the story pack still carries the three ending beats', () => {
   assert.ok(Array.isArray(STORY.ending.epilogue));
 });
 
-test('an epilogue page is set as a block, not centred line by line', () => {
+test('an epilogue page is set as a block, not centered line by line', () => {
   const page = layoutEpiloguePage(
     'SHE BROKE IT IN ONE NIGHT WITH SOLDIERS ON THE STAIR, AND SHE HAS CARRIED THAT CHOICE',
   );
   assert.ok(page.length > 2);
   const cols = new Set(page.map((l) => l.col));
   assert.equal(cols.size, 1, 'every line of a paragraph shares one left margin');
-  // The block itself is still centred on the screen.
+  // The block itself is still centered on the screen.
   const widest = Math.max(...page.map((l) => l.text.length));
   assert.equal(page[0].col, (SCREEN_COLS - widest) >> 1);
 });

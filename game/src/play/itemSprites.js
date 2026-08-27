@@ -194,7 +194,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
 
     const horizontal = Boolean(drawOpts.rotate90Cw || drawOpts.rotate90Ccw);
     // Widths stay in NES units: the context is pre-scaled, so reading them off
-    // canvas.width (device pixels) would rotate about the wrong centre.
+    // canvas.width (device pixels) would rotate about the wrong center.
     const outW = horizontal ? 16 : 8;
     const outH = horizontal ? 8 : 16;
     const { canvas, ctx } = createTileCanvas(outW, outH);
@@ -243,6 +243,14 @@ export function createItemSprites(sheetTexture, opts = {}) {
       dir,
       swordSpritePalette(swordTier),
     );
+  }
+
+  /**
+   * Magical rod swing — tile $4A, palette row 5 (sprite pal 1).
+   * @param {number} dir
+   */
+  function rodTexture(dir) {
+    return orientedWeaponTexture(CHR.MAGIC_ROD, dir, 1);
   }
 
   /** Arrow slot frames $28 / $86 — tip along `dir`. */
@@ -450,6 +458,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
   return {
     setPaletteSet,
     swordTexture,
+    rodTexture,
     arrowTexture,
     magicShotTexture,
     weaponTextureHorizontal,

@@ -33,14 +33,22 @@ const OW_STAIR_TILES = Object.freeze([0x74, 0x75]);
 /**
  * Link_SetSpeed: overworld only — mountain stairs drop QSpeed to $30 and
  * reset the position fraction on the transition into the slower speed.
+ * Leftover heroes pass `standingTile` so speed is read from the occupying
+ * cell; `standingTile(grid, x, y)` folds X with `& $F8` and would sample
+ * the streaming-anchor screen.
  * @param {LinkState} link
  * @param {number[][] | null} tileGrid
+ * @param {{ standingTile?: (x: number, y: number) => number }} [opts]
  * @returns {number} quarter speed
  */
-export function overworldLinkQSpeed(link, tileGrid) {
-  if (!tileGrid?.length) return LINK_QSPEED;
-  const tile = standingTile(tileGrid, link.x, link.y);
-  const slow = OW_STAIR_TILES.includes(tile);
+export function overworldLinkQSpeed(link, tileGrid, opts = {}) {
+  const tile =
+    typeof opts.standingTile === 'function'
+      ? opts.standingTile(link.x, link.y)
+      : tileGrid?.length
+        ? standingTile(tileGrid, link.x, link.y)
+        : 0x26;
+  const slow = OW_STAIR_TILES.includes(tile & 0xff);
   const next = slow ? LINK_QSPEED_STAIRS : LINK_QSPEED;
   if (slow && link.qSpeedApplied !== LINK_QSPEED_STAIRS) link.posFrac = 0;
   link.qSpeedApplied = next;
@@ -172,6 +180,44 @@ export function onGrid(x, y) {
 }
 
 /**
+ * Walk-grid remainders that NES actually stops on. Interior cells are X≡0
+ * and Y≡5. The west lip is `$11` (and UW `$21`), remainder 1 — knocking
+ * those back onto an 8px column fights BoundByRoom.
+ */
+export function onWalkGrid(x, y) {
+  const rx = x & 7;
+  return (rx === 0 || rx === 1) && (y & 7) === 5;
+}
+
+/**
+ * Snap to the nearest walk-grid pixel. X remainder 4 (a 4px knockback)
+ * rounds up so `$74` returns to `$78` rather than `$70`.
+ * @param {LinkState} link
+ */
+export function snapLinkToWalkGrid(link) {
+  const rx = link.x & 7;
+  if (rx !== 0 && rx !== 1) {
+    if (rx < 4) link.x -= rx;
+    else link.x += 8 - rx;
+  }
+  const ry = link.y & 7;
+  if (ry !== 5) {
+    const down = (ry - 5 + 8) & 7;
+    const up = (8 - down) & 7;
+    if (down <= up) link.y -= down;
+    else link.y += up;
+  }
+  link.gridOffset = 0;
+  link.posFrac = 0;
+  link.moving = false;
+}
+
+/** Dungeon lips are not 8-aligned; do not snap those back onto the OW grid. */
+function shouldAlignWalkGrid(roomId) {
+  return roomId !== UW_ROOM_BOUNDS && roomId !== NO_ROOM_BOUNDS;
+}
+
+/**
  * @typedef {object} LinkState
  * @property {number} x
  * @property {number} y
@@ -277,6 +323,9 @@ export function canLinkMove(tileGrid, x, y, dir, roomId = null, tileOpts = {}) {
     );
   }
   if (!walkable) return false;
+  if (typeof tileOpts.blockedBy === 'function' && tileOpts.blockedBy(x, y, dir)) {
+    return false;
+  }
 
   // RIGHT only: NES look-ahead is +$10, which skips a lone solid column at +$08.
   // LEFT/UP/DOWN already sample the adjacent tile (−8 / +8), so an extra
@@ -328,19 +377,38 @@ export function stepShove(link, tileGrid, shoveDir, shovePixels, opts = {}) {
   }
   const roomId = opts.roomId ?? null;
   const tileOpts = opts.tileOpts ?? {};
+  const align = shouldAlignWalkGrid(roomId);
   const maxStep = Math.min(opts.pixelsPerFrame ?? 4, shovePixels);
   let moved = 0;
 
-  for (let i = 0; i < maxStep; i += 1) {
-    if (!canLinkMove(tileGrid, link.x, link.y, shoveDir, roomId, tileOpts)) {
+  // 4px/frame knockback leaves remainder 4 if gridOffset is not kept, and a
+  // later hit stacks that into an 8px slip — overlapping Armos, half-on
+  // stairs, ghost walls in caves. Only rewind a *walk* cell when a new
+  // `$20` hit starts; later frames of the same shove keep that offset.
+  const newHit = shovePixels >= 0x20;
+  if (align && newHit) {
+    if (link.gridOffset !== 0) snapToGridCellStart(link);
+    else if (!onWalkGrid(link.x, link.y)) snapLinkToWalkGrid(link);
+  }
+
+  const abortShove = () => {
+    if (align) rewindAlongDir(link, shoveDir);
+    else {
       link.gridOffset = 0;
       link.posFrac = 0;
       link.moving = false;
-      return { shovePixels: 0, moved, blocked: true };
+    }
+    return { shovePixels: 0, moved, blocked: true };
+  };
+
+  for (let i = 0; i < maxStep; i += 1) {
+    if (!canLinkMove(tileGrid, link.x, link.y, shoveDir, roomId, tileOpts)) {
+      return abortShove();
     }
 
     const x0 = link.x;
     const y0 = link.y;
+    const grid0 = link.gridOffset;
     if (shoveDir & DIR.UP) link.y -= 1;
     else if (shoveDir & DIR.DOWN) link.y += 1;
     else if (shoveDir & DIR.LEFT) link.x -= 1;
@@ -349,11 +417,13 @@ export function stepShove(link, tileGrid, shoveDir, shovePixels, opts = {}) {
     if (pixelHitsRoomBound(link.x, link.y, shoveDir, roomId, anchorFromOpts(tileOpts))) {
       link.x = x0;
       link.y = y0;
-      link.gridOffset = 0;
-      link.posFrac = 0;
-      link.moving = false;
-      return { shovePixels: 0, moved, blocked: true };
+      link.gridOffset = grid0;
+      return abortShove();
     }
+
+    if (shoveDir & (DIR.RIGHT | DIR.DOWN)) link.gridOffset += 1;
+    else link.gridOffset -= 1;
+    truncateGridOffset(link);
     moved += 1;
   }
 
@@ -381,6 +451,9 @@ function resolveTileOpts(tileOpts = {}) {
  * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], ladder?: object, ladderMode?: string }} [tileOpts]
  */
 export function isLinkStandingSolid(tileGrid, x, y, tileOpts = {}) {
+  if (typeof tileOpts.standingBlocked === 'function' && tileOpts.standingBlocked(x, y)) {
+    return true;
+  }
   if (!tileGrid && typeof tileOpts.standingTile !== 'function') return false;
   const { firstUnwalkable, walkableRemap } = resolveTileOpts(tileOpts);
   const tile =
@@ -485,13 +558,23 @@ export function ejectLinkFromSolid(link, tileGrid, opts = {}) {
  * @param {LinkState} link
  */
 export function snapToGridCellStart(link) {
+  rewindAlongDir(link, link.dir);
+}
+
+/**
+ * Rewind `gridOffset` pixels along `dir` (knockback may not match facing).
+ * @param {LinkState} link
+ * @param {number} dir
+ */
+function rewindAlongDir(link, dir) {
   if (link.gridOffset === 0) {
     link.posFrac = 0;
+    link.moving = false;
     return;
   }
-  if (link.dir & (DIR.LEFT | DIR.RIGHT)) {
+  if (dir & (DIR.LEFT | DIR.RIGHT)) {
     link.x -= link.gridOffset;
-  } else if (link.dir & (DIR.UP | DIR.DOWN)) {
+  } else if (dir & (DIR.UP | DIR.DOWN)) {
     link.y -= link.gridOffset;
   }
   link.gridOffset = 0;
@@ -680,6 +763,12 @@ export function stepLink(
   if (committed) {
     moveDir = applyDirOnGridLine(link, pickSingleDir(boundMask));
   } else {
+    // A finished knockback that never rewound (or a cave exit that restored
+    // an off-grid mouth) would otherwise walk the rest of the session 4–8px
+    // off the tile lattice.
+    if (shouldAlignWalkGrid(roomId) && !onWalkGrid(link.x, link.y)) {
+      snapLinkToWalkGrid(link);
+    }
     // Already embedded (knockback / thin wall) — slide out before walking.
     if (isLinkStandingSolid(tileGrid, link.x, link.y, tileOpts)) {
       ejectLinkFromSolid(link, tileGrid, {
@@ -730,11 +819,7 @@ export function stepLink(
 
   if (link.x !== prevX || link.y !== prevY) {
     link.moving = true;
-    link.animCounter -= 1;
-    if (link.animCounter <= 0) {
-      link.animCounter = LINK_ANIM_PERIOD;
-      link.animFrame ^= 1;
-    }
+    advanceWalkAnim(link);
   } else if (committed && link.gridOffset !== 0) {
     // No pixel this frame while mid-cell. That can mean the next pixel is a
     // real wall/bound — or a fractional stall (e.g. mountain-stair QSpeed $30:
@@ -756,10 +841,26 @@ export function stepLink(
       || isLinkStandingSolid(tileGrid, nextX, nextY, tileOpts);
     if (stuckOnSolid || nextPixelBlocked) {
       snapToGridCellStart(link);
+      link.animCounter = LINK_ANIM_PERIOD;
+    } else {
+      // Still walking: QSpeed $30 stalls a pixel every few frames, and
+      // resetting the counter there froze the walk cycle on mountain stairs.
+      link.moving = true;
+      advanceWalkAnim(link);
     }
-    link.animCounter = LINK_ANIM_PERIOD;
   } else {
     link.animCounter = LINK_ANIM_PERIOD;
+  }
+}
+
+/**
+ * @param {LinkState} link
+ */
+function advanceWalkAnim(link) {
+  link.animCounter -= 1;
+  if (link.animCounter <= 0) {
+    link.animCounter = LINK_ANIM_PERIOD;
+    link.animFrame ^= 1;
   }
 }
 

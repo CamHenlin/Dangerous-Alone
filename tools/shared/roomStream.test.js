@@ -95,6 +95,15 @@ test('shiftPositions rebases entities', () => {
   assert.equal(objs[1].x, PLAY_W);
 });
 
+test('shiftPositions rebases a floor-item home with its sprite', () => {
+  const item = { x: 0x78, y: 0x8d, homeX: 0x78, homeY: 0x8d };
+  shiftPositions([item], 0, -176);
+  assert.equal(item.x, 0x78);
+  assert.equal(item.homeX, 0x78);
+  assert.equal(item.y, 0x8d - 176);
+  assert.equal(item.homeY, 0x8d - 176);
+});
+
 test('cullOffscreenEnemies removes foes when sprite and home leave view', () => {
   const foes = [
     { alive: true, homeRoomId: 0x45, x: 0x80, y: 0x8d },

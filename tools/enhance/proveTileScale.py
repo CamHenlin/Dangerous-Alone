@@ -37,7 +37,7 @@ TARGET = 16                # what a tile is stored as, so judge detail at 16x16
 
 
 def neighbourhood(grids, tile_at, cy, cx, k):
-    """k x k slot grid centred on (cy, cx), clamped at the screen edges."""
+    """k x k slot grid centered on (cy, cx), clamped at the screen edges."""
     half = k // 2
     out = np.zeros((k * 8, k * 8), np.uint8)
     for dy in range(-half, -half + k):
@@ -79,7 +79,7 @@ def main():
                 break
         if cy is not None:
             break
-    print(f"centre tile at row {cy} col {cx}")
+    print(f"center tile at row {cy} col {cx}")
 
     controlnet = ControlNetModel.from_pretrained(
         "diffusers/controlnet-canny-sdxl-1.0", torch_dtype=torch.float16)
@@ -112,19 +112,19 @@ def main():
         per = GEN // k
         half = k // 2
         box = (half * per, half * per, (half + 1) * per, (half + 1) * per)
-        centre = full.crop(box)
+        center = full.crop(box)
         cells.append((k, per, full.resize((256, 256), Image.LANCZOS),
-                      centre.resize((256, 256), Image.NEAREST),
-                      centre.resize((TARGET, TARGET), Image.BOX).resize(
+                      center.resize((256, 256), Image.NEAREST),
+                      center.resize((TARGET, TARGET), Image.BOX).resize(
                           (256, 256), Image.NEAREST)))
 
     img = Image.new("RGB", (3 * 264 + 8, len(cells) * 264 + 8), (24, 24, 30))
-    for r, (k, per, full, centre, at16) in enumerate(cells):
-        for c, im in enumerate((full, centre, at16)):
+    for r, (k, per, full, center, at16) in enumerate(cells):
+        for c, im in enumerate((full, center, at16)):
             img.paste(im, (8 + c * 264, 8 + r * 264))
     img.save(SCRATCH / "tile_scale_proof.png")
     print("rows: " + ", ".join(f"context {k} ({p}px/tile)" for k, p, *_ in cells))
-    print("columns: whole render | centre tile | centre tile AT 16x16")
+    print("columns: whole render | center tile | center tile AT 16x16")
     print(f"wrote {SCRATCH / 'tile_scale_proof.png'}")
 
 

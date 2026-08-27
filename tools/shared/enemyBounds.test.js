@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PLAY_W, occupyingRoom } from './continuousCamera.js';
 import { OBJ, createEnemy, stepEnemy } from './enemies.js';
-import { enemyMotionBounds, shotMotionBounds } from './enemyBounds.js';
+import { chaseBoundsForCameras, enemyMotionBounds, fairyFlightBounds, FAIRY_SCREEN_BOUNDS_OW, shotMotionBounds } from './enemyBounds.js';
 import { DIR } from './collision.js';
 import { stepProjectile, createProjectile, PROJ } from './projectiles.js';
 import { chaseBoundsForCamera, uwEnemyBoundsForRoom } from './roomStream.js';
@@ -109,4 +109,26 @@ test('a leftover dungeon shot is not clipped to the anchor camera', () => {
   stepProjectile(p, b);
   assert.equal(p.alive, true, 'occupying-cell bounds must keep the leftover beam');
   assert.ok(p.x < leftoverX, 'the beam must still travel');
+});
+
+test('fairy chase bounds cover every camera, not only player one', () => {
+  const p1 = { camLocalX: 0, camLocalY: 0 };
+  const leftover = { camLocalX: PLAY_W, camLocalY: 0 };
+  const one = chaseBoundsForCamera(0, 0);
+  const party = chaseBoundsForCameras([p1, leftover], p1);
+  assert.ok(party.maxX > one.maxX, 'player two leftover east must widen the pad');
+  assert.ok(party.maxX >= leftover.camLocalX + PLAY_W, 'the leftover camera must be inside');
+});
+
+test('a leftover fairy bounces in its own camera, not the chase-pad union', () => {
+  const p1 = { camLocalX: 0, camLocalY: 0 };
+  const leftover = { camLocalX: PLAY_W, camLocalY: 0 };
+  const x = PLAY_W + 0x80;
+  const y = 0x8d;
+  const box = fairyFlightBounds([p1, leftover], x, y, p1);
+  assert.equal(box.minX, PLAY_W + FAIRY_SCREEN_BOUNDS_OW.minX);
+  assert.equal(box.maxX, PLAY_W + FAIRY_SCREEN_BOUNDS_OW.maxX);
+  assert.ok(box.maxX < PLAY_W * 2, 'must not use the 24px chase pad past the screen');
+  const home = fairyFlightBounds([p1, leftover], 0x80, 0x8d, p1);
+  assert.deepEqual(home, FAIRY_SCREEN_BOUNDS_OW);
 });

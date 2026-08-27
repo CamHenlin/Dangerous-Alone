@@ -4,6 +4,7 @@ import { createInventory } from './inventory.js';
 import {
   BOMB_UPGRADE_PERSON,
   BOMB_UPGRADE_PRICE,
+  paidBombUpgradeCount,
   tryBuyBombUpgrade,
 } from './bombUpgrade.js';
 
@@ -29,6 +30,18 @@ test('a bomb upgrade keeps the party multiplier on the new bag', () => {
   assert.equal(inv.bombBag, 12);
   assert.equal(inv.maxBombs, 24, 'two players should still get ×2 of the new bag');
   assert.equal(inv.bombs, 24);
+});
+
+test('paidBombUpgradeCount reads quest-1 old-man rooms from taken flags', () => {
+  assert.equal(paidBombUpgradeCount({ '1:5': { taken: ['23'] } }), 1);
+  assert.equal(
+    paidBombUpgradeCount({
+      '1:5': { taken: new Set([0x17]) },
+      '1:7': { taken: [0x48] },
+    }),
+    2,
+  );
+  assert.equal(paidBombUpgradeCount({ '1:5': { taken: [0x14] } }), 0);
 });
 
 test('bomb upgrade rejects wrong position or poor Link', () => {

@@ -5,6 +5,7 @@ import { HUD_HEIGHT } from '@shared/collision.js';
 import { B_ITEM, heartDisplay } from '@shared/inventory.js';
 import { STATUS_A_XY, STATUS_B_XY, bItemIcon, swordIcon } from '@shared/inventoryIcons.js';
 import { QUEST2_SWORD_DX, QUEST2_SWORD_DY } from '@shared/nameEntry.js';
+import { formatPartyCount } from '@shared/sharedBar.js';
 import { formatMagicKeyCount, formatStatusCount } from '@shared/statusBarText.js';
 import { heartTileTexture, nesText, statusCounterIconTexture } from './nesFont.js';
 import { drawDungeonMinimap, drawOverworldMinimap } from './minimap.js';
@@ -269,8 +270,10 @@ export function createHud(deps = {}) {
     // Rupee / key / bomb — StatusBarStatics $F7 / $F9 / $61 @ col 11;
     // FormatDecimalCountByte @ cols 12–14.
     placeCounterIcon('rupee', LAYOUT.iconX, LAYOUT.rupeeY);
+    // Three glyphs here; the shared strip's four-digit field is what 4p 1020
+    // needs. 2p/3p (510 / 765) still fit, and this is the NES blank rules.
     placeText(
-      formatStatusCount(s.rupeesShown ?? inv.rupees),
+      formatPartyCount(s.rupeesShown ?? inv.rupees, 3),
       LAYOUT.countX,
       LAYOUT.rupeeY,
     );

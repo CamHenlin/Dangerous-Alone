@@ -62,10 +62,31 @@ export function createPlayerFocus({ load, save }) {
       return player;
     },
 
-    /** Run `fn` with `player`'s world context live. */
+    /**
+     * Run `fn` with `player`'s world context live, then put the previous
+     * player back. Saves used to `on(host)` from inside another hero's
+     * step and never return, so a leftover ally's cave stole the dungeon
+     * mid-bomb-upgrade and froze the ticker.
+     *
+     * Async `fn` keeps the inner player until the promise settles.
+     */
     on(player, fn) {
+      const prev = current;
       this.to(player);
-      return fn();
+      const restore = () => {
+        if (prev != null && prev !== player) this.to(prev);
+      };
+      try {
+        const result = fn();
+        if (result && typeof result.then === 'function') {
+          return Promise.resolve(result).finally(restore);
+        }
+        restore();
+        return result;
+      } catch (err) {
+        restore();
+        throw err;
+      }
     },
   };
 }

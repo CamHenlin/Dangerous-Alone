@@ -306,7 +306,10 @@ export function decodeUwRoom(tables, levelBlock, roomId) {
     },
     floorItem: {
       dark: Boolean(floorItem & 0x80),
-      bossNoise: Boolean(floorItem & 0x40),
+      // LevelBlock %DSSI IIII — bits 5–6 select the adjacent-room DMC roar
+      // (0 none, 1 Aquamentus/Gleeok/Ganon, 2 Dodongo/Gohma, 3 Digdogger/
+      // Manhandla/Patra). Data Crystal "boss noise"; Zeldit 20/40/60.
+      bossNoise: (floorItem >> 5) & 0x03,
       // Bits vary; keep raw + common decode
       itemType: floorItem & 0x1f,
       raw: floorItem,

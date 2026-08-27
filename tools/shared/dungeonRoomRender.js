@@ -9,10 +9,14 @@ import {
   FLOOR_TILES_W,
   PLAY_COLS,
   PLAY_ROWS,
+  columnMajorToRowMajor,
   composeDoorFrameTiles,
   composeDungeonRoomTiles,
+  doorFacePlayRect,
+  layoutDoorFace,
   openSidesForRoom,
 } from './dungeonRoomLayout.js';
+import { cropRgba } from './shutterAnim.js';
 
 /** CHR left transparent in door-frame overlays so Link shows through the opening. */
 export const DOOR_OVERLAY_CLEAR_TILES = Object.freeze(new Set([0x00, 0x24]));
@@ -135,19 +139,46 @@ export function renderUwSquareRgba(primary, opts) {
 }
 
 /**
+ * @param {Iterable<string> | undefined} a
+ * @param {Iterable<string> | undefined} b
+ */
+function sameOpenSides(a, b) {
+  if (a === b) return true;
+  const sa = a instanceof Set ? a : new Set(a ?? []);
+  const sb = b instanceof Set ? b : new Set(b ?? []);
+  if (sa.size !== sb.size) return false;
+  for (const side of sa) {
+    if (!sb.has(side)) return false;
+  }
+  return true;
+}
+
+/**
  * Compose + render a dungeon room.
  * @param {object} room
- * @param {object} opts same as renderPlayGridRgba plus openSides / doorState / primarySquares
+ * @param {object} opts same as renderPlayGridRgba plus openSides / doorState /
+ *   primarySquares / collisionOpenSides
+ *
+ * `openSides` is the nametable the player sees. `collisionOpenSides` is the
+ * walk grid. During a shutter slide they differ: the cavity is drawn so the
+ * halves have a gap, but `CurOpenedDoors` has not updated yet.
  */
 export function renderDungeonRoomRgba(room, opts = {}) {
   const openSides =
     opts.openSides
     ?? openSidesForRoom(room, opts.doorState ?? null);
+  const collisionSides = opts.collisionOpenSides ?? openSides;
   const tileGrid = composeDungeonRoomTiles(room, {
     primarySquares: opts.primarySquares,
-    openSides,
+    openSides: collisionSides,
   });
-  const { width, height, rgba } = renderPlayGridRgba(tileGrid, {
+  const displayGrid = sameOpenSides(openSides, collisionSides)
+    ? tileGrid
+    : composeDungeonRoomTiles(room, {
+        primarySquares: opts.primarySquares,
+        openSides,
+      });
+  const { width, height, rgba } = renderPlayGridRgba(displayGrid, {
     paletteSet: opts.paletteSet,
     tileSources: opts.tileSources ?? UW_TILE_SOURCES,
     patternBins: opts.patternBins,
@@ -155,6 +186,41 @@ export function renderDungeonRoomRgba(room, opts = {}) {
     innerPalette: room.doors?.innerPalette ?? 1,
   });
   return { width, height, rgba, tileGrid };
+}
+
+/**
+ * Closed (or any) door-face crop in play pixels, for shutter-half sprites.
+ * @param {'north'|'south'|'east'|'west'} side
+ * @param {number} faceIdx 0..4
+ * @param {object} opts palette/CHR opts as renderPlayGridRgba
+ */
+export function renderDoorFaceRgba(side, faceIdx, opts = {}) {
+  const rect = doorFacePlayRect(side);
+  const T = tileSize();
+  if (!rect) {
+    return { width: 0, height: 0, rgba: new Uint8Array(0) };
+  }
+  const cm = new Uint8Array(PLAY_ROWS * PLAY_COLS);
+  layoutDoorFace(cm, side, faceIdx);
+  const tileGrid = columnMajorToRowMajor(cm);
+  const painted = renderPlayGridRgba(tileGrid, {
+    paletteSet: opts.paletteSet,
+    tileSources: opts.tileSources ?? UW_TILE_SOURCES,
+    patternBins: opts.patternBins,
+    outerPalette: opts.outerPalette ?? 0,
+    innerPalette: opts.innerPalette ?? 0,
+  });
+  const scaleX = T / 8;
+  const scaleY = T / 8;
+  return cropRgba(
+    painted.rgba,
+    painted.width,
+    painted.height,
+    Math.round(rect.x * scaleX),
+    Math.round(rect.y * scaleY),
+    Math.round(rect.w * scaleX),
+    Math.round(rect.h * scaleY),
+  );
 }
 
 /**

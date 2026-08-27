@@ -84,7 +84,7 @@ const GOLDENS = Object.freeze({
   walk: '18ECFF0C',
   turns: '86B4AC2E',
   swordKill: '033C64D6',
-  contact: 'FD02C462',
+  contact: 'BAF519D8',
   roomBounds: '06943AFC',
 });
 

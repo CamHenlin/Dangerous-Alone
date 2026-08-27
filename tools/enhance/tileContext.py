@@ -77,21 +77,21 @@ def _accumulate(counts, grid, banks, ranges):
                    for r in range(rows)]
         for r in range(rows):
             for c in range(cols):
-                centre = squares[r][c]
-                if not centre.any():
+                center = squares[r][c]
+                if not center.any():
                     continue  # empty square; nothing to build context for
                 block = np.zeros((SQUARE_TILES * 3, SQUARE_TILES * 3), dtype=np.uint8)
                 for dr in (-1, 0, 1):
                     for dc in (-1, 0, 1):
                         rr, cc = r + dr, c + dc
-                        # Off the edge of a screen or room: repeat the centre
+                        # Off the edge of a screen or room: repeat the center
                         # rather than leaving a hole, so the model still sees a
                         # continuous surface to draw across.
-                        nb = squares[rr][cc] if 0 <= rr < rows and 0 <= cc < cols else centre
+                        nb = squares[rr][cc] if 0 <= rr < rows and 0 <= cc < cols else center
                         y = (dr + 1) * SQUARE_TILES
                         x = (dc + 1) * SQUARE_TILES
                         block[y:y + SQUARE_TILES, x:x + SQUARE_TILES] = nb
-                counts.setdefault(centre.tobytes(), Counter())[block.tobytes()] += 1
+                counts.setdefault(center.tobytes(), Counter())[block.tobytes()] += 1
 
 
 def build_context_index(screens_dir, banks, room_grids_path=None):
@@ -103,7 +103,7 @@ def build_context_index(screens_dir, banks, room_grids_path=None):
     every underworld square falls back to being drawn surrounded by copies of
     itself, and the wall and floor joins suffer for it.
 
-    Returns {square_bytes: 48x48 slot grid}, the centre third of which is the
+    Returns {square_bytes: 48x48 slot grid}, the center third of which is the
     square itself.
     """
     counts = {}
@@ -128,7 +128,7 @@ def self_tiled_context(grid):
     """Fallback for art with no map context: the square repeated nine times.
 
     Right for terrain that tiles against itself, and harmless for anything else
-    because only the centre is ever kept.
+    because only the center is ever kept.
     """
     return np.tile(grid, (3, 3))
 

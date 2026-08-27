@@ -32,7 +32,8 @@ export function sharedBarOrigin(playerCount) {
  */
 export function formatPartyCount(value, digits = 4) {
   const width = Math.max(1, digits | 0);
-  if (width <= 3) return formatStatusCount(value);
+  // Three glyphs stay the NES blank rules, but the party purse is not a byte.
+  if (width <= 3) return formatStatusCount(value, 10 ** 3 - 1);
   const cap = 10 ** width - 1;
   const v = Math.max(0, Math.min(cap, value | 0));
   const raw = String(v);

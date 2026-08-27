@@ -8,6 +8,7 @@ import { placeBomb, stepBomb } from './bomb.js';
 import {
   DOORWAY_CENTER_X,
   DOORWAY_CENTER_Y,
+  DOORWAY_CORRIDOR_AXIS_SLACK,
   checkDungeonRoomExit,
   clampDoorwayOvershoot,
   clampUwDoorwayPath,
@@ -18,6 +19,8 @@ import {
   enteringRoomGridOffset,
   entrySideForFacing,
   inDoorway,
+  inUwDoorCavity,
+  inUwDoorOverflow,
   linkInDoorwayCorridor,
   isDoorMarkedOpen,
   nearDoorway,
@@ -44,6 +47,7 @@ import {
   createLinkState,
   stepLink,
 } from './linkMotion.js';
+import { stepUwDoorHero } from './uwDoorWalk.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -408,6 +412,71 @@ test('detectUwDoorCross keeps world-continuous seam coords (no lip snap)', () =>
   assert.notEqual(east.x, SCREEN_EDGE.left + 1);
 });
 
+test('west overflow at the inner lip is past BoundByRoom, the east floor lip is not', () => {
+  assert.equal(inUwDoorOverflow({ x: 0x20, y: DOORWAY_CENTER_Y }, 'west'), true);
+  assert.equal(inUwDoorOverflow({ x: 0x21, y: DOORWAY_CENTER_Y }, 'west'), false);
+  assert.equal(inUwDoorOverflow({ x: 0xd0, y: DOORWAY_CENTER_Y }, 'east'), false);
+  assert.equal(inUwDoorOverflow({ x: 0xd1, y: DOORWAY_CENTER_Y }, 'east'), true);
+});
+
+test('door cavity for the perp clamp excludes the 8-aligned floor columns', () => {
+  // X=$20 is BoundByRoom overflow, but it is still the west floor walk cell.
+  assert.equal(inUwDoorCavity({ x: 0x18, y: DOORWAY_CENTER_Y }, 'west'), true);
+  assert.equal(inUwDoorCavity({ x: 0x20, y: DOORWAY_CENTER_Y }, 'west'), false);
+  assert.equal(inUwDoorCavity({ x: 0xd8, y: DOORWAY_CENTER_Y }, 'east'), false);
+  assert.equal(inUwDoorCavity({ x: 0xe0, y: DOORWAY_CENTER_Y }, 'east'), true);
+  // Y=$5D is the walk-grid north lip (1px into BoundByRoom Y<$5E) — still floor.
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0x4d }, 'north'), true);
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0x5d }, 'north'), false);
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0x5e }, 'north'), false);
+});
+
+test('clampUwDoorwayPath keeps a west-cavity walker inside the door opening', () => {
+  const room = {
+    roomId: 0x73,
+    doors: {
+      north: { type: 'open' },
+      south: { type: 'open' },
+      west: { type: 'open' },
+      east: { type: 'open' },
+    },
+  };
+  const rooms = new Set([0x72, 0x73, 0x74, 0x63, 0x83]);
+  // Screenshot: feet in the west face (X<$21) but off $8D into the jamb.
+  const inJamb = { x: 0x18, y: DOORWAY_CENTER_Y + 0x18, dir: DIR.LEFT };
+  clampUwDoorwayPath(inJamb, room, { roomIds: rooms });
+  assert.equal(inJamb.x, 0x18, 'must not yank X back to the floor lip');
+  assert.ok(
+    Math.abs(inJamb.y - DOORWAY_CENTER_Y) <= DOORWAY_CORRIDOR_AXIS_SLACK,
+    `Y must stay in the opening, got $${inJamb.y.toString(16)}`,
+  );
+
+  // Floor lip of the same wall: walking past the door must not magnetize.
+  const alongWall = { x: 0x21, y: 0xad, dir: DIR.UP };
+  clampUwDoorwayPath(alongWall, room, { roomIds: rooms });
+  assert.equal(alongWall.y, 0xad);
+  assert.equal(alongWall.x, 0x21);
+
+  // The 8-aligned west floor column ($20) is BoundByRoom overflow, but it
+  // is still room floor — do not snap Y onto the door opening.
+  const floorCol = { x: 0x20, y: 0x85, dir: DIR.UP };
+  clampUwDoorwayPath(floorCol, room, { roomIds: rooms });
+  assert.equal(floorCol.x, 0x20);
+  assert.equal(floorCol.y, 0x85, 'west floor column must be free to walk north');
+
+  const eastFloor = { x: 0xd8, y: 0x85, dir: DIR.UP };
+  clampUwDoorwayPath(eastFloor, room, { roomIds: rooms });
+  assert.equal(eastFloor.x, 0xd8);
+  assert.equal(eastFloor.y, 0x85, 'east floor column must be free to walk north');
+
+  // Walk-grid north lip ($5D): 1px knockback into BoundByRoom. Right along
+  // the strip must not snap onto the door column (L9 $23 screenshot).
+  const northLip = { x: 0x80, y: 0x5d, dir: DIR.RIGHT };
+  clampUwDoorwayPath(northLip, room, { roomIds: rooms });
+  assert.equal(northLip.x, 0x80, 'north floor lip must be free to walk right');
+  assert.equal(northLip.y, 0x5d);
+});
+
 test('clampUwDoorwayPath opens only passable door sides', () => {
   const room = {
     roomId: 0x53,
@@ -468,7 +537,35 @@ test('north DoorwayDir accepts walk columns $70/$80', () => {
   assert.equal(nearDoorway({ x: 0x70, y: 0x5d }, 'north'), true);
   assert.equal(nearDoorway({ x: 0x80, y: 0x5d }, 'north'), true);
   assert.equal(nearDoorway({ x: 0x68, y: 0x5d }, 'north'), false);
+  assert.equal(nearDoorway({ x: 0x80, y: 0x5e }, 'north'), true, 'BoundByRoom lip is still the door');
+  assert.equal(nearDoorway({ x: 0x80, y: 0x65 }, 'north'), true, 'first unique-floor row is still the door');
   assert.equal(nearDoorway({ x: 0x70, y: 0x6d }, 'north'), false, 'floor row is not overflow');
+});
+
+test('L3 $6b: north-door lip can walk left into the opening', () => {
+  // Screenshot: P2 at the north door, just right of center. Hotspot Y+$0B
+  // samples the maze block one square south, so Left looked solid while the
+  // tile beside him was the door.
+  const path = join(ROOT, 'assets/extracted/dungeons/q1/level_3/level.json');
+  if (!existsSync(path)) return;
+  const level = finalizeLevelMeta(JSON.parse(readFileSync(path, 'utf8')));
+  const room = level.rooms.find((r) => r.roomId === 0x6b);
+  assert.ok(room);
+  const grid = buildDungeonPlayGrid(room, dungeonPlayOrigin(), UW_PRIMARY_SQUARES, {});
+  const ctx = {
+    tileGrid: grid,
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+    roomIds: new Set(level.rooms.map((r) => r.roomId)),
+  };
+  const link = createLinkState(0x80, 0x65, DIR.LEFT);
+  assert.equal(linkInDoorwayCorridor(link, room, ctx), true);
+  const x0 = link.x;
+  for (let i = 0; i < 8; i += 1) {
+    stepUwDoorHero(link, room, DIR.LEFT, ctx);
+  }
+  assert.ok(link.x < x0, `Left must move them, stayed at $${link.x.toString(16)}`);
 });
 
 test('pastUwDoorLip matches the NES screen-edge lips', () => {

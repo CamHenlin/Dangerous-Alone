@@ -11,6 +11,7 @@ import {
   roomAllDead,
   roomHasClearCountingType,
   roomItemCarrier,
+  roomMayClear,
   syncRoomItemPosition,
   tryPickupRoomItem,
   tryRingleaderClear,
@@ -33,6 +34,21 @@ test('ALL_DEAD opens shutters without a floor item', () => {
   const { shutter, revealItem } = applyRoomClear(null, true, SECRET.ALL_DEAD);
   assert.equal(shutter, true);
   assert.equal(revealItem, false);
+});
+
+test('NONE still opens shutters after a fight (L9 $21 Patra)', () => {
+  // ROM stores effect 0 on that room, but the south door is a type-7 shutter.
+  assert.equal(applyRoomClear(null, true, SECRET.NONE).shutter, false);
+  assert.equal(applyRoomClear(null, true, SECRET.NONE, { hadFight: false }).shutter, false);
+  assert.equal(applyRoomClear(null, true, SECRET.NONE, { hadFight: true }).shutter, true);
+  assert.equal(applyRoomClear(null, false, SECRET.NONE, { hadFight: true }).shutter, false);
+});
+
+test('BLOCK_DOOR does not open shutters from a fight alone', () => {
+  assert.equal(
+    applyRoomClear(null, true, SECRET.BLOCK_DOOR, { hadFight: true }).shutter,
+    false,
+  );
 });
 
 test('item positions are screen-absolute (not floor-relative)', () => {
@@ -84,6 +100,25 @@ test('pickup consumes item', () => {
 test('roomAllDead ignores living foes', () => {
   assert.equal(roomAllDead([{ alive: false, objType: 0x07 }, { alive: false, objType: 0x07 }]), true);
   assert.equal(roomAllDead([{ alive: true, objType: 0x07 }]), false);
+});
+
+test('an empty foe list is not a clear unless the spawn latch still holds', () => {
+  // Camera cull of the last living foes looks like RoomAllDead: nothing in
+  // the table. Dying in the room and continuing at the entrance must not
+  // persist that as a clear — the latch is already dropped, and there are
+  // no corpses left to prove a fight ended.
+  assert.equal(roomMayClear([], false), false);
+  assert.equal(
+    roomMayClear([], true),
+    true,
+    'spawn-latched empty rooms (old man, push-block) may still clear',
+  );
+  assert.equal(
+    roomMayClear([{ alive: false, objType: 0x07 }], false),
+    true,
+    'corpses still mean the fight ended, even after the latch drops',
+  );
+  assert.equal(roomMayClear([{ alive: true, objType: 0x07 }], true), true);
 });
 
 test('roomAllDead ignores bubbles and traps (NES RoomAllDead)', () => {

@@ -5,6 +5,15 @@
  */
 
 import { DIR } from './collision.js';
+import {
+  FAIRY_FLYING_MAX_SPEED_FRAC,
+  FAIRY_INIT_SPEED,
+  FLYER_STATE,
+  boundFlyer,
+  flyerSpeedThresholdTransition,
+  moveFlyer,
+  turnRandomlyDir8,
+} from './flyerMove.js';
 import { addBombs, addRupees, healLink } from './inventory.js';
 
 /** Damage type bit used when HelpDropCount hits $0A (bomb → bomb drop). */
@@ -208,7 +217,11 @@ export function tryCreateDropFromKill(opts) {
  * @property {number} lifetime
  * @property {boolean} alive
  * @property {number} dir fairy facing
- * @property {number} timer fairy re-roll
+ * @property {number} timer fairy wander delay (ObjTimer)
+ * @property {number} [flyerState]
+ * @property {number} [flyerSpeed]
+ * @property {number} [flyerSpeedFrac]
+ * @property {number} [flyerTurns]
  */
 
 /**
@@ -243,83 +256,63 @@ export function stepDroppedItemLifetime(item, frameCounter) {
   if (item.lifetime === 0) item.alive = false;
 }
 
-/** Flyer states (shared with keese-style ControlFairyFlight). */
-const FAIRY_STATE = Object.freeze({
-  SPEED_UP: 0,
-  DECIDE: 1,
-  CHASE: 2,
-  WANDER: 3,
-  SLOW: 4,
-  DELAY: 5,
-});
+/**
+ * SetUpFairyObject — speed $7F, max $A0, face up, flying state 0.
+ * @param {DroppedItem} item
+ */
+function ensureFairyFlyer(item) {
+  if (item.flyerState != null) return;
+  item.flyerState = FLYER_STATE.SPEED_UP;
+  item.flyerTurns = 0;
+  item.flyerSpeed = FAIRY_INIT_SPEED;
+  item.flyerSpeedFrac = 0;
+  item.flyerDistTraveled = 0;
+  item.flyingMaxSpeedFrac = FAIRY_FLYING_MAX_SPEED_FRAC;
+  item.dir = DIR.UP;
+  item.timer = 0;
+}
 
 /**
- * Fairy flyer (UpdateFairyObject / ControlFairyFlight).
+ * UpdateFairyObject / ControlFairyFlight.
+ *
+ * NES fairies are not keese: they never chase, never slow, and never use
+ * whole-pixel speeds. After the $7F→$A0 ramp they wander 8-way at 0.625 px/f
+ * and BoundFlyer bounces them off the screen box.
+ *
  * @param {DroppedItem} item
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
- * @param {{ x: number, y: number } | null} [chase]
  */
-export function stepFairy(item, bounds, chase = null) {
+export function stepFairy(item, bounds) {
   if (item.itemId !== DROP_ITEM.FAIRY || !item.alive) return;
-  if (item.flyerState == null) {
-    item.flyerState = FAIRY_STATE.SPEED_UP;
-    item.flyerTurns = 6;
-    item.flyerSpeed = 1;
-  }
+  ensureFairyFlyer(item);
+  if ((item.timer ?? 0) > 0) item.timer -= 1;
 
-  item.timer -= 1;
-  if (item.timer <= 0) {
-    const st = item.flyerState;
-    if (st === FAIRY_STATE.SPEED_UP) {
-      item.flyerSpeed = Math.min(2, (item.flyerSpeed ?? 1) + 1);
-      item.flyerState = FAIRY_STATE.DECIDE;
-      item.timer = 4;
-    } else if (st === FAIRY_STATE.DECIDE) {
-      const r = (item.x + item.y + item.lifetime) & 0xff;
-      item.flyerState = r >= 0xa0 ? FAIRY_STATE.CHASE : r >= 0x20 ? FAIRY_STATE.WANDER : FAIRY_STATE.SLOW;
-      item.flyerTurns = 6;
-      item.timer = 8;
-    } else if (st === FAIRY_STATE.DELAY) {
-      item.flyerState = FAIRY_STATE.SPEED_UP;
-      item.timer = 10;
+  const st = item.flyerState;
+  if (st === FLYER_STATE.SPEED_UP) {
+    item.flyerSpeed = ((item.flyerSpeed ?? FAIRY_INIT_SPEED) + 1) & 0xff;
+    const next = flyerSpeedThresholdTransition(
+      item.flyerSpeed,
+      item.flyingMaxSpeedFrac ?? FAIRY_FLYING_MAX_SPEED_FRAC,
+    );
+    if (next) item.flyerState = next.state;
+  } else if (st === FLYER_STATE.DECIDE) {
+    // Flyer_FairyDecideState: always wander, 6 turns. No chase / slow.
+    item.flyerState = FLYER_STATE.WANDER;
+    item.flyerTurns = 6;
+  } else if (st === FLYER_STATE.WANDER && (item.timer ?? 0) <= 0) {
+    item.flyerTurns = (item.flyerTurns ?? 1) - 1;
+    if (item.flyerTurns <= 0) {
+      item.flyerState = FLYER_STATE.DECIDE;
     } else {
-      item.flyerTurns = (item.flyerTurns ?? 1) - 1;
-      if (item.flyerTurns <= 0) {
-        item.flyerState = st === FAIRY_STATE.SLOW ? FAIRY_STATE.DELAY : FAIRY_STATE.DECIDE;
-        if (st === FAIRY_STATE.SLOW) item.flyerSpeed = 1;
-        item.timer = 12;
-      } else {
-        if (st === FAIRY_STATE.CHASE && chase) {
-          const dx = chase.x - item.x;
-          const dy = chase.y - item.y;
-          item.dir =
-            Math.abs(dx) > Math.abs(dy)
-              ? dx >= 0
-                ? DIR.RIGHT
-                : DIR.LEFT
-              : dy >= 0
-                ? DIR.DOWN
-                : DIR.UP;
-        } else {
-          const dirs = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT];
-          item.dir = dirs[(item.lifetime + item.flyerTurns) & 3];
-        }
-        item.timer = 6 + (item.lifetime & 3);
-      }
+      item.timer = 0x10;
+      const roll =
+        (item.lifetime + (item.flyerDistTraveled ?? 0) + (item.x & 0xff) + (item.flyerTurns ?? 0)) &
+        0xff;
+      item.dir = turnRandomlyDir8(item.dir, roll);
     }
   }
 
-  const spd = item.flyerState === FAIRY_STATE.SLOW || item.flyerState === FAIRY_STATE.DELAY
-    ? 1
-    : item.flyerSpeed ?? 1;
-  if (item.flyerState !== FAIRY_STATE.DELAY) {
-    if (item.dir & DIR.UP) item.y -= spd;
-    else if (item.dir & DIR.DOWN) item.y += spd;
-    else if (item.dir & DIR.LEFT) item.x -= spd;
-    else if (item.dir & DIR.RIGHT) item.x += spd;
-  }
-  item.x = Math.max(bounds.minX, Math.min(bounds.maxX, item.x));
-  item.y = Math.max(bounds.minY, Math.min(bounds.maxY, item.y));
+  if (moveFlyer(item)) boundFlyer(item, bounds);
 }
 
 /**

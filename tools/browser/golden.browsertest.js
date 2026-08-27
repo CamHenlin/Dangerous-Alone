@@ -270,6 +270,46 @@ describe('browser goldens', { concurrency: false }, () => {
     await game.close();
   });
 
+  test('magic rod swings then fires the beam', async () => {
+    // WieldRod used to skip UpdateSwordOrRod and spawn the shot immediately,
+    // so Link never struck the attack pose and the rod sprite never appeared.
+    const game = await openGame(browser, { url: server.url });
+    await game.step(5);
+    await game.page.evaluate(() => {
+      window.zeldaDebug.inv.rod = 1;
+      window.zeldaDebug.selectB(0, 'rod');
+    });
+
+    await game.hold('KeyX');
+    await game.step(2);
+    const windup = await game.state();
+    assert.equal(windup.heroes[0].swinging, true, 'B must start the rod swing');
+    assert.equal(windup.heroes[0].swingKind, 1, 'the swing is the rod, not the sword');
+    assert.equal(windup.heroes[0].swordVisible, false, 'the rod hides during windup');
+    assert.equal(windup.projectiles.length, 0, 'MakeMagicShot waits for state 3');
+    await game.release();
+
+    await game.step(6);
+    const slash = await game.state();
+    assert.equal(slash.heroes[0].swinging, true, 'still in the swing');
+    assert.equal(slash.heroes[0].swordVisible, true, 'the rod sprite must be drawn');
+    assert.ok((slash.heroes[0].swordGfx?.w ?? 0) > 0, 'the rod has no texture');
+    assert.equal(
+      slash.projectiles.filter((p) => p.kind === 0x59).length,
+      0,
+      'the beam must not exist yet',
+    );
+
+    await game.step(10);
+    const shot = await game.state();
+    assert.ok(
+      shot.projectiles.some((p) => p.kind === 0x59 && p.friendly),
+      'the magic shot fires when the swing reaches state 3',
+    );
+
+    await game.close();
+  });
+
   test("player two's sword and bomb are drawn", async () => {
     // Split-screen used to latch everyone else's blade off while painting
     // player one's view, and bombs were only flushed from player one's world.
@@ -861,9 +901,21 @@ describe('browser goldens', { concurrency: false }, () => {
     await game.step(10);
     const after = await game.state();
     assert.equal(after.heroes[1].linkRoom, 0x73);
-    assert.ok(
-      after.keys > before,
-      `player two should take the key (before=${before} after=${after.keys})`,
+    assert.equal(
+      after.keys,
+      before + 1,
+      `player two should take the key once (before=${before} after=${after.keys})`,
+    );
+    assert.equal(
+      (after.heroes[1].floorItems ?? []).some((it) => it.type === 0x19),
+      false,
+      'the key sprite must leave the floor',
+    );
+    await game.step(20);
+    assert.equal(
+      (await game.state()).keys,
+      before + 1,
+      'standing on the tile must not grant another key',
     );
     await game.close();
   });
@@ -1363,6 +1415,18 @@ describe('browser goldens', { concurrency: false }, () => {
       tailIsConstant(left.map((t) => t.x), 12),
       `never settled on the west trees: ${left.slice(-8).map((t) => t.x).join(',')}`,
     );
+    await game.close();
+  });
+
+  test('mountain stairs animate the walk cycle', async () => {
+    const game = await openGame(browser, { url: server.url });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.returnToOverworld(0x3c, { x: 0x70, y: 0xcd, dir: 0x08 });
+    await pose(game, 0, 0x70, 0xcd, 0x08);
+    const up = await traceHold(game, 0, KEYS[0].up, 48);
+    assert.ok(sawWalkCycle(up), 'stairs froze the walk cycle');
+    assert.ok(netDelta(up, 'y') < -4, `did not climb the stairs (dy=${netDelta(up, 'y')})`);
     await game.close();
   });
 

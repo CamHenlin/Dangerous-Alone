@@ -38,11 +38,22 @@ import { createRaftRide } from './raft.js';
  *   was standing on (Mode B). Shared, it would skip an ally's first touch.
  * @property {boolean} caveExitLatch ignore the mouth until this hero walks
  *   further in. Shared, walking in one cave would drop a friend out of another.
+ * @property {boolean} owWarpLatch already fired this overworld cave/dungeon
+ *   mouth. Shared, walking into the sword cave swallowed an ally's Level 1
+ *   stairs until they stepped off a warp they were already standing on.
+ * @property {Map<string, number>} gravePushHold frames this hero has been
+ *   shoving a grave/rock. Shared, an idle ally's `clear()` zeroed the leftover
+ *   shove every frame so the magic-sword grave never slid.
+ * @property {number} undergroundExitType NES UndergroundExitType for this
+ *   hero. Shared, leaving a cave blocked every other mouth on the overworld.
  * @property {object} raftRide the dock object this hero is riding, or idle.
  *   The raft is physical state on one Link, not on the world — an ally
  *   standing on the pier must not freeze because you boarded.
  * @property {object | null} deathSeq co-op spin; null when they are standing
  *   or the whole party is in the continue menu
+ * @property {number | null} personDialogueForRoom dungeon cell whose old man
+ *   already spoke to this hero this visit. Shared on the world, walking into
+ *   one leftover cell skipped the NPC in another.
  */
 
 /**
@@ -79,8 +90,15 @@ export function createPlayer({
     uwDoorwayBlockSide: null,
     caveInteractLatch: /** @type {string | false} */ (false),
     caveExitLatch: false,
+    /** Occupying OW screen this hero walked into a cave from (not world `roomId` 0). */
+    caveEntranceRoomId: /** @type {number | null} */ (null),
+    owWarpLatch: false,
+    gravePushHold: new Map(),
+    undergroundExitType: 0,
     raftRide,
     deathSeq: null,
+    busy: false,
+    personDialogueForRoom: /** @type {number | null} */ (null),
   };
 }
 

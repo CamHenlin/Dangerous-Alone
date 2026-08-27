@@ -58,10 +58,16 @@ test('worlds of the same kind do not share their contents', () => {
   const b = createWorld({ id: dungeonWorldId(2) });
   a.enemies.push({ kind: 'stalfos' });
   a.spawnedRooms.add(0x35);
+  a.secretLatchRooms.add(0x35);
+  a.shutterAnims.set('21:south', { roomId: 0x21, side: 'south' });
+  a.roomItems.set(0x35, { itemType: 0x1a });
   candleForRoom(a.candleRoom, 0x01).lit = true;
   a.gambleAmounts = [10, 20, 50];
   assert.equal(b.enemies.length, 0);
   assert.equal(b.spawnedRooms.size, 0);
+  assert.equal(b.secretLatchRooms.size, 0, 'a leftover clear latch leaked into the other labyrinth');
+  assert.equal(b.shutterAnims.size, 0, 'a leftover shutter slide leaked into the other labyrinth');
+  assert.equal(b.roomItems.size, 0, 'one labyrinth\'s floor item painted the other');
   assert.equal(
     candleForRoom(b.candleRoom, 0x01).lit,
     false,
@@ -108,6 +114,7 @@ test('a world is built with the mode it was entered as', () => {
   const cave = worlds.enter(caveWorldId(7), { mode: 'cave' });
   assert.equal(cave.mode, 'cave');
   assert.equal(cave.id, 'cave:7', 'the id wins over anything passed in');
+  assert.equal(cave.roomId, 0, 'cave worlds default roomId to 0; take-any flags must not use it');
 });
 
 test('the last player out takes the lights with them', () => {

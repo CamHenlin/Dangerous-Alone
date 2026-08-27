@@ -133,17 +133,13 @@ export function shotBlockedByShield(p, link, inv, opts = {}) {
   if (opts.idle === false) return SHIELD_RESULT.HARM;
   if (!dirsAreOpposite(link.dir, p.dir)) return SHIELD_RESULT.HARM;
 
-  // Rocks ($53) and similar < $55: wood shield.
-  if (p.kind < PROJ.FIREBALL) return SHIELD_RESULT.PARRY;
-  // Fireball $55 / sword shot $57: magic shield only.
-  if (p.kind === PROJ.FIREBALL || p.kind === PROJ.SWORD_SHOT) {
+  // CheckLinkCollision: types $55–$59 (fireball / sword beam / magic) need
+  // the magical shield. Everything else facing the shield — rocks, booms,
+  // arrows $5B/$5C — the wood shield parries.
+  if (p.kind >= PROJ.FIREBALL && p.kind < 0x5a) {
     return inv.magicShield ? SHIELD_RESULT.PARRY : SHIELD_RESULT.HARM;
   }
-  // Magic $59: magic shield.
-  if (p.kind === PROJ.MAGIC_SHOT) {
-    return inv.magicShield ? SHIELD_RESULT.PARRY : SHIELD_RESULT.HARM;
-  }
-  return SHIELD_RESULT.HARM;
+  return SHIELD_RESULT.PARRY;
 }
 
 /**

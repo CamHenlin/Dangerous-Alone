@@ -8,7 +8,7 @@
  *
  * Everything comes back in the shape mode `$13` already draws: `{ row, col,
  * text }` records on fixed nametable rows. The two ROM textboxes were
- * hand-placed, so authored replacements are wrapped and centred on the rows
+ * hand-placed, so authored replacements are wrapped and centered on the rows
  * they used. The epilogue is ours and is laid out on the storyboard's body
  * rows, so it lands inside the same vine frame the prologue is baked with.
  */
@@ -41,17 +41,17 @@ export function wrapEndingText(text, cols = ENDING_COLS) {
 }
 
 /**
- * Left column that centres `text` on the screen, clamped so an over-long line
+ * Left column that centers `text` on the screen, clamped so an over-long line
  * starts at the edge instead of off it.
  * @param {string} text
  * @returns {number}
  */
-export function centreCol(text) {
+export function centerCol(text) {
   return Math.max(0, (SCREEN_COLS - String(text ?? '').length) >> 1);
 }
 
 /**
- * Wrap a paragraph and centre each line individually, the way the ROM's two
+ * Wrap a paragraph and center each line individually, the way the ROM's two
  * hand-placed textboxes read.
  *
  * @param {string} text
@@ -63,7 +63,7 @@ export function layoutEndingText(text, opts = {}) {
   const cols = opts.cols ?? ENDING_COLS;
   return wrapEndingText(text, cols).map((line, i) => ({
     row: topRow + i,
-    col: centreCol(line),
+    col: centerCol(line),
     text: line,
   }));
 }
@@ -72,10 +72,10 @@ export function layoutEndingText(text, opts = {}) {
  * Lay one epilogue paragraph inside the vine frame.
  *
  * Set as a block: every line shares one left margin, chosen so the widest line
- * is centred. Centring each line separately turns a paragraph into a ragged
+ * is centered. Centering each line separately turns a paragraph into a ragged
  * diamond, which is fine for one sentence and bad for five.
  *
- * The block is also centred vertically in the frame, so a one-line closer sits
+ * The block is also centered vertically in the frame, so a one-line closer sits
  * in the middle of the box rather than hanging off its top edge. Body rows are
  * every *other* row — see `storyboard.js` for why.
  *
@@ -86,7 +86,7 @@ export function layoutEpiloguePage(text) {
   const lines = wrapEndingText(text, TEXT_COLS).slice(0, EPILOGUE_MAX_ROWS);
   if (!lines.length) return [];
   const widest = Math.max(...lines.map((l) => l.length));
-  const col = centreCol('X'.repeat(widest));
+  const col = centerCol('X'.repeat(widest));
   const top = (EPILOGUE_MAX_ROWS - lines.length) >> 1;
   return lines.map((line, i) => ({ row: BODY_ROWS[top + i], col, text: line }));
 }

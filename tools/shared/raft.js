@@ -1,5 +1,5 @@
 import { DIR, OW_BOUNDS } from './collision.js';
-import { PLAY_H } from './continuousCamera.js';
+import { PLAY_H, occupyingRoom } from './continuousCamera.js';
 import { TRANSITION_SPAWN, neighborRoomId } from './world.js';
 
 /** Overworld dock screens for the raft (Level 4 entry path). */
@@ -128,6 +128,27 @@ export function planRaftNorthApproach(link, roomId, inv) {
     y: 0x3d,
     dir: DIR.DOWN,
   };
+}
+
+/**
+ * Same plan, but `roomId` is the streaming *anchor* and Link's x/y are
+ * anchor-local. A leftover hero on `$45` while the stream is still `$77`
+ * (ally walked back to the sword cave) lives outside that cell — planning
+ * against the anchor never sees the island dock, and they freeze on the
+ * water.
+ *
+ * @param {{ x: number, y: number, dir?: number }} link
+ * @param {number} anchorRoomId
+ * @param {{ raft?: number }} inv
+ */
+export function planRaftNorthApproachFromAnchor(link, anchorRoomId, inv) {
+  if (!inv?.raft || !link) return null;
+  const occ = occupyingRoom(anchorRoomId, link.x, link.y);
+  return planRaftNorthApproach(
+    { ...link, x: occ.x, y: occ.y },
+    occ.roomId,
+    inv,
+  );
 }
 
 /**

@@ -136,6 +136,15 @@ test('caveWareSlots scopes take-any emptiness to the entrance room', () => {
   // Legacy global key must not empty every take-any cave.
   const legacy = caveWareSlots(cave, new Set(['17:any']), null, 0x2f);
   assert.ok(legacy.every((s) => !s.gone));
+  // Cave worlds default `roomId` to 0. A flag written against that default
+  // must not empty P3 ($2f) — the raft-island take-any.
+  const caveWorldDefault = caveWareSlots(
+    cave,
+    new Set(['0:17:any', '0:17:0', '0:17:2']),
+    null,
+    0x2f,
+  );
+  assert.ok(caveWorldDefault.every((s) => !s.gone));
 });
 
 test('roadStairUnderLink finds the three staircase columns', () => {

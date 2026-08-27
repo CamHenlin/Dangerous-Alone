@@ -1,6 +1,43 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createStoryPager } from './storyPager.js';
+import { createStoryPager, storyReaders } from './storyPager.js';
+
+function p(index, id, mode, active = true) {
+  return { index, active, world: { id, mode } };
+}
+
+test('labyrinth-entry is only for people standing in a labyrinth', () => {
+  const party = [
+    p(0, 'overworld', 'overworld'),
+    p(1, 'dungeon:1', 'dungeon'),
+    p(2, 'cave:16', 'cave'),
+    p(3, 'cellar:1:127', 'dungeon'),
+  ];
+  assert.deepEqual(
+    storyReaders(party, 'levelEntry').map((r) => r.index),
+    [1, 3],
+  );
+});
+
+test('a briefing still reaches the overworld, but not a cave', () => {
+  const party = [
+    p(0, 'overworld', 'overworld'),
+    p(1, 'dungeon:1', 'dungeon'),
+    p(2, 'cave:16', 'cave'),
+  ];
+  assert.deepEqual(
+    storyReaders(party, 'briefing').map((r) => r.index),
+    [0, 1],
+  );
+});
+
+test('an inactive seat is not a reader', () => {
+  const party = [p(0, 'dungeon:1', 'dungeon', false), p(1, 'dungeon:1', 'dungeon')];
+  assert.deepEqual(
+    storyReaders(party, 'levelEntry').map((r) => r.index),
+    [1],
+  );
+});
 
 test('each reader turns their own pages', () => {
   const pager = createStoryPager([0, 1], 3);

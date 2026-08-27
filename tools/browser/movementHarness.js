@@ -166,11 +166,12 @@ export function tailIsConstant(values, n = 8) {
  * @param {number} x
  * @param {number} y
  * @param {number} [dir]
+ * @param {number} [room] occupying-room local pose; omit for anchor-local
  */
-export async function pose(game, index, x, y, dir) {
+export async function pose(game, index, x, y, dir, room) {
   await game.page.evaluate(
-    ({ i, px, py, d }) => window.zeldaDebug.poseHero(i, px, py, d),
-    { i: index, px: x, py: y, d: dir },
+    ({ i, px, py, d, r }) => window.zeldaDebug.poseHero(i, px, py, d, r),
+    { i: index, px: x, py: y, d: dir, r: room },
   );
 }
 

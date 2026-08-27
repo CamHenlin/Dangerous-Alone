@@ -98,7 +98,7 @@ def xbr_lite(img, threshold=48):
     for dy, dx, n1, n2 in ((0, 0, up, left), (0, 1, up, right),
                            (1, 0, down, left), (1, 1, down, right)):
         # The corner blends towards its two neighbours only when they resemble
-        # each other more than they resemble the centre — i.e. an edge runs
+        # each other more than they resemble the center — i.e. an edge runs
         # diagonally through this corner.
         near = _dist(n1, n2) < threshold
         edge = (_dist(n1, c) > threshold) & (_dist(n2, c) > threshold)

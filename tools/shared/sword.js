@@ -10,6 +10,18 @@ export const SWORD_PHASE = Object.freeze({
   RECOVER_C: 5,
 });
 
+/**
+ * NES UpdateSwordOrRod is one machine for A-sword and B-rod.
+ * They share the swing; the drawn tile and the shot differ.
+ */
+export const SWING_KIND = Object.freeze({
+  SWORD: 0,
+  ROD: 1,
+});
+
+/** CheckMonsterArrowOrRodCollision — rod melee is $20 sword-type damage. */
+export const ROD_MELEE_DAMAGE = 0x20;
+
 const PHASE_DURATION = Object.freeze({
   [SWORD_PHASE.WINDUP]: 5,
   [SWORD_PHASE.HIT]: 8,
@@ -47,10 +59,11 @@ const ARC_ANGLES = Object.freeze({
  * @property {number} phase  0 = idle
  * @property {number} timer
  * @property {number} dir
+ * @property {number} kind  {@link SWING_KIND}
  */
 
 export function createSwordState() {
-  return { phase: 0, timer: 0, dir: 0 };
+  return { phase: 0, timer: 0, dir: 0, kind: SWING_KIND.SWORD };
 }
 
 export function isSwordActive(sword) {
@@ -62,6 +75,24 @@ export function cancelSword(sword) {
   sword.phase = 0;
   sword.timer = 0;
   sword.dir = 0;
+  sword.kind = SWING_KIND.SWORD;
+}
+
+/**
+ * @param {SwordState} sword
+ * @param {number} facingDir
+ * @param {number} kind
+ * @returns {boolean} started
+ */
+function startSwing(sword, facingDir, kind) {
+  if (sword.phase !== 0) {
+    return false;
+  }
+  sword.phase = SWORD_PHASE.WINDUP;
+  sword.timer = PHASE_DURATION[SWORD_PHASE.WINDUP];
+  sword.dir = facingDir;
+  sword.kind = kind;
+  return true;
 }
 
 /**
@@ -71,13 +102,24 @@ export function cancelSword(sword) {
  * @returns {boolean} started
  */
 export function tryStartSword(sword, facingDir, swordTier) {
-  if (sword.phase !== 0 || swordTier < SWORD.WOOD) {
+  if (swordTier < SWORD.WOOD) {
     return false;
   }
-  sword.phase = SWORD_PHASE.WINDUP;
-  sword.timer = PHASE_DURATION[SWORD_PHASE.WINDUP];
-  sword.dir = facingDir;
-  return true;
+  return startSwing(sword, facingDir, SWING_KIND.SWORD);
+}
+
+/**
+ * WieldRod — same 16-frame swing as the sword (UpdateSwordOrRod).
+ * @param {SwordState} sword
+ * @param {number} facingDir
+ * @returns {boolean} started
+ */
+export function tryStartRod(sword, facingDir) {
+  return startSwing(sword, facingDir, SWING_KIND.ROD);
+}
+
+export function isRodSwing(sword) {
+  return sword.kind === SWING_KIND.ROD;
 }
 
 /**
@@ -95,6 +137,7 @@ export function stepSword(sword) {
   if (sword.phase >= SWORD_PHASE.RECOVER_C) {
     sword.phase = 0;
     sword.timer = 0;
+    sword.kind = SWING_KIND.SWORD;
     return false;
   }
   sword.phase += 1;
@@ -203,6 +246,16 @@ export function swordHitbox(sword, linkX, linkY) {
  */
 export function swordDamage(swordTier) {
   return SWORD_DAMAGE[swordTier] ?? 0;
+}
+
+/**
+ * Melee points for the current swing (rod is a fixed $20, sword by tier).
+ * @param {SwordState} sword
+ * @param {number} swordTier
+ */
+export function swingMeleeDamage(sword, swordTier) {
+  if (isRodSwing(sword)) return ROD_MELEE_DAMAGE;
+  return swordDamage(swordTier);
 }
 
 /**

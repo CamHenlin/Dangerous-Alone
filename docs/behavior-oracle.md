@@ -100,6 +100,7 @@ Cross-phase checklist of behaviors that must match the original game (or are int
 | ENM-24 | Combat | Armos statue wake + fade; OW under-Armos stairs/bracelet | Phase 14 | implemented |
 | ENM-25 | Combat | Ghini death cascades living Flying Ghini | Phase 14 | implemented |
 | ENM-26 | Combat | Darknut face-parry + stun cleared every frame | Phase 14 | implemented |
+| ENM-47 | Combat | Weapon hit shoves survivors `$40` px @ 4 px/f (Obj_Shove); keese/bosses skip; mid-tile perpendicular cancels | Combat feel | implemented |
 | ENM-27 | Combat | Bubbles immortal; `$2B`/`$2C`/`$2D` sword-block rules | Phase 14 | implemented |
 | ENM-28 | Combat | Rope axis rush when Link within 8px | Phase 14 | implemented |
 | ENM-29 | Combat | Wallmaster crawl + capture → dungeon entrance | Phase 14 | implemented |

@@ -47,10 +47,15 @@ test('plays the heart tune once per unit and stops at the target', () => {
   assert.equal(tunes, 5);
 });
 
-test('clamps the target to the 0..$FF status-bar range', () => {
+test('rolls past $FF toward a co-op purse and clamps negatives at 0', () => {
   const high = createRupeeRoll(0xfe);
-  run(high, 500, 20);
-  assert.equal(high.shown, 0xff);
+  run(high, 510, 20);
+  assert.equal(high.shown, 0xfe + 10, '20 frames at period 2 is ten rupees');
+  assert.ok(high.shown > 0xff);
+
+  const arrived = createRupeeRoll(500);
+  run(arrived, 510, 30);
+  assert.equal(arrived.shown, 510);
 
   const low = createRupeeRoll(2);
   run(low, -50, 20);

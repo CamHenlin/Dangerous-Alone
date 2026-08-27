@@ -14,6 +14,14 @@ export const OW_WALKABLE_REMAP = Object.freeze([
 /** Tiles that trigger OW underground entry while standing (HandleWarpOW). */
 export const OW_WARP_TILES = Object.freeze([0x24, 0x88, 0x70, 0x71, 0x72, 0x73]);
 
+/**
+ * Cave-mouth columns that need the 16px vertical approach window. Ornament +
+ * `$24` would otherwise collapse to 8px (NES keeps the higher id). Stairs
+ * `$70–$73` stay on the NES max-id rule — preferring them as warps lets you
+ * walk vertically through a neighboring rock or a pushed dungeon block.
+ */
+export const OW_CAVE_MOUTH_TILES = Object.freeze([0x24, 0x88]);
+
 /** OW: first unwalkable tile after remap (`ObjectRoomBoundsOW`). */
 export const OW_FIRST_UNWALKABLE = 0x89;
 
@@ -25,16 +33,67 @@ export function isOwWarpTile(tile) {
 }
 
 /**
+ * True when tile is a cave-mouth column (`$24` / `$88`), not stairs.
+ * @param {number} tile
+ */
+export function isOwCaveMouthTile(tile) {
+  return OW_CAVE_MOUTH_TILES.includes(tile & 0xff);
+}
+
+/**
  * NES vertical look-ahead keeps the higher of two column samples. Beside a
  * cave mouth that turns a 16px graphic into an 8px approach window (ornament
- * + $24 → solid). Prefer a warp tile when either column is one.
+ * + $24 → solid). Prefer a cave-mouth tile when either column is one.
  * @param {number} tile
  * @param {number} tile2
  */
 export function combineVerticalCollidingTiles(tile, tile2) {
-  if (isOwWarpTile(tile)) return tile;
-  if (isOwWarpTile(tile2)) return tile2;
+  if (isOwCaveMouthTile(tile)) return tile;
+  if (isOwCaveMouthTile(tile2)) return tile2;
   return tile2 >= tile ? tile2 : tile;
+}
+
+/**
+ * GetCollidingTileMoving sample points (hotspot + look-ahead, 8px column snap).
+ * Vertical probes also include the next column.
+ *
+ * @param {number} objX
+ * @param {number} objY  screen Y (includes HUD)
+ * @param {number} dir
+ * @param {{ isLink?: boolean, continuous?: boolean }} [opts]
+ * @returns {{ x: number, y: number }[]}
+ */
+export function collisionSamplePoints(objX, objY, dir, opts = {}) {
+  const isLink = opts.isLink !== false;
+  const offset = objectHotspotOffset(dir, isLink);
+  let sampleY = objY + LINK_HOTSPOT_Y;
+  let sampleX = objX;
+
+  const vertical = Boolean(dir & (DIR.UP | DIR.DOWN));
+  const horizontal = Boolean(dir & (DIR.LEFT | DIR.RIGHT));
+
+  if (opts.continuous) {
+    if (vertical || horizontal) {
+      sampleY = vertical ? sampleY + offset : sampleY;
+      sampleX = horizontal ? sampleX + offset : sampleX;
+    }
+    sampleX = Math.floor(sampleX / 8) * 8;
+  } else {
+    if (vertical) {
+      if ((dir & DIR.DOWN) === 0 || sampleY < 0xdd) {
+        sampleY += offset;
+      }
+    } else if (horizontal) {
+      if ((dir & DIR.RIGHT && sampleX < 0xf0) || (dir & DIR.LEFT && sampleX >= 0x10)) {
+        sampleX += offset;
+      }
+    }
+    sampleX &= 0xf8;
+  }
+
+  const points = [{ x: sampleX, y: sampleY }];
+  if (vertical) points.push({ x: sampleX + 8, y: sampleY });
+  return points;
 }
 
 /** UW: first unwalkable tile (`ObjectRoomBoundsUW`) — no OW remap. */
@@ -134,33 +193,12 @@ export function getObjectCollidingTile(tileGrid, objX, objY, dir, opts = {}) {
   const isLink = opts.isLink !== false;
   const firstUnwalkable = opts.firstUnwalkable ?? OW_FIRST_UNWALKABLE;
   const walkableRemap = opts.walkableRemap ?? (firstUnwalkable === UW_FIRST_UNWALKABLE ? [] : OW_WALKABLE_REMAP);
-  const offset = objectHotspotOffset(dir, isLink);
-  let sampleY = objY + LINK_HOTSPOT_Y;
-  let sampleX = objX;
-
-  const vertical = Boolean(dir & (DIR.UP | DIR.DOWN));
-  const horizontal = Boolean(dir & (DIR.LEFT | DIR.RIGHT));
-
-  if (vertical) {
-    if ((dir & DIR.DOWN) === 0 || sampleY < 0xdd) {
-      sampleY += offset;
-    }
-  } else if (horizontal) {
-    if ((dir & DIR.RIGHT && sampleX < 0xf0) || (dir & DIR.LEFT && sampleX >= 0x10)) {
-      sampleX += offset;
-    }
-  }
-
-  sampleX &= 0xf8; // snap to 8px column
-  const yPlay = sampleY - HUD_HEIGHT;
-  let tile = tileAtPlayPixel(tileGrid, sampleX, yPlay);
-
-  // Vertical moves also sample the next column (NES keeps the higher id).
-  if (vertical) {
-    const tile2 = tileAtPlayPixel(tileGrid, sampleX + 8, yPlay);
+  const points = collisionSamplePoints(objX, objY, dir, { isLink });
+  let tile = tileAtPlayPixel(tileGrid, points[0].x, points[0].y - HUD_HEIGHT);
+  if (points[1]) {
+    const tile2 = tileAtPlayPixel(tileGrid, points[1].x, points[1].y - HUD_HEIGHT);
     tile = combineVerticalCollidingTiles(tile, tile2);
   }
-
   return normalizeOwTile(tile, firstUnwalkable, walkableRemap);
 }
 
@@ -259,5 +297,24 @@ export function hitsUwBound(x, y, dir) {
   if (dir & DIR.DOWN) return y >= UW_BOUNDS.bottom;
   if (dir & DIR.LEFT) return x < UW_BOUNDS.left;
   if (dir & DIR.RIGHT) return x >= UW_BOUNDS.right;
+  return false;
+}
+
+/**
+ * NES BoundByRoom for a walker: left/up are blocked once already past (`<`),
+ * right/down once at or past (`>=`). Does not clamp or reverse — Walker_Move
+ * zeroes the moving dir and Walker_GetNextAltDir searches for another.
+ *
+ * @param {number} x
+ * @param {number} y
+ * @param {number} dir
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number } | null | undefined} bounds
+ */
+export function boundBlocksDir(x, y, dir, bounds) {
+  if (!bounds || !dir) return false;
+  if (dir & DIR.LEFT) return x < bounds.minX;
+  if (dir & DIR.RIGHT) return x >= bounds.maxX;
+  if (dir & DIR.UP) return y < bounds.minY;
+  if (dir & DIR.DOWN) return y >= bounds.maxY;
   return false;
 }

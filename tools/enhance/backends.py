@@ -133,7 +133,7 @@ class SdxlPixelArtBackend:
             generator=torch.Generator("cpu").manual_seed(seed),
         ).images[0]
         # SDXL rounds to its own latent grid; bring it back to the exact size the
-        # caller asked for so the centre crop still lands on a cell boundary.
+        # caller asked for so the center crop still lands on a cell boundary.
         if out.size != (width, height):
             out = out.resize((width, height), Image.LANCZOS)
         return out

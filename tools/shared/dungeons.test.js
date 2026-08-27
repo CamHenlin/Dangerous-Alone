@@ -57,6 +57,14 @@ test('Level 1 header matches known map anchors', { skip: !fs.existsSync(romPath)
   assert.equal(start.squares.length, 7);
   assert.equal(start.squares[0].length, 12);
 
+  // The Wallmaster / key room south of Aquamentus is the ROM's "hear the
+  // boss" cell: floor-item bits 5–6 = 1 → Sample $10 (boss_roar_1).
+  const approach = level.rooms.find((r) => r.roomId === 0x45);
+  assert.equal(approach.floorItem.bossNoise, 1);
+  assert.equal(approach.floorItem.itemType, 0x19);
+  const bossCell = level.rooms.find((r) => r.roomId === 0x35);
+  assert.equal(bossCell.floorItem.bossNoise, 0);
+
   // Side rooms open toward the entrance (E/W attrs high=west, mid=east).
   const left = level.rooms.find((r) => r.roomId === 0x72);
   const right = level.rooms.find((r) => r.roomId === 0x74);
@@ -114,6 +122,14 @@ test('Level 9 and Q2 are represented', { skip: !fs.existsSync(romPath) }, () => 
   assert.ok(q2l1.rooms.length >= 10);
   assert.equal(q2l9.bossRoom, 0x17);
   assert.ok(q2l9.rooms.some((r) => r.roomId === q2l9.triforceRoom && r.monster?.id === 0x37));
+  // L9 `$21` is blue Patra (listId `$47`) behind a south shutter with secret 0.
+  // Room-clear must still open that shutter after the fight.
+  const patra21 = q1l9.rooms.find((r) => r.roomId === 0x21);
+  assert.ok(patra21, 'L9 $21 missing');
+  assert.equal(patra21.monster.id, 0x07);
+  assert.equal(patra21.useMonsterGroups, true);
+  assert.equal(patra21.doors.south.type, 'shutter');
+  assert.equal(patra21.specialItem.effectType, 0);
   // Q2 uses a separate level block — at least one room attr should differ.
   const fingerprint = (rooms) =>
     rooms
