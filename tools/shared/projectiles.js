@@ -98,8 +98,9 @@ export function createProjectile(opts) {
  * @param {object} [opts]
  */
 export function shootFireball(kind, ox, oy, tx, ty, opts = {}) {
-  // NES: new object's X = shooter X + 4; Y unchanged.
-  const x = (opts.x ?? ox + 4) & 0xff;
+  // NES ObjX is 8-bit (`shooter+4`). Masking leftover streaming coords
+  // (`$A0+256`) wrapped Aquamentus fireballs into the current cell.
+  const x = opts.x ?? ox + 4;
   const y = opts.y ?? oy;
   const aim = aimFireball(x, y, tx, ty);
   return createProjectile({

@@ -18,12 +18,14 @@ export function markEnemiesAwaitingView(enemies) {
   }
 }
 
+const PEAHAT = 0x1a; // InitPeahat: no spawn cloud
+
 /**
- * True when this object should skip the monster spawn-cloud (items / NPCs).
+ * True when this object should skip the monster spawn-cloud (items / NPCs / peahats).
  * @param {object | null | undefined} e
  */
 export function skipsSpawnCloud(e) {
-  return Boolean(e?.npc || isRupeeStash(e?.objType));
+  return Boolean(e?.npc || isRupeeStash(e?.objType) || e?.objType === PEAHAT);
 }
 
 /**

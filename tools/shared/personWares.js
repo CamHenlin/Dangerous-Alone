@@ -31,7 +31,7 @@ export const PERSON_WARE_HEART = 0x1a;
 /**
  * Active pay-to-take wares for living UW persons in `enemies`.
  * @param {{ alive?: boolean, objType?: number }[]} enemies
- * @param {{ bombTaken?: boolean }} [opts]
+ * @param {{ bombTaken?: boolean, moneyOrLifeTaken?: boolean }} [opts]
  * @returns {PersonWare[]}
  */
 export function personOfferWares(enemies, opts = {}) {
@@ -46,7 +46,7 @@ export function personOfferWares(enemies, opts = {}) {
       priceLabel: `-${BOMB_UPGRADE_PRICE}`,
     });
   }
-  if (moneyOrLifePersonAlive(enemies)) {
+  if (!opts.moneyOrLifeTaken && moneyOrLifePersonAlive(enemies)) {
     for (const w of LIFE_OR_MONEY_WARES) {
       wares.push({
         id: `mol-${w.kind}`,

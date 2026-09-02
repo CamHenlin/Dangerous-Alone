@@ -180,9 +180,12 @@ export function createCaveScene(deps) {
       c.destroy({ children: true, texture: false, textureSource: false }),
     );
     if (!fontImg) return;
-    const line = caveHintLine(kind);
+    const line = caveHintLine(kind, {
+      waresHidden,
+      hasLetter: (lastInv?.letter ?? 0) === 1,
+    });
     // Center-ish: item hint is long; south-only is short.
-    const x = line.length > 20 ? 24 : 72;
+    const x = line.length > 20 ? 16 : 72;
     hintLayer.addChild(nesText(fontImg, line, x, 0, HINT_GREY));
   }
 
@@ -235,7 +238,6 @@ export function createCaveScene(deps) {
     paintBg();
     paintNpc(nextCave.dweller);
     paintFires();
-    paintHint(nextCave.kind);
     paintRoadStairs();
     refreshWares(taken, hidden, inv);
     root.visible = true;
@@ -256,7 +258,9 @@ export function createCaveScene(deps) {
     wareLayer.removeChildren().forEach((c) =>
       c.destroy({ children: true, texture: false, textureSource: false }),
     );
-    if (!cave || waresHidden) return;
+    if (!cave) return;
+    paintHint(cave.kind);
+    if (waresHidden) return;
     const showPrices = cave.kind === 'shop' || cave.kind === 'potion';
     for (const slot of caveWareSlots(cave, taken, inv, entranceRoomId)) {
       if (slot.gone) continue;

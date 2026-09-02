@@ -12,6 +12,7 @@ import {
   foggedRooms,
   hitsMapEdgeLimit,
   canClaimAnchorCross,
+  mayOwnOwAnchor,
   inAnchorPlayArea,
   localToWorld,
   occupyingRoom,
@@ -20,9 +21,11 @@ import {
   resolveUwOccupyingRoomId,
   rectFullyOffCamera,
   roomPlayOrigin,
+  roomStreamOffset,
   createCamera,
   roomsForCamera,
   roomsForCameras,
+  sortRoomsNearestFirst,
   rectFullyOffEveryCamera,
   solvePlayCamera,
   worldToLocal,
@@ -33,6 +36,14 @@ test('roomPlayOrigin matches 16×8 grid', () => {
   assert.deepEqual(roomPlayOrigin(0x01), { ox: PLAY_W, oy: 0 });
   assert.deepEqual(roomPlayOrigin(0x10), { ox: 0, oy: PLAY_H });
   assert.deepEqual(roomPlayOrigin(0x77), { ox: 7 * PLAY_W, oy: 7 * PLAY_H });
+});
+
+test('roomStreamOffset puts the anchor under the HUD and neighbors beside it', () => {
+  assert.deepEqual(roomStreamOffset(0x77, 0x77), { x: 0, y: HUD_HEIGHT });
+  assert.deepEqual(roomStreamOffset(0x78, 0x77), { x: PLAY_W, y: HUD_HEIGHT });
+  assert.deepEqual(roomStreamOffset(0x76, 0x77), { x: -PLAY_W, y: HUD_HEIGHT });
+  assert.deepEqual(roomStreamOffset(0x67, 0x77), { x: 0, y: HUD_HEIGHT - PLAY_H });
+  assert.deepEqual(roomStreamOffset(0x87, 0x77), { x: 0, y: HUD_HEIGHT + PLAY_H });
 });
 
 test('localToWorld / worldToLocal round-trip', () => {
@@ -90,6 +101,48 @@ test('a stale dungeon occupancy latch yields to where the feet actually are', ()
   assert.equal(resolveUwOccupyingRoomId(0x72, 0x78, 0x8d, null), 0x72);
 });
 
+test('Q2 L2 $69 south-door floor is not host $79\'s north-seam latch', () => {
+  // Diamond blocks stop leftover at local y=$B8. Relative to host $79 that
+  // is y=$08 — exactly ANCHOR_SEAM_LIP (56px) past the north seam, so the
+  // old latch kept $79 and corridor-clamped X.
+  const worldY = 0xb8 - PLAY_H;
+  assert.equal(worldY, HUD_HEIGHT - 56);
+  assert.equal(occupyingRoom(0x79, 0x78, worldY).roomId, 0x69);
+  assert.equal(resolveUwOccupyingRoomId(0x79, 0x78, worldY, 0x79), 0x69);
+  assert.equal(resolveUwOccupyingRoomId(0x79, 0x78, worldY, 0x69), 0x69);
+  // Unique-floor south lip `$C0` is not `$79`'s north hole.
+  const lipY = 0xc0 - PLAY_H;
+  assert.equal(resolveUwOccupyingRoomId(0x79, 0x78, lipY, 0x79), 0x69);
+  // Still in $69's south cavity: keep $79 so a north cross from $79 can
+  // finish. Yielding here at gridOffset 0 is what skipped `$69→$59`.
+  const cavityY = 0xd8 - PLAY_H;
+  assert.equal(resolveUwOccupyingRoomId(0x79, 0x78, cavityY, 0x79), 0x79);
+});
+
+test('hugging a wall does not keep a leftover latch from a different seam', () => {
+  // Screenshot: leftover in L3 `$5c` with host `$5d`. Walking the north
+  // strip to the west bricks used to keep a neighbour latch because every
+  // wall counted as a door hole. Collision then ran on that neighbour's
+  // grid — sprite halfway into this room's bricks, or stopped a tile short.
+  //
+  // North strip, still west of the east cavity (`x=$C8`): follow `$5c`.
+  assert.equal(resolveUwOccupyingRoomId(0x5d, 0xc8 - PLAY_W, 0x50, 0x5d), 0x5c);
+  // North strip + west latch, on unique floor (`x=$28`): follow `$5c`.
+  assert.equal(resolveUwOccupyingRoomId(0x5d, 0x28 - PLAY_W, 0x50, 0x5b), 0x5c);
+  // West cavity + west latch: keep `$5b` so a west cross can finish.
+  assert.equal(resolveUwOccupyingRoomId(0x5d, 0x18 - PLAY_W, 0x8d, 0x5b), 0x5b);
+  // East cavity of `$5c` + east latch: keep `$5d`.
+  assert.equal(resolveUwOccupyingRoomId(0x5d, 0xe8 - PLAY_W, 0x8d, 0x5d), 0x5d);
+});
+
+test('the first pixel north of $69 still occupies $69 so the seam can fire', () => {
+  // Screenshot: walking $69→$59 went black because occupancy flipped to $59
+  // in the south door hole and `$69`'s north exit was never tested.
+  assert.equal(occupyingRoom(0x69, 0x78, 0x3f).roomId, 0x59);
+  assert.equal(resolveUwOccupyingRoomId(0x69, 0x78, 0x3f, 0x69), 0x69);
+  assert.equal(canClaimAnchorCross(0x78, 0x3f), true);
+});
+
 test('the exact seam pixel can still claim the anchor', () => {
   // playY === PLAY_H is the first south-exit pixel. It is *not* inside the
   // play rectangle, and a stride often lands here with gridOffset still set.
@@ -102,6 +155,20 @@ test('the exact seam pixel can still claim the anchor', () => {
   assert.equal(canClaimAnchorCross(0x78, HUD_HEIGHT + 20), true);
   // Just inside the NES east lip, then shifted by an ally's east rebase.
   assert.equal(canClaimAnchorCross(-0x13, 0x8d), true);
+});
+
+test('an idle leftover on the seam lip does not own the overworld stream', () => {
+  // Occupancy still uses the lip (`canClaimAnchorCross`) so a mid-stride
+  // exit can finish. The stream itself must not follow someone standing
+  // still there — that rebase fight glues both heroes' Y to snapOwWalkY.
+  const seamY = HUD_HEIGHT + PLAY_H;
+  assert.equal(mayOwnOwAnchor(0x78, seamY, 0, 0), false);
+  assert.equal(mayOwnOwAnchor(0x78, seamY + 8, 0, 0), false);
+  assert.equal(mayOwnOwAnchor(0x78, seamY, 3, 0), true, 'mid-stride exit still owns it');
+  assert.equal(mayOwnOwAnchor(0x78, seamY, 0, DIR.DOWN), true, 'walking further south follows');
+  assert.equal(mayOwnOwAnchor(0x78, seamY, 0, DIR.UP), false, 'holding north is not an exit');
+  assert.equal(mayOwnOwAnchor(0x78, 0x8d, 0, 0), true, 'inside the cell always owns it');
+  assert.equal(mayOwnOwAnchor(0x78, HUD_HEIGHT - PLAY_H + 80, 0, 0), false);
 });
 
 test('camera centers Link until map edge', () => {
@@ -257,6 +324,13 @@ test('roomsForCamera includes neighbors', () => {
   assert.ok(rooms.includes(0x10));
 });
 
+test('sortRoomsNearestFirst puts the anchor ahead of diagonals', () => {
+  const ordered = sortRoomsNearestFirst([0x68, 0x77, 0x76, 0x87], 0x77);
+  assert.equal(ordered[0], 0x77);
+  assert.ok(ordered.indexOf(0x76) < ordered.indexOf(0x68));
+  assert.ok(ordered.indexOf(0x87) < ordered.indexOf(0x68));
+});
+
 test('rectFullyOffCamera', () => {
   assert.equal(rectFullyOffCamera({ x: 0x80, y: 0x8d }, 0, 0), false);
   assert.equal(rectFullyOffCamera({ x: -200, y: 0x8d }, 0, 0), true);
@@ -267,6 +341,14 @@ test('foggedRooms hides unvisited neighbors', () => {
   assert.ok(fog.has(0x10));
   assert.ok(fog.has(0x12));
   assert.equal(fog.has(0x11), false);
+});
+
+test('foggedRooms does not hide an occupied leftover cell', () => {
+  // L2 cellar exit: ally holds $79 while this hero climbs into $3b.
+  const fog = foggedRooms([0x79, 0x3b, 0x3a], new Set([0x79]), 0x79, [0x3b]);
+  assert.equal(fog.has(0x3b), false, 'the climber\'s room must not draw as fog');
+  assert.ok(fog.has(0x3a));
+  assert.equal(fog.has(0x79), false);
 });
 
 test('a cave draws at the origin and leaves the world camera alone', () => {

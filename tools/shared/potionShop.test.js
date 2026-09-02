@@ -43,16 +43,19 @@ test('only the potion shop hides its wares', () => {
   assert.equal(potionShopWaresHidden(null, createInventory()), false);
 });
 
-test('B shows the letter only while it occupies the B slot', () => {
+test('B shows the letter while it is held, even if another item is on B', () => {
   const cave = potionShop();
   const inv = createInventory();
   inv.letter = LETTER.HELD;
-  assert.equal(canShowLetter(cave, inv), false, 'B slot is empty');
+  assert.equal(canShowLetter(cave, inv), true, 'held letter is enough in the shop');
+
+  inv.selectedB = B_ITEM.BAIT;
+  assert.equal(canShowLetter(cave, inv), true, 'cave B cannot use bait anyway');
 
   inv.selectedB = B_ITEM.POTION;
   assert.equal(canShowLetter(cave, inv), true);
 
-  // CheckMissingItem only redirects to the letter slot when there is no potion.
+  // CheckMissingItem only keeps the letter slot when there is no potion.
   inv.potion = 1;
   assert.equal(canShowLetter(cave, inv), false);
 });

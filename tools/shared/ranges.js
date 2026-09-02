@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import { copyBytes } from './bytes.js';
 
 /**
  * Parse a hex/decimal integer string or number.
@@ -44,21 +44,8 @@ export function normalizeRange(range) {
 }
 
 /**
- * @param {string} schemaPath
- */
-export function loadRangeSchema(schemaPath) {
-  const raw = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
-  const ranges = (raw.ranges ?? []).map(normalizeRange);
-  return {
-    revisionTarget: raw.revision_target ?? null,
-    offsetUnit: raw.offset_unit ?? 'prg_relative',
-    ranges,
-  };
-}
-
-/**
  * Slice PRG for a normalized range.
- * @param {Buffer} prg
+ * @param {Uint8Array} prg
  * @param {{ id: string, prgStart: number, prgEndInclusive: number, length: number }} range
  */
 export function sliceRange(prg, range) {
@@ -67,5 +54,5 @@ export function sliceRange(prg, range) {
       `Range ${range.id} ends at 0x${range.prgEndInclusive.toString(16)} but PRG is only 0x${prg.length.toString(16)} bytes`,
     );
   }
-  return Buffer.from(prg.subarray(range.prgStart, range.prgEndInclusive + 1));
+  return copyBytes(prg, range.prgStart, range.prgEndInclusive + 1);
 }

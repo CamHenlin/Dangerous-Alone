@@ -11,10 +11,28 @@ import {
   rectFullyOffEveryCamera,
   roomPlayOrigin,
   roomsForCamera,
+  roomsForCameras,
 } from './continuousCamera.js';
 import { roomFullyOffAllCameras, roomFullyOffCamera } from './multiRoomTiles.js';
 
 export { foggedRooms, roomsForCamera, roomFullyOffCamera, roomFullyOffAllCameras };
+
+/**
+ * True when a camera can see (or is about to see) a room the stream has not
+ * drawn. Split-world play used to cancel the other place's fetch, so leftover
+ * neighbours stayed black until the next seam.
+ *
+ * @param {{ get?: (id: number) => unknown } | null | undefined} stream
+ * @param {Iterable<{ worldCamX?: number, worldCamY?: number }>} cameras
+ * @param {{ cols?: number, rows?: number, margin?: number }} [opts]
+ */
+export function streamMissingVisibleRooms(stream, cameras, opts = {}) {
+  if (!stream?.get) return false;
+  for (const id of roomsForCameras(cameras, { margin: 1, ...opts })) {
+    if (!stream.get(id)) return true;
+  }
+  return false;
+}
 
 /**
  * Read a camera list out of a call that may still be passing one camera.

@@ -39,6 +39,7 @@ export const STATUS_A_XY = Object.freeze({ x: 0x94, y: 0x1f });
 
 /**
  * Selectable B slots — X from NES SubmenuItemXs / SubmenuCursorXs.
+ * Order matches `B_SLOT_ORDER` (left-to-right, top then bottom).
  * Arrow ($AC) + bow ($B4) share cursor X $B0.
  */
 export const SUBMENU_B_SLOTS = Object.freeze([
@@ -108,7 +109,8 @@ export function bItemIcon(inv, id) {
       return null;
     case B_ITEM.POTION:
       if (inv.potion > 0) return { tile: 0x40, pal: inv.potion >= 2 ? 2 : 1 };
-      if (inv.letter) return { tile: 0x4c, pal: 0 };
+      // Slot $0F / SLOT_PALETTE $01 — white paper, not SP0 green.
+      if (inv.letter) return { tile: 0x4c, pal: 1 };
       return null;
     case B_ITEM.ROD:
       return inv.rod ? { tile: 0x4a, pal: 1 } : null;

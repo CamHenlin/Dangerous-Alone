@@ -177,10 +177,12 @@ async function redraw() {
 
 async function init() {
   try {
+    const { bootRomAssets } = await import('./romGate.js');
+    await bootRomAssets({ onStatus: setStatus });
     manifest = await fetchJson('/graphics/graphics_manifest.json');
     palettes = await fetchJson('/graphics/palettes.json');
   } catch (err) {
-    setStatus('Missing extracted graphics. Run: npm run extract -- graphics');
+    setStatus(err.message || 'Missing graphics — drop a Zelda ROM');
     console.error(err);
     return;
   }

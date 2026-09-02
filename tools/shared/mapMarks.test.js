@@ -65,6 +65,17 @@ test('screens the current quest never opens are skipped', () => {
   assert.deepEqual(caveScreens(ow.screens, 0x13, 1), [0x21]);
 });
 
+test('quest-2 dungeon 2/3 follow LevelInfo numbers, not cave ids', () => {
+  const entrances = levelEntranceScreens(ow.screens, 2);
+  assert.equal(entrances.get(1), 0x37);
+  assert.equal(entrances.get(2), 0x34, 'LEVEL-2 is cave 3 at $34');
+  assert.equal(entrances.get(3), 0x3c, 'LEVEL-3 is cave 2 at $3C');
+});
+
+test('quest-2 prefers the Q2-only hole when two screens share a cave', () => {
+  assert.deepEqual(caveScreens(ow.screens, 5, 2), [0x1b]);
+});
+
 test('nextDungeonLevel walks the shards in order, then Death Mountain', () => {
   const inv = createInventory();
   assert.equal(nextDungeonLevel(inv), 1);

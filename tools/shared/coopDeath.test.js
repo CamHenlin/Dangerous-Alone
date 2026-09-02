@@ -13,7 +13,9 @@ import {
   respawnBeside,
   sameRespawnArea,
   shouldFollowAllyWorld,
+  shouldRestartAtOverworldStart,
   shouldRestartInOwnDungeon,
+  snapCoopWalkGrid,
   standUpAfterDeath,
   targetableLinks,
   tryAutoRevive,
@@ -98,6 +100,42 @@ test('someone else standing means you regroup, not game over', () => {
   assert.equal(a.link.y, 90);
 });
 
+test('respawn keeps the ally stride so regroup is not mid-cell with gridOffset 0', () => {
+  const a = hero(0, { dead: true, x: 10, y: 10 });
+  const b = hero(1, { x: 0x7c, y: 0x8d });
+  b.link.gridOffset = 4;
+  b.link.posFrac = 0x40;
+  b.link.dir = 1;
+  respawnBeside(a, b);
+  assert.equal(a.link.x, 0x7c);
+  assert.equal(a.link.y, 0x8d);
+  assert.equal(a.link.gridOffset, 4);
+  assert.equal(a.link.posFrac, 0x40);
+  assert.equal(a.link.moving, false);
+});
+
+test('snapCoopWalkGrid rewinds a mid-cell stride the way a knockback does', () => {
+  const link = { x: 0x7c, y: 0x8d, dir: 1, gridOffset: 4, posFrac: 0x40, moving: true };
+  snapCoopWalkGrid(link);
+  assert.equal(link.gridOffset, 0);
+  assert.equal(link.x, 0x78);
+  assert.equal(link.y, 0x8d);
+});
+
+test('standUp clears freeze flags a death can leave armed', () => {
+  const a = hero(0, { dead: true });
+  a.inv.paralyzed = 2;
+  a.inv.swordBlocked = 1;
+  a.inv.swordBlockedTimer = 10;
+  a.busy = true;
+  a.pondFairyHalt = true;
+  standUpAfterDeath(a);
+  assert.equal(a.inv.paralyzed, 0);
+  assert.equal(a.inv.swordBlocked, 0);
+  assert.equal(a.busy, false);
+  assert.equal(a.pondFairyHalt, false);
+});
+
 test('respawn drops a mid-swing sword so a cave regroup can walk', () => {
   const a = hero(0, { dead: true, x: 10, y: 10 });
   const b = hero(1, { x: 0x78, y: 0xb8 });
@@ -175,6 +213,7 @@ test('dying in a dungeon does not follow an ally onto the overworld', () => {
   assert.equal(sameRespawnArea(a, b), false);
   assert.equal(shouldFollowAllyWorld(a, b), false);
   assert.equal(shouldRestartInOwnDungeon(a, b), true);
+  assert.equal(shouldRestartAtOverworldStart(a, b), false);
   assert.equal(labyrinthWorldIdFor(a.world), 'dungeon:1');
   standUpAfterDeath(a);
   assert.equal(a.inv.dead, false);
@@ -208,8 +247,19 @@ test('dying on the overworld does not follow an ally into a labyrinth', () => {
   b.world = { id: 'dungeon:1', mode: 'dungeon' };
   assert.equal(shouldFollowAllyWorld(a, b), false);
   assert.equal(shouldRestartInOwnDungeon(a, b), false);
+  assert.equal(shouldRestartAtOverworldStart(a, b), true);
   standUpAfterDeath(a);
-  assert.equal(a.link.x, 0x40, 'the overworld death stays on the map');
+  assert.equal(a.link.x, 0x40, 'pose at start is the play layer, not stand-up');
+});
+
+test('dying on the overworld does not follow an ally into a cave', () => {
+  const a = hero(0, { dead: true, x: 0x40, y: 0x8d });
+  const b = hero(1, { x: 0x78, y: 0x4d });
+  a.world = { id: 'overworld', mode: 'overworld' };
+  b.world = { id: 'cave:16', mode: 'cave' };
+  assert.equal(sameRespawnArea(a, b), false);
+  assert.equal(shouldFollowAllyWorld(a, b), false);
+  assert.equal(shouldRestartAtOverworldStart(a, b), true);
 });
 
 test('both on the overworld still regroup', () => {
@@ -221,6 +271,7 @@ test('both on the overworld still regroup', () => {
   assert.equal(sameRespawnArea(a, b), true);
   assert.equal(shouldFollowAllyWorld(a, b), false);
   assert.equal(shouldRestartInOwnDungeon(a, b), false);
+  assert.equal(shouldRestartAtOverworldStart(a, b), false);
 });
 
 test('a cellar names the labyrinth it belongs to', () => {

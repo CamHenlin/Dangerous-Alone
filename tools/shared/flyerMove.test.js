@@ -5,10 +5,18 @@ import {
   BLUE_KEESE_INIT_SPEED,
   DIRECTIONS8,
   FAIRY_FLYING_MAX_SPEED_FRAC,
+  FLYER_DECIDE,
   FLYER_STATE,
   KEESE_FLYING_MAX_SPEED_FRAC,
+  PEAHAT_FLYING_MAX_SPEED_FRAC,
+  PEAHAT_INIT_SPEED,
   RED_BLACK_KEESE_INIT_SPEED,
   boundFlyer,
+  flyerDecideForType,
+  flyerDecideState,
+  flyerDelayTimer,
+  flyerInitMaxSpeed,
+  flyerInitSpeed,
   flyerSpeedThresholdTransition,
   flyerSpeedToPxPerFrame,
   flyerWholeSpeed,
@@ -16,6 +24,7 @@ import {
   moveFlyer,
   reverseDir8,
   turnRandomlyDir8,
+  turnTowardsPlayer8,
 } from './flyerMove.js';
 import { OBJ, createEnemy, stepEnemy } from './enemies.js';
 
@@ -99,4 +108,75 @@ test('BoundFlyer reverses 8-way heading at the room lip', () => {
 test('fairy max speed is slower than keese', () => {
   assert.equal(flyerSpeedToPxPerFrame(FAIRY_FLYING_MAX_SPEED_FRAC), 0.625);
   assert.ok(FAIRY_FLYING_MAX_SPEED_FRAC < KEESE_FLYING_MAX_SPEED_FRAC);
+});
+
+test('InitPeahat stamps EndInitFlyer speed $1F and max $A0, facing up', () => {
+  const e = createEnemy({ objType: OBJ.PEAHAT, x: 0x80, y: 0x80 });
+  assert.equal(e.dir, DIR.UP);
+  assert.equal(e.flyerState, FLYER_STATE.SPEED_UP);
+  assert.equal(e.flyerSpeed, PEAHAT_INIT_SPEED);
+  assert.equal(e.flyingMaxSpeedFrac, PEAHAT_FLYING_MAX_SPEED_FRAC);
+  assert.equal(e.timer, 0);
+  assert.equal(flyerInitSpeed(OBJ.PEAHAT), PEAHAT_INIT_SPEED);
+  assert.equal(flyerInitMaxSpeed(OBJ.PEAHAT), PEAHAT_FLYING_MAX_SPEED_FRAC);
+  assert.equal(flyerSpeedToPxPerFrame(PEAHAT_FLYING_MAX_SPEED_FRAC), 0.625);
+});
+
+test('Flyer_PeahatDecideState gates differ from keese', () => {
+  assert.equal(flyerDecideState(0xb0, FLYER_DECIDE.PEAHAT.chaseMin, FLYER_DECIDE.PEAHAT.wanderMin), FLYER_STATE.CHASE);
+  assert.equal(flyerDecideState(0xaf, FLYER_DECIDE.PEAHAT.chaseMin, FLYER_DECIDE.PEAHAT.wanderMin), FLYER_STATE.WANDER);
+  assert.equal(flyerDecideState(0x1f, FLYER_DECIDE.PEAHAT.chaseMin, FLYER_DECIDE.PEAHAT.wanderMin), FLYER_STATE.SLOW_DOWN);
+  // Keese chase starts at $A0; peahat needs $B0.
+  assert.equal(flyerDecideForType(OBJ.BLUE_KEESE, 0xa0), FLYER_STATE.CHASE);
+  assert.equal(flyerDecideForType(OBJ.PEAHAT, 0xa0), FLYER_STATE.WANDER);
+  assert.equal(flyerDecideForType(OBJ.FLYING_GHINI, 0x08), FLYER_STATE.WANDER);
+  assert.equal(flyerDecideForType(OBJ.FLYING_GHINI, 0x07), FLYER_STATE.SLOW_DOWN);
+});
+
+test('Flyer_SlowDown rest timer is Random AND $3F OR $40', () => {
+  assert.equal(flyerDelayTimer(0x00), 0x40);
+  assert.equal(flyerDelayTimer(0x3f), 0x7f);
+  assert.equal(flyerDelayTimer(0xff), 0x7f);
+});
+
+test('TurnTowardsPlayer8 keeps heading when already aimed within one turn', () => {
+  // Facing up, player also up (same X, smaller Y) → exact match on current → keep.
+  assert.equal(turnTowardsPlayer8(DIR.UP, 0x80, 0x90, 0x80, 0x70), DIR.UP);
+});
+
+test('TurnTowardsPlayer8 turns up-right when facing up with player to the right', () => {
+  assert.equal(turnTowardsPlayer8(DIR.UP, 0x80, 0x90, 0x90, 0x90), DIRECTIONS8[1]);
+});
+
+test('peahat ramps then rests when decide always picks slow', () => {
+  const e = createEnemy({ objType: OBJ.PEAHAT, x: 0x80, y: 0x80 });
+  const bounds = { minX: 0x20, maxX: 0xd0, minY: 0x5d, maxY: 0xbd };
+  let sawRest = false;
+  for (let i = 0; i < 800; i += 1) {
+    stepEnemy(e, bounds, null, { rngByte: () => 0x10 });
+    if (e.flyerState === FLYER_STATE.DELAY) sawRest = true;
+  }
+  assert.ok(sawRest, 'expected flyer state 5 (delay/rest)');
+  assert.ok((e.flyerSpeed ?? 0) < 0xa0);
+});
+
+test('two peahats with independent rng do not stay stacked', () => {
+  const bounds = { minX: 0x20, maxX: 0xd0, minY: 0x5d, maxY: 0xbd };
+  const a = createEnemy({ objType: OBJ.PEAHAT, x: 0x80, y: 0x80 });
+  const b = createEnemy({ objType: OBJ.PEAHAT, x: 0x80, y: 0x80 });
+  let n = 1;
+  const rngA = () => {
+    n += 17;
+    return n & 0xff;
+  };
+  const rngB = () => {
+    n += 29;
+    return n & 0xff;
+  };
+  for (let i = 0; i < 500; i += 1) {
+    stepEnemy(a, bounds, null, { rngByte: rngA, chase: { x: 0x40, y: 0x70 } });
+    stepEnemy(b, bounds, null, { rngByte: rngB, chase: { x: 0xc0, y: 0xb0 } });
+  }
+  const dist = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  assert.ok(dist > 8, `peahats still clustered (manhattan ${dist})`);
 });

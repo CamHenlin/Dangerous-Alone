@@ -7,14 +7,27 @@
  * them — but only when you already share a place. A dungeon death with
  * the living on the overworld (or in another level) continues at that
  * labyrinth's door, the way the ROM would, rather than yanking you out.
+ * An overworld death with nobody else on the map continues at the start
+ * screen, the way Continue does.
  */
 
 import { occupyingRoom } from './continuousCamera.js';
 import { CONTINUE_HALF_HEARTS } from './continueMenu.js';
 import { drinkPotion } from './inventory.js';
+import {
+  onWalkGrid,
+  snapLinkToWalkGrid,
+  snapToGridCellStart,
+  writeLinkMotion,
+} from './linkMotion.js';
 import { activePlayers } from './player.js';
 import { cancelSword } from './sword.js';
-import { dungeonWorldId, isCellarWorldId, parseCellarWorldId } from './worldRegistry.js';
+import {
+  dungeonWorldId,
+  isCellarWorldId,
+  overworldWorldId,
+  parseCellarWorldId,
+} from './worldRegistry.js';
 
 /**
  * Active players who still have a heart.
@@ -147,6 +160,19 @@ export function shouldRestartInOwnDungeon(dead, ally) {
 }
 
 /**
+ * Died on the overworld with the living elsewhere — continue at the start
+ * screen rather than standing up on the death cell, or following them
+ * into a cave or labyrinth.
+ *
+ * @param {object} dead
+ * @param {object | null} ally
+ */
+export function shouldRestartAtOverworldStart(dead, ally) {
+  if (dead?.world?.id !== overworldWorldId()) return false;
+  return !sameRespawnArea(dead, ally);
+}
+
+/**
  * Labyrinth to stand in when the living are in a cellar you were not.
  * @param {object | null} ally
  */
@@ -176,7 +202,12 @@ export function standUpAfterDeath(dead) {
     inv.shovePixels = 0;
     inv.shoveDir = 0;
     inv.itemLiftTimer = 0;
+    inv.paralyzed = 0;
+    inv.swordBlocked = 0;
+    inv.swordBlockedTimer = 0;
   }
+  dead.busy = false;
+  dead.pondFairyHalt = false;
   // Caves never run stepCombat. A swing still armed when you drop (or when
   // you are dumped into an ally's cave) never finishes, and stepCave will
   // not walk while the blade is out.
@@ -190,6 +221,23 @@ export function standUpAfterDeath(dead) {
 }
 
 /**
+ * Put a regrouped hero back on the walk lattice.
+ *
+ * Copying an ally's x,y and zeroing `gridOffset` leaves you mid-cell, and a
+ * leftover rebase can do the same to everyone in the world. `stepLink` will
+ * not start a new stride from there; a `$20` knockback snaps first and looks
+ * like "an enemy bump unstuck us".
+ *
+ * @param {object | null | undefined} link
+ */
+export function snapCoopWalkGrid(link) {
+  if (!link) return link;
+  if (link.gridOffset !== 0) snapToGridCellStart(link);
+  if (!onWalkGrid(link.x, link.y)) snapLinkToWalkGrid(link);
+  return link;
+}
+
+/**
  * Three hearts, on their feet, beside the ally.
  * @param {object} dead
  * @param {object} ally
@@ -197,11 +245,9 @@ export function standUpAfterDeath(dead) {
 export function respawnBeside(dead, ally) {
   standUpAfterDeath(dead);
   if (ally?.link && dead.link) {
-    dead.link.x = ally.link.x;
-    dead.link.y = ally.link.y;
-    dead.link.dir = ally.link.dir;
-    dead.link.posFrac = 0;
-    dead.link.gridOffset = 0;
+    // Keep the ally's stride so we do not land mid-cell with gridOffset 0 —
+    // that is the pose a knockback has to snap off before anyone can walk.
+    writeLinkMotion(dead.link, ally.link);
     dead.link.moving = false;
   }
   // Same-world leftover coords only mean the ally's cell if the latch

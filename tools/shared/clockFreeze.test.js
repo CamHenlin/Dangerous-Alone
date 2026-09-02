@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   clearClockFreeze,
+  clockCoversOccupancy,
   clockFreezeActive,
   enemyIsClockFrozen,
   shouldClearClock,
@@ -26,6 +27,21 @@ test('a clock picked up in one world is not expired by another', () => {
   assert.equal(shouldClearClock('overworld', 'cellar:1:127', foes), false);
   assert.equal(shouldClearClock('overworld', 'overworld', []), true);
   assert.equal(shouldClearClock(null, 'overworld', []), false);
+});
+
+test('clock covers only the occupying screen it was taken on', () => {
+  assert.equal(clockCoversOccupancy('overworld', 0x78, 'overworld', 0x78), true);
+  assert.equal(clockCoversOccupancy('overworld', 0x78, 'overworld', 0x79), false);
+  assert.equal(clockCoversOccupancy('overworld', 0x78, 'cellar:1:127', 0x78), false);
+  assert.equal(clockCoversOccupancy('overworld', 0x78, 'overworld', null), false);
+});
+
+test('leaving the pickup screen expires the clock even if tagged foes live', () => {
+  const foes = [{ alive: true, clockFrozen: true }];
+  assert.equal(shouldClearClock('overworld', 'overworld', foes, 0x78, [0x78]), false);
+  assert.equal(shouldClearClock('overworld', 'overworld', foes, 0x78, [0x77, 0x78]), false);
+  assert.equal(shouldClearClock('overworld', 'overworld', foes, 0x78, [0x77, 0x79]), true);
+  assert.equal(shouldClearClock('overworld', 'cellar:1:127', foes, 0x78, [0x79]), false);
 });
 
 test('clock ends when tagged foes die; clearClockFreeze wipes tags', () => {

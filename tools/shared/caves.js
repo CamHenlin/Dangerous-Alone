@@ -301,6 +301,9 @@ export function grantCaveItem(inv, itemId) {
       return 'Red ring';
     case ITEM.LETTER:
       if (!inv.letter) inv.letter = 1;
+      // CheckMissingItem puts the letter on the potion B slot; equip it so
+      // the HUD shows the paper and B at the medicine shop can fire.
+      if ((inv.potion ?? 0) === 0) inv.selectedB = B_ITEM.POTION;
       return 'Letter';
     case ITEM.RUPEE:
       addRupees(inv, 1);

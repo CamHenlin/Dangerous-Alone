@@ -5,7 +5,6 @@ import { defineConfig } from 'vite';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(root, '..');
-const extractedDir = path.join(repoRoot, 'assets', 'extracted');
 const overridesDir = path.join(repoRoot, 'assets', 'overrides');
 
 /**
@@ -45,7 +44,9 @@ function contentType(filePath) {
 
 export default defineConfig({
   root,
-  publicDir: extractedDir,
+  // Nintendo art is never copied into dist or served from disk. The game
+  // extracts it from a ROM dropped into the window and kept in localStorage.
+  publicDir: false,
   plugins: [overridesPlugin()],
   resolve: {
     alias: {

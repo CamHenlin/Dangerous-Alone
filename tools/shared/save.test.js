@@ -117,6 +117,31 @@ test('createSaveStore persists three slots', () => {
   assert.equal(store.listSlots()[0], null);
 });
 
+test('serializeGameState keeps the stepladder object on the file', () => {
+  const inv = createInventory();
+  inv.ladder = 1;
+  const payload = serializeGameState({
+    name: 'LINK',
+    inv,
+    mode: 'overworld',
+    roomId: 0x5f,
+    x: 0xc0,
+    y: 0x8d,
+    dir: 2,
+    ladder: { x: 0xb0, y: 0x90, dir: 2, state: 2 },
+  });
+  assert.deepEqual(payload.position.ladder, { x: 0xb0, y: 0x90, dir: 2, state: 2 });
+  const bags = {
+    inv: createInventory(),
+    owSecretsRevealed: new Set(),
+    caveTaken: new Set(),
+    owItemsTaken: new Set(),
+    dungeonProgress: new Map(),
+  };
+  const meta = applyLoadedSave(payload, bags);
+  assert.deepEqual(meta.position.ladder, { x: 0xb0, y: 0x90, dir: 2, state: 2 });
+});
+
 test('bombBag survives a save round trip', () => {
   const inv = createInventory();
   inv.bombBag = 12;

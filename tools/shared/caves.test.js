@@ -111,6 +111,14 @@ test('grantCaveItem sets candle and ring', () => {
   assert.equal(inv.ring, 1);
 });
 
+test('grantCaveItem equips the letter on the potion B slot', () => {
+  const inv = createInventory();
+  inv.selectedB = 'bait';
+  assert.equal(grantCaveItem(inv, ITEM.LETTER), 'Letter');
+  assert.equal(inv.letter, 1);
+  assert.equal(inv.selectedB, 'potion');
+});
+
 test('cave bow grant does not soft-grant arrows', () => {
   const inv = createInventory();
   assert.equal(grantCaveItem(inv, ITEM.BOW), 'Bow');

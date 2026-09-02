@@ -429,6 +429,11 @@ test('door cavity for the perp clamp excludes the 8-aligned floor columns', () =
   assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0x4d }, 'north'), true);
   assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0x5d }, 'north'), false);
   assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0x5e }, 'north'), false);
+  // South unique-floor row 17: ObjY `$BD–$C4` still samples `$C8–$CF`.
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0xbd }, 'south'), false);
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0xc4 }, 'south'), false);
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0xc5 }, 'south'), true);
+  assert.equal(inUwDoorCavity({ x: DOORWAY_CENTER_X, y: 0xd8 }, 'south'), true);
 });
 
 test('clampUwDoorwayPath keeps a west-cavity walker inside the door opening', () => {
@@ -566,6 +571,73 @@ test('L3 $6b: north-door lip can walk left into the opening', () => {
     stepUwDoorHero(link, room, DIR.LEFT, ctx);
   }
   assert.ok(link.x < x0, `Left must move them, stayed at $${link.x.toString(16)}`);
+});
+
+test('Q2 L2 $69: south-door entry can walk left around the diamond row', () => {
+  // Screenshot: after walking in from $79, leftover/host at the south door
+  // could not reach the key to the right. Diamonds sit on the door column
+  // one square north of the unique-floor lip — Left/Right from y=$B8 must
+  // leave the opening.
+  const levelPath = join(ROOT, 'assets/extracted/dungeons/q2/level_3/level.json');
+  if (!existsSync(levelPath)) return;
+  const level = finalizeLevelMeta(JSON.parse(readFileSync(levelPath, 'utf8')));
+  const room = level.rooms.find((r) => r.roomId === 0x69);
+  assert.ok(room);
+  const grid = buildDungeonPlayGrid(room, dungeonPlayOrigin(), UW_PRIMARY_SQUARES, {});
+  const ctx = {
+    tileGrid: grid,
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+    roomIds: new Set(level.rooms.map((r) => r.roomId)),
+  };
+  const link = createLinkState(DOORWAY_CENTER_X, 0xd8, DIR.UP);
+  for (let i = 0; i < 80; i += 1) {
+    const y0 = link.y;
+    stepUwDoorHero(link, room, DIR.UP, ctx);
+    if (link.y === y0 && (link.gridOffset ?? 0) === 0) break;
+  }
+  assert.ok(link.y <= 0xb8, `north walk stopped at y=$${link.y.toString(16)}`);
+  const x0 = link.x;
+  for (let i = 0; i < 48; i += 1) {
+    stepUwDoorHero(link, room, DIR.LEFT, ctx);
+  }
+  assert.ok(link.x < 0x70, `Left from the diamond row froze at $${link.x.toString(16)},$${link.y.toString(16)}`);
+  assert.ok(link.x < x0, `Left must leave the door column (x0=$${x0.toString(16)})`);
+});
+
+test('Q2 L2 $69: south-door unique-floor lip Left does not become Up', () => {
+  // Screenshot: leftover/host at the south threshold mashed Left and was
+  // walked north instead. ObjY `$C0` is still unique floor (hotspot row 17).
+  const levelPath = join(ROOT, 'assets/extracted/dungeons/q2/level_3/level.json');
+  if (!existsSync(levelPath)) return;
+  const level = finalizeLevelMeta(JSON.parse(readFileSync(levelPath, 'utf8')));
+  const room = level.rooms.find((r) => r.roomId === 0x69);
+  assert.ok(room);
+  const grid = buildDungeonPlayGrid(room, dungeonPlayOrigin(), UW_PRIMARY_SQUARES, {});
+  const ctx = {
+    tileGrid: grid,
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+    roomIds: new Set(level.rooms.map((r) => r.roomId)),
+  };
+  const lip = createLinkState(DOORWAY_CENTER_X, 0xc0, DIR.LEFT);
+  const y0 = lip.y;
+  for (let i = 0; i < 48; i += 1) {
+    stepUwDoorHero(lip, room, DIR.LEFT, ctx);
+  }
+  assert.equal(lip.y, y0, `Left must not walk north (y=$${lip.y.toString(16)})`);
+  assert.ok(lip.x < 0x70, `Left from the south lip froze at $${lip.x.toString(16)},$${lip.y.toString(16)}`);
+
+  const hole = createLinkState(DOORWAY_CENTER_X, 0xd8, DIR.LEFT);
+  for (let i = 0; i < 16; i += 1) {
+    stepUwDoorHero(hole, room, DIR.LEFT, ctx);
+  }
+  assert.ok(
+    hole.x >= 0x70,
+    `deep south cavity must stay in the door column, x=$${hole.x.toString(16)}`,
+  );
 });
 
 test('pastUwDoorLip matches the NES screen-edge lips', () => {

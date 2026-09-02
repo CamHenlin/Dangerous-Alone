@@ -31,7 +31,14 @@ import {
   NORTH_STAIR,
   NORTH_STAIR_MOUTH,
   NORTH_STAIR_SPOTS,
+  Q2_L2_FAR_NORTH,
+  Q2_L2_NORTH,
+  Q2_L2_PACK,
+  Q2_L2_SOUTH_DOOR_SPOTS,
+  Q2_L2_START,
   SHOP_CAVE,
+  L4_LAVA_MAZE,
+  L4_WATER_MAZE,
   alignStops,
   arrivalSpot,
   assertArrivalMatch,
@@ -45,6 +52,10 @@ import {
   recordStops,
   runDoorLipTour,
   runL9WaterRoomArrival,
+  runQ2L2SouthDoorArrival,
+  runQ2L2SouthDoorImmediateStrafe,
+  runQ2L2WalkNorthTo59,
+  runUwLavaPathTour,
   splitAnchor,
   splitEastFromStart,
   walkIntoRoom,
@@ -118,9 +129,10 @@ describe('collision play', { concurrency: false }, () => {
    * @param {number} room
    * @param {readonly { x: number, y: number }[]} spots
    * @param {readonly ('left'|'right'|'up'|'down')[]} [dirs]
+   * @param {string} [query]
    */
-  async function recordSoloUw(level, room, spots, dirs = SIDES) {
-    const game = await openGame(browser, { url: server.url });
+  async function recordSoloUw(level, room, spots, dirs = SIDES, query = '') {
+    const game = await openGame(browser, { url: server.url, query });
     await game.step(5);
     await quietWorld(game);
     await game.enterLevel(level);
@@ -1192,6 +1204,156 @@ describe('collision play', { concurrency: false }, () => {
     );
     assert.equal(after[1].linkRoom, L9_WATER_ROOM, 'player two should still occupy leftover $23');
     assertArrivalProbesMatch(solo, leftover, 'leftover L9 $23 after $12→$13→$23 and a north shove');
+  });
+
+  test('leftover Q2 L2 $69 south door after walking in from $79 matches solo', async () => {
+    const soloGame = await openGame(browser, { url: server.url, query: 'quest=2' });
+    await enterLabyrinth(soloGame, [], Q2_L2_PACK);
+    await quietWorld(soloGame);
+    const solo = await runQ2L2SouthDoorArrival(soloGame, 0);
+    await soloGame.close();
+    assert.ok(
+      Math.abs(solo.probes[0].moved) >= 8,
+      `solo Left around Q2 L2 $69 diamonds froze `
+        + `(${solo.probes[0].start.x},${solo.probes[0].start.y} `
+        + `→ ${solo.probes[0].end.x},${solo.probes[0].end.y})`,
+    );
+
+    const party = await openGame(browser, { url: server.url, query: 'players=2&quest=2' });
+    await enterLabyrinth(party, [1], Q2_L2_PACK);
+    await quietWorld(party);
+    await party.goRoom(Q2_L2_START, 0x08, 0);
+    await pose(party, 1, 0x78, 0x4d, 0x08, Q2_L2_START);
+    await parkHostInCave(party, SWORD_CAVE);
+    const parked = await hero(party, 1);
+    assert.ok(
+      String(parked.world).startsWith('dungeon:'),
+      `player two should stay in the labyrinth (${parked.world})`,
+    );
+    assert.equal(parked.linkRoom, Q2_L2_START, 'player two should occupy leftover $79');
+
+    const leftover = await runQ2L2SouthDoorArrival(party, 1);
+    const after = (await party.state()).heroes;
+    await party.close();
+    assert.ok(String(after[0].world).startsWith('cave:'), 'host should still occupy the cave');
+    assert.ok(
+      String(after[1].world).startsWith('dungeon:'),
+      `player two left the labyrinth (${after[1].world})`,
+    );
+    assert.equal(after[1].linkRoom, Q2_L2_NORTH, 'player two should occupy leftover $69');
+    assertArrivalProbesMatch(solo, leftover, 'leftover Q2 L2 $69 after $79→$69');
+  });
+
+  test('Q2 L2 $69 south-door land: immediate Left leaves the cavity', async () => {
+    const soloGame = await openGame(browser, { url: server.url, query: 'quest=2' });
+    await enterLabyrinth(soloGame, [], Q2_L2_PACK);
+    await quietWorld(soloGame);
+    const solo = await runQ2L2SouthDoorImmediateStrafe(soloGame, 0);
+    await soloGame.close();
+
+    const party = await openGame(browser, { url: server.url, query: 'players=2&quest=2' });
+    await enterLabyrinth(party, [1], Q2_L2_PACK);
+    await quietWorld(party);
+    await pose(party, 0, 0x78, 0x8d, 0x08, Q2_L2_START);
+    const p2 = await runQ2L2SouthDoorImmediateStrafe(party, 1);
+    await party.close();
+    assert.ok(
+      Math.abs(p2.left.end.x - solo.left.end.x) <= 1,
+      `P2 immediate Left stopped at ${p2.left.end.x},${p2.left.end.y} `
+        + `but solo ${solo.left.end.x},${solo.left.end.y}`,
+    );
+  });
+
+  test('leftover Q2 L2 $69 south-door floor matches solo while host holds $79', async () => {
+    const solo = await recordSoloUw(
+      Q2_L2_PACK,
+      Q2_L2_NORTH,
+      Q2_L2_SOUTH_DOOR_SPOTS,
+      SIDES,
+      'quest=2',
+    );
+    const well = solo.find((row) => row.spot.x === 0x78 && row.spot.y === 0xb8);
+    assert.ok(well, 'solo $69 diamond-row probe missing');
+    assert.ok(
+      well.stops.left.end.x < 0x70,
+      `solo $69 should walk left around the diamonds `
+        + `(left-stop x=$${well.stops.left.end.x.toString(16)})`,
+    );
+
+    const party = await openGame(browser, { url: server.url, query: 'players=2&quest=2' });
+    await enterLabyrinth(party, [1], Q2_L2_PACK);
+    await quietWorld(party);
+    await pose(party, 1, 0x78, 0xb8, 0x08, Q2_L2_NORTH);
+    await party.goRoom(Q2_L2_START, 0x08, 0);
+    await party.step(4);
+    assert.equal((await hero(party, 1)).linkRoom, Q2_L2_NORTH);
+
+    const p2 = await recordStops(
+      party,
+      1,
+      Q2_L2_SOUTH_DOOR_SPOTS.map((s) => ({ ...s, room: Q2_L2_NORTH })),
+      SIDES,
+    );
+    await party.close();
+    assertStopsMatch(solo, p2, 'leftover Q2 L2 $69 with host on $79');
+  });
+
+  test('Q2 L2 walking $79→$69→$59 rebases so $59 is not fogged', async () => {
+    const soloGame = await openGame(browser, { url: server.url, query: 'quest=2' });
+    await enterLabyrinth(soloGame, [], Q2_L2_PACK);
+    await quietWorld(soloGame);
+    const solo = await runQ2L2WalkNorthTo59(soloGame, 0);
+    const soloState = await soloGame.state();
+    await soloGame.close();
+    assert.equal(solo.worldRoomId, Q2_L2_FAR_NORTH);
+    assert.ok(
+      (soloState.uwStreamRooms ?? []).includes(Q2_L2_FAR_NORTH),
+      `solo $59 missing from the stream, got ${JSON.stringify(soloState.uwStreamRooms)}`,
+    );
+
+    const party = await openGame(browser, { url: server.url, query: 'players=2&quest=2' });
+    await enterLabyrinth(party, [1], Q2_L2_PACK);
+    await quietWorld(party);
+    await party.goRoom(Q2_L2_START, 0x08, 0);
+    await pose(party, 1, 0x78, 0x4d, 0x08, Q2_L2_START);
+    await parkHostInCave(party, SWORD_CAVE);
+    const leftover = await runQ2L2WalkNorthTo59(party, 1);
+    const after = await party.state();
+    await party.close();
+    assert.ok(String(after.heroes[0].world).startsWith('cave:'), 'host should still occupy the cave');
+    assert.equal(
+      after.heroes[1].linkRoom,
+      Q2_L2_FAR_NORTH,
+      'player two should occupy leftover $59',
+    );
+    assert.equal(
+      leftover.worldRoomId,
+      Q2_L2_FAR_NORTH,
+      `leftover $59 world stayed $${(leftover.worldRoomId ?? 0).toString(16)}`,
+    );
+  });
+
+  test('L4 $31 lava path: walking back and forth keeps both feet on tiles', async () => {
+    // Screenshot: L4 overlay `$2c` / Q1 `$31` layout 23. Wiggling the 16px
+    // trail used to finish a cell at x=$78 with the right 8px in `$F4`.
+    // `?debug=1` grants the stepladder, which must not disable that extra foot.
+    const game = await openGame(browser, { url: server.url });
+    await enterLabyrinth(game, [], 4);
+    await quietWorld(game);
+    await game.goRoom(L4_LAVA_MAZE);
+    await quietWorld(game);
+    await runUwLavaPathTour(game, 0, L4_LAVA_MAZE, 'L4 $31');
+    await game.close();
+  });
+
+  test('L4 $01 water maze: walking back and forth keeps both feet on tiles', async () => {
+    const game = await openGame(browser, { url: server.url });
+    await enterLabyrinth(game, [], 4);
+    await quietWorld(game);
+    await game.goRoom(L4_WATER_MAZE);
+    await quietWorld(game);
+    await runUwLavaPathTour(game, 0, L4_WATER_MAZE, 'L4 $01');
+    await game.close();
   });
 });
 

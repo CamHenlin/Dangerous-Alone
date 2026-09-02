@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { formatPartyCount, sharedBarOrigin } from './sharedBar.js';
-
-test('the shared strip exists for every co-op frame', () => {
-  assert.equal(sharedBarOrigin(1), null);
-  assert.deepEqual(sharedBarOrigin(2), { x: 0, y: 480 });
-  assert.deepEqual(sharedBarOrigin(3), { x: 0, y: 480 });
-  assert.deepEqual(sharedBarOrigin(4), { x: 0, y: 480 });
-});
+import { formatPartyCount } from './sharedBar.js';
 
 test('four digits keep the NES blank and add a column', () => {
   assert.equal(formatPartyCount(0), 'XXX0');

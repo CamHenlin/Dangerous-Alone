@@ -44,7 +44,36 @@ export function raftDockX(roomId) {
  * @returns {{ active: boolean, state: number, x: number, y: number, crossed: boolean }}
  */
 export function createRaftRide() {
-  return { active: false, state: RAFT_STATE.IDLE, x: 0, y: 0, crossed: false };
+  return {
+    active: false,
+    state: RAFT_STATE.IDLE,
+    x: 0,
+    y: 0,
+    crossed: false,
+    /** Dock room the ride was started in — the stream may move under an ally. */
+    roomId: 0,
+  };
+}
+
+/**
+ * Which UpdateDock state would fire at these room-local coords, or IDLE.
+ * Does not mutate — leftover occupancy planning probes occupying-cell
+ * coords without boarding a throwaway ride.
+ *
+ * @param {{ x: number, y: number }} link
+ * @param {number} roomId
+ * @param {{ raft?: number }} inv
+ */
+export function raftDockTrigger(link, roomId, inv) {
+  if (!inv?.raft || !isRaftDockRoom(roomId)) return RAFT_STATE.IDLE;
+  const dockX = raftDockX(roomId);
+  if (Math.abs(link.x - dockX) > RAFT_ALIGN_PX) return RAFT_STATE.IDLE;
+  // Top edge — arriving from the north screen (UpdateDock state 1).
+  if (Math.abs(link.y - 0x3d) <= RAFT_ALIGN_PX) return RAFT_STATE.DOWN;
+  // Dock lip (UpdateDock state 2). NES tests Y=$7D exactly. Soft-align only
+  // north of the `$7F` landing spot so DOWN→land cannot immediately re-fire UP.
+  if (link.y >= RAFT_DOCK_Y_MIN && link.y < RAFT_DOCK_Y_MAX) return RAFT_STATE.UP;
+  return RAFT_STATE.IDLE;
 }
 
 /**
@@ -59,40 +88,28 @@ export function createRaftRide() {
  * @returns {boolean} started
  */
 export function tryStartRaftRide(link, roomId, inv, ride) {
-  if (!inv?.raft || !isRaftDockRoom(roomId) || ride.active) return false;
+  if (ride.active) return false;
+  const state = raftDockTrigger(link, roomId, inv);
+  if (!state) return false;
   const dockX = raftDockX(roomId);
-  if (Math.abs(link.x - dockX) > RAFT_ALIGN_PX) return false;
-
-  /** @param {number} state @param {number} y */
-  const begin = (state, y) => {
-    // Soft-align only when the ride actually starts. Snapping X on a failed
-    // Y check ran every OW frame in `$3F`/`$55` and pinned Link to the dock
-    // column — UD worked, LR looked broken, until he left the dock room.
-    link.x = dockX;
-    link.y = y;
-    ride.active = true;
-    ride.state = state;
-    ride.crossed = false;
-    ride.x = dockX;
-    ride.y = link.y + 6;
-    link.dir = state === RAFT_STATE.DOWN ? DIR.DOWN : DIR.UP;
-    // NES: halt Link (ObjState=$40) for the scroll.
-    link.gridOffset = 0;
-    link.posFrac = 0;
-    link.moving = false;
-    return true;
-  };
-
-  // Top edge — arriving from the north screen (UpdateDock state 1).
-  if (Math.abs(link.y - 0x3d) <= RAFT_ALIGN_PX) {
-    return begin(RAFT_STATE.DOWN, 0x3d);
-  }
-  // Dock lip (UpdateDock state 2). NES tests Y=$7D exactly. Soft-align only
-  // north of the `$7F` landing spot so DOWN→land cannot immediately re-fire UP.
-  if (link.y >= RAFT_DOCK_Y_MIN && link.y < RAFT_DOCK_Y_MAX) {
-    return begin(RAFT_STATE.UP, 0x7d);
-  }
-  return false;
+  const y = state === RAFT_STATE.DOWN ? 0x3d : 0x7d;
+  // Soft-align only when the ride actually starts. Snapping X on a failed
+  // Y check ran every OW frame in `$3F`/`$55` and pinned Link to the dock
+  // column — UD worked, LR looked broken, until he left the dock room.
+  link.x = dockX;
+  link.y = y;
+  ride.active = true;
+  ride.state = state;
+  ride.crossed = false;
+  ride.roomId = roomId & 0xff;
+  ride.x = dockX;
+  ride.y = link.y + 6;
+  link.dir = state === RAFT_STATE.DOWN ? DIR.DOWN : DIR.UP;
+  // NES: halt Link (ObjState=$40) for the scroll.
+  link.gridOffset = 0;
+  link.posFrac = 0;
+  link.moving = false;
+  return true;
 }
 
 /**
@@ -152,6 +169,36 @@ export function planRaftNorthApproachFromAnchor(link, anchorRoomId, inv) {
 }
 
 /**
+ * Leftover hero already standing on a dock screen: the stream is still
+ * someone else's room (ally paused on `$77`, or holding the island), so
+ * `tryStartRaftRide(roomId=anchor)` never sees the pier. Force the same
+ * rebase NES gets after a scroll into the dock room, then UpdateDock can
+ * fire. Death regroup accidentally did this by adopting the ally's cell.
+ *
+ * @param {{ x: number, y: number, dir?: number }} link
+ * @param {number} anchorRoomId
+ * @param {{ raft?: number }} inv
+ * @returns {{ nextRoomId: number, x: number, y: number, dir: number } | null}
+ */
+export function planRaftDockRideFromAnchor(link, anchorRoomId, inv) {
+  if (!inv?.raft || !link) return null;
+  const occ = occupyingRoom(anchorRoomId, link.x, link.y);
+  const occId = occ.roomId & 0xff;
+  if (!isRaftDockRoom(occId)) return null;
+  // Already the stream — ordinary UpdateDock against `roomId` applies.
+  if ((anchorRoomId & 0xff) === occId) return null;
+  const state = raftDockTrigger({ x: occ.x, y: occ.y }, occId, inv);
+  if (!state) return null;
+  const dockX = raftDockX(occId);
+  return {
+    nextRoomId: occId,
+    x: dockX,
+    y: state === RAFT_STATE.DOWN ? 0x3d : 0x7d,
+    dir: state === RAFT_STATE.DOWN ? DIR.DOWN : DIR.UP,
+  };
+}
+
+/**
  * After a continuous southbound room cross into a dock screen, snap onto the
  * NES north-edge trigger so UpdateDock can fire this frame.
  *
@@ -178,6 +225,7 @@ function endRide(link, ride) {
   ride.active = false;
   ride.state = RAFT_STATE.IDLE;
   ride.crossed = false;
+  ride.roomId = 0;
   link.gridOffset = 0;
   link.posFrac = 0;
   link.moving = false;

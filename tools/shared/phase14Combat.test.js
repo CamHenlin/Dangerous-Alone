@@ -54,6 +54,7 @@ test('Bubble sword block + zero-damage harm', () => {
   const inv = createInventory();
   applyBubbleSwordBlock(inv, 0x2b);
   assert.equal(canSwingSword(inv), false);
+  assert.equal(inv.swordBlocked, 0, 'flashing bubble is the long timer, not sticky');
   const r = harmLink(inv, 0);
   assert.equal(r.applied, false);
   assert.equal(inv.invuln, 0);

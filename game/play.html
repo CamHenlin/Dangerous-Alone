@@ -22,7 +22,7 @@
       <main id="stage" class="play-stage"></main>
       <aside class="play-help">
         <p id="helpKeys">
-          Arrows/WASD move · Z/Space sword · X/C B-item · Enter inventory · H / spare Start joins · F5/F9 practice · M mute · ,/. volume
+          Arrows/WASD move · Z/Space sword · X/C B-item · Tab cycle item · Enter inventory · H / spare Start joins · F5/F9 practice · M mute · ,/. volume
         </p>
         <p id="joinHint" class="join-hint" hidden></p>
         <p id="posReadout">—</p>
@@ -75,8 +75,14 @@
             <option value="none">Keyboard only</option>
           </select>
         </label>
-        <h3>Key bindings</h3>
-        <p class="opt-hint">Click a row, then press a key (Esc cancels).</p>
+        <pre id="opt-pad-probe" class="opt-pad-probe"></pre>
+        <button type="button" id="opt-hid-dpad" class="opt-btn" hidden>Allow Chrome to read this D-pad</button>
+        <p id="opt-hid-status" class="opt-hint" hidden></p>
+        <p id="opt-hid-hint" class="opt-hint" hidden>
+          Chrome maps this pad to 0 axes, so D-pad left/right never arrive as buttons. Click the button, then pick the USB Gamepad in the chooser at the <strong>top</strong> of the Chrome window (not in this panel). Face buttons keep using the Gamepad API.
+        </p>
+        <h3>Bindings</h3>
+        <p class="opt-hint">Click a row, then press a key, a gamepad button, or this pad’s D-pad (Esc cancels).</p>
         <div id="opt-binds" class="opt-binds"></div>
         <button type="button" id="opt-close" class="opt-btn primary">Close</button>
       </div>

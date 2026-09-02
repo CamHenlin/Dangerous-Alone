@@ -17,9 +17,19 @@ import {
   roomsNeedingSpawn,
   shiftPositions,
   spawnPointKey,
+  streamMissingVisibleRooms,
   tagEnemyHomeRoom,
   uwEnemyBoundsForRoom,
 } from './roomStream.js';
+
+test('streamMissingVisibleRooms is true when a neighbour is not drawn', () => {
+  const have = new Set([0x00]);
+  const stream = { get: (id) => (have.has(id & 0xff) ? {} : null) };
+  const cam = [{ worldCamX: 0, worldCamY: 0 }];
+  assert.equal(streamMissingVisibleRooms(stream, cam, { margin: 1 }), true);
+  for (const id of [0x00, 0x01, 0x10, 0x11]) have.add(id);
+  assert.equal(streamMissingVisibleRooms(stream, cam, { margin: 1 }), false);
+});
 
 test('tagEnemyHomeRoom', () => {
   const foes = [{ id: 1 }, { id: 2, homeRoomId: 0x10, slotIndex: 3 }];

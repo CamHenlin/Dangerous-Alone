@@ -1,4 +1,5 @@
 import { parseOffset } from './ranges.js';
+import { copyBytes } from './bytes.js';
 import { collectScreenSecrets, secretAction } from './owSecrets.js';
 import { expandRowRgb } from './masterPalette.js';
 
@@ -17,7 +18,7 @@ export const OW_TREE_PALETTE = Object.freeze({
 });
 
 /**
- * @param {Buffer} prg
+ * @param {Uint8Array} prg
  * @param {object} schema from assets/schema/overworld.json
  */
 export function loadOverworldTables(prg, schema) {
@@ -25,13 +26,13 @@ export function loadOverworldTables(prg, schema) {
   const slice = (key) => {
     const start = parseOffset(o[key].prg);
     const length = o[key].length ?? parseOffset(o[key].endExclusive) - start;
-    return Buffer.from(prg.subarray(start, start + length));
+    return copyBytes(prg, start, start + length);
   };
 
   const columnDirectoryRaw = slice('columnDirectory');
   const columnHeapStart = parseOffset(o.columnHeap.prg);
   const columnHeapEnd = parseOffset(o.columnHeap.endExclusive);
-  const columnHeap = Buffer.from(prg.subarray(columnHeapStart, columnHeapEnd));
+  const columnHeap = copyBytes(prg, columnHeapStart, columnHeapEnd);
 
   const bankBase = schema.columnDirectoryBank * 0x4000;
   const columnTableOffsets = [];
@@ -162,6 +163,11 @@ export function decodeScreen(tables, mapIndex) {
   const layoutId = arrangeByte & 0x7f;
   const useMonsterGroups = Boolean(arrangeByte & 0x80);
   const layoutOffset = layoutId * SQUARES_W;
+  if (layoutOffset + SQUARES_W > tables.roomLayouts.length) {
+    throw new Error(
+      `OW layout $${layoutId.toString(16)} needs ${layoutOffset + SQUARES_W} bytes, table is ${tables.roomLayouts.length}`,
+    );
+  }
   const columnDescriptors = tables.roomLayouts.subarray(
     layoutOffset,
     layoutOffset + SQUARES_W,
@@ -308,6 +314,19 @@ export function paletteRowForSquareWithBurnHint(
 }
 
 /**
+ * Sheet pixels per NES pixel for an OW screen texture. Retina / 2× backing
+ * stores report `pixelWidth` 512 for a 256-wide playfield — using NES units
+ * there tints the burn tree at column 11 onto column 5.
+ * @param {number} pixelWidth
+ * @param {number} [pixelHeight]
+ */
+export function owScreenNesScale(pixelWidth, pixelHeight) {
+  const scaleX = (pixelWidth > 0 ? pixelWidth : SQUARES_W * 16) / (SQUARES_W * 16);
+  const scaleY = (pixelHeight > 0 ? pixelHeight : SQUARES_H * 16) / (SQUARES_H * 16);
+  return { scaleX, scaleY };
+}
+
+/**
  * Remap foliage (palette slot 1) inside one 16×16 NES square of a baked screen.
  * Shared cream/blue accents stay put; only the green↔orange canopy colour moves.
  * Returns false when the source foliage is already absent (hint was baked in).
@@ -318,7 +337,7 @@ export function paletteRowForSquareWithBurnHint(
  * @param {number} squareRow
  * @param {readonly (readonly number[])[]} srcRowRgb 4 NES RGB triples
  * @param {readonly (readonly number[])[]} dstRowRgb
- * @param {{ enhanced?: boolean, nesPxScale?: number }} [opts]
+ * @param {{ enhanced?: boolean, nesPxScale?: number, scaleX?: number, scaleY?: number }} [opts]
  */
 export function recolorBurnTreeSquareRgba(
   rgba,
@@ -331,6 +350,8 @@ export function recolorBurnTreeSquareRgba(
 ) {
   const enhanced = opts.enhanced === true;
   const nesPxScale = opts.nesPxScale ?? 1;
+  const scaleX = opts.scaleX ?? nesPxScale;
+  const scaleY = opts.scaleY ?? nesPxScale;
   const src = enhanced && srcRowRgb.length === 4 ? expandRowRgb(srcRowRgb) : srcRowRgb;
   const dst = enhanced && dstRowRgb.length === 4 ? expandRowRgb(dstRowRgb) : dstRowRgb;
   const ramp = src.length > 4 ? Math.floor(src.length / 4) : 1;
@@ -345,13 +366,15 @@ export function recolorBurnTreeSquareRgba(
   }
   if (lut.size === 0) return false;
 
-  const side = 16 * nesPxScale;
-  const x0 = squareCol * side;
-  const y0 = squareRow * side;
+  const x0 = Math.round(squareCol * 16 * scaleX);
+  const y0 = Math.round(squareRow * 16 * scaleY);
+  const sideX = Math.round(16 * scaleX);
+  const sideY = Math.round(16 * scaleY);
   let changed = false;
-  for (let y = 0; y < side; y += 1) {
-    for (let x = 0; x < side; x += 1) {
+  for (let y = 0; y < sideY; y += 1) {
+    for (let x = 0; x < sideX; x += 1) {
       const px = ((y0 + y) * width + (x0 + x)) * 4;
+      if (px < 0 || px + 3 >= rgba.length) continue;
       const next = lut.get(`${rgba[px]},${rgba[px + 1]},${rgba[px + 2]}`);
       if (!next) continue;
       rgba[px] = next[0];

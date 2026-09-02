@@ -158,6 +158,19 @@ test('a stride that lands on the seam still exits once gridOffset clears', () =>
   }
 });
 
+test('$69 north seam stays owned so $59 can load', () => {
+  // Occupancy yield would convert y=$3F into $59-local south cavity ($EF),
+  // which is still inside the play rectangle — no seam, no rebase, black fog.
+  const from = openRoom(0x69);
+  const inHole = createLinkState(DOORWAY_CENTER_X, HUD_HEIGHT - 1, DIR.UP);
+  const owned = detectOwnedUwDoorCross(inHole, from, ctx(from));
+  assert.ok(owned);
+  assert.equal(owned.nextRoomId, 0x59);
+
+  const yielded = createLinkState(DOORWAY_CENTER_X, HUD_HEIGHT - 1 + PLAY_H, DIR.UP);
+  assert.equal(detectOwnedUwDoorCross(yielded, openRoom(0x59), ctx(openRoom(0x59))), null);
+});
+
 test('an ally left in the previous room does not steal the south exit', () => {
   // Mid-map: $76 sits on the south rim (row 7) and has no dungeon neighbor.
   const room = openRoom(0x53);

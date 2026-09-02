@@ -45,11 +45,8 @@ export function createLinkFrames(sheetTexture, opts = {}) {
   let activePaletteSet = opts.paletteSet ?? null;
   let ring = opts.ring ?? 0;
 
-  function clearCache() {
-    for (const tex of cache.values()) {
-      tex.destroy(true);
-    }
-    cache.clear();
+  function palTag() {
+    return activePaletteSet?.id ?? '_';
   }
 
   /**
@@ -58,18 +55,16 @@ export function createLinkFrames(sheetTexture, opts = {}) {
   function setPaletteSet(paletteSet) {
     if (paletteSet === activePaletteSet) return;
     activePaletteSet = paletteSet;
-    clearCache();
   }
 
   /**
    * @param {number} next InvRing 0/1/2
-   * @returns {boolean} true if the ring tier changed (cache cleared)
+   * @returns {boolean} true if the ring tier changed
    */
   function setRing(next) {
     const r = Math.max(0, Math.min(2, Number(next) || 0));
     if (r === ring) return false;
     ring = r;
-    clearCache();
     return true;
   }
 
@@ -157,7 +152,7 @@ export function createLinkFrames(sheetTexture, opts = {}) {
    * @param {boolean} flipRight
    */
   function getTexture(leftTile, rightTile, flipLeft, flipRight) {
-    const key = `${leftTile}:${rightTile}:${flipLeft ? 1 : 0}${flipRight ? 1 : 0}:r${ring}`;
+    const key = `${palTag()}:${leftTile}:${rightTile}:${flipLeft ? 1 : 0}${flipRight ? 1 : 0}:r${ring}`;
     let tex = cache.get(key);
     if (!tex) {
       tex = compose(leftTile, rightTile, flipLeft, flipRight);
@@ -198,7 +193,7 @@ export function createLinkFrames(sheetTexture, opts = {}) {
       // Wood-shield down frame (NES always patches facing-down walk).
       return getTexture(0x58, 0x0a, false, false);
     }
-    const key = `lift:${LIFT_PPU_TILE}:r${ring}`;
+    const key = `${palTag()}:lift:${LIFT_PPU_TILE}:r${ring}`;
     let tex = cache.get(key);
     if (!tex) {
       tex = composeLift();

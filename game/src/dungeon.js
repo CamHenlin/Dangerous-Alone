@@ -1,5 +1,6 @@
-import { Application, Assets, Container, Graphics, Sprite } from 'pixi.js';
+import { Application, Assets, Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { initPixiApp } from '@shared/pixiBoot.js';
+import { UW_TILE_SOURCES, renderDungeonRoomRgba } from '@shared/dungeonRoomRender.js';
 
 const stageEl = document.getElementById('stage');
 const statusEl = document.getElementById('status');
@@ -121,6 +122,46 @@ function fillLevelSelect() {
   }
 }
 
+async function stitchLevelTexture(level) {
+  const palettes = await fetchJson('/graphics/palettes.json');
+  const paletteSet =
+    palettes.paletteSets?.find((p) => p.id === `level_${level.level}`)
+    ?? palettes.paletteSets?.find((p) => p.id === 'overworld');
+  /** @type {Map<string, Uint8Array>} */
+  const bins = new Map();
+  for (const id of ['common_background', 'underworld_bg', 'common_misc']) {
+    const res = await fetch(`/graphics/${id}.bin`);
+    if (!res.ok) throw new Error(`Missing ${id}.bin`);
+    bins.set(id, new Uint8Array(await res.arrayBuffer()));
+  }
+  const primary = index.primarySquares ?? [0xb0, 0x74, 0x94, 0xb4, 0x70, 0x68, 0xf4, 0x24];
+  const tileSources = index.tileSources ?? UW_TILE_SOURCES;
+  const roomW = level.room.widthPixels;
+  const roomH = level.room.heightPixels;
+  const canvas = document.createElement('canvas');
+  canvas.width = level.map.widthRooms * roomW;
+  canvas.height = level.map.heightRooms * roomH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2d context unavailable');
+  for (const room of level.rooms) {
+    const { width, height, rgba } = renderDungeonRoomRgba(room, {
+      paletteSet,
+      tileSources,
+      patternBins: bins,
+      primarySquares: primary,
+    });
+    const img = new ImageData(
+      new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength),
+      width,
+      height,
+    );
+    ctx.putImageData(img, room.col * roomW, room.row * roomH);
+  }
+  const texture = Texture.from(canvas);
+  texture.source.scaleMode = 'nearest';
+  return texture;
+}
+
 async function loadLevel(quest, levelNumber) {
   setStatus(`Loading Q${quest} L${levelNumber}…`);
   const meta = index.levels.find((l) => l.quest === quest && l.level === levelNumber);
@@ -160,11 +201,14 @@ async function loadLevel(quest, levelNumber) {
     mapSprite = null;
   }
 
-  const texture = await Assets.load(`/dungeons/${meta.path}/${level.stitched}`);
-  if (!texture?.width) {
-    throw new Error('Dungeon texture loaded empty — try hard-refreshing');
+  let texture;
+  try {
+    texture = await Assets.load(`/dungeons/${meta.path}/${level.stitched}`);
+    if (!texture?.width) throw new Error('empty stitched png');
+    texture.source.scaleMode = 'nearest';
+  } catch {
+    texture = await stitchLevelTexture(level);
   }
-  texture.source.scaleMode = 'nearest';
   mapSprite = new Sprite(texture);
   world.addChildAt(mapSprite, 0);
   world.addChild(highlight);
@@ -192,6 +236,8 @@ async function loadLevel(quest, levelNumber) {
 
 async function init() {
   try {
+    const { bootRomAssets } = await import('./romGate.js');
+    await bootRomAssets({ onStatus: setStatus });
     index = await fetchJson('/dungeons/dungeons_index.json');
     fillLevelSelect();
     levelSelect.value = '1';

@@ -98,6 +98,30 @@ function decodeItemPos(packed) {
 }
 
 /**
+ * HUD / triforce level number for a Q2 dungeon pack (cave id 1–9).
+ * Q2 swaps several slots (cave 2 shows LEVEL-3, cave 3 shows LEVEL-2, …).
+ * @param {number} caveId
+ */
+export function q2LevelNumberForCave(caveId) {
+  const n = caveId | 0;
+  const bytes = Q2_LEVEL_INFO_REPLACEMENTS[n - 1];
+  if (!bytes) return n;
+  return bytes[OFF.LEVEL_NUMBER] & 0xff;
+}
+
+/**
+ * Dungeon pack / overworld cave id that shows as this LEVEL-n in quest 2.
+ * @param {number} levelNumber
+ */
+export function q2CaveIdForLevel(levelNumber) {
+  const want = levelNumber | 0;
+  for (let cave = 1; cave <= 9; cave += 1) {
+    if (q2LevelNumberForCave(cave) === want) return cave;
+  }
+  return want;
+}
+
+/**
  * Apply Q2 LevelInfo replacement fields onto a built level object.
  * Mutates and returns `level`.
  * @param {object} level
@@ -113,6 +137,7 @@ export function applyQuest2LevelInfo(level) {
   level.startRoom = bytes[OFF.START_ROOM];
   level.triforceRoom = bytes[OFF.TRIFORCE_ROOM];
   level.bossRoom = bytes[OFF.BOSS_ROOM];
+  if (bytes[OFF.LEVEL_NUMBER] != null) level.levelNumber = bytes[OFF.LEVEL_NUMBER];
   const cellars = bytes.slice(OFF.CELLARS, OFF.CELLARS + 10);
   level.cellarRooms = cellars.filter((r) => r !== 0xff);
   if (bytes.length >= OFF.DRAWN_MAP + 16) {

@@ -4,9 +4,12 @@ import {
   ARROW,
   B_ITEM,
   CANDLE_TIER,
+  FLASH_BUBBLE_BLOCK_FRAMES,
   SWORD,
   addBombs,
   addRupees,
+  applyBubbleSwordBlock,
+  canSwingSword,
   createInventory,
   cycleBItem,
   grantCaveExtras,
@@ -104,13 +107,17 @@ test('addBombs selects B slot and clamps', () => {
   assert.equal(inv.bombs, 8);
 });
 
-test('cycleBItem walks owned items', () => {
+test('cycleBItem walks owned items in NES grid order', () => {
   const inv = createInventory();
   addBombs(inv, 1);
+  inv.boomerang = 1;
   inv.candle = 1;
-  inv.selectedB = B_ITEM.BOMB;
-  assert.equal(cycleBItem(inv), B_ITEM.CANDLE);
+  inv.selectedB = B_ITEM.BOOMERANG;
   assert.equal(cycleBItem(inv), B_ITEM.BOMB);
+  assert.equal(cycleBItem(inv), B_ITEM.CANDLE);
+  assert.equal(cycleBItem(inv), B_ITEM.BOOMERANG);
+  assert.equal(cycleBItem(inv, -1), B_ITEM.CANDLE);
+  assert.equal(cycleBItem(inv, -1), B_ITEM.BOMB);
 });
 
 test('cycleBItem offers potion slot for held letter (CheckMissingItem)', () => {
@@ -205,6 +212,47 @@ test('stepLinkStatus counts down itemLiftTimer', () => {
   assert.equal(inv.itemLiftTimer, 0);
   stepLinkStatus(inv);
   assert.equal(inv.itemLiftTimer, 0);
+});
+
+test('flashing bubble blocks the sword with a timer, not the sticky flag', () => {
+  const inv = createInventory();
+  inv.sword = 1;
+  applyBubbleSwordBlock(inv, 0x2b);
+  assert.equal(inv.swordBlocked, 0);
+  assert.equal(inv.swordBlockedTimer, FLASH_BUBBLE_BLOCK_FRAMES);
+  assert.equal(canSwingSword(inv), false);
+  for (let i = 0; i < FLASH_BUBBLE_BLOCK_FRAMES - 1; i += 1) stepLinkStatus(inv);
+  assert.equal(canSwingSword(inv), false);
+  stepLinkStatus(inv);
+  assert.equal(inv.swordBlockedTimer, 0);
+  assert.equal(canSwingSword(inv), true);
+});
+
+test('red bubble stays sticky after a flashing countdown expires', () => {
+  const inv = createInventory();
+  inv.sword = 1;
+  applyBubbleSwordBlock(inv, 0x2d);
+  applyBubbleSwordBlock(inv, 0x2b);
+  assert.equal(inv.swordBlocked, 1);
+  assert.ok(inv.swordBlockedTimer > 0);
+  for (let i = 0; i < FLASH_BUBBLE_BLOCK_FRAMES; i += 1) stepLinkStatus(inv);
+  assert.equal(inv.swordBlockedTimer, 0);
+  assert.equal(inv.swordBlocked, 1, 'sticky red-bubble flag survives the flash timer');
+  assert.equal(canSwingSword(inv), false);
+  applyBubbleSwordBlock(inv, 0x2c);
+  assert.equal(canSwingSword(inv), true);
+});
+
+test('a runaway sword-block timer is clamped so it cannot stick', () => {
+  const inv = createInventory();
+  inv.sword = 1;
+  inv.swordBlockedTimer = 0xffff;
+  stepLinkStatus(inv);
+  assert.equal(inv.swordBlockedTimer, FLASH_BUBBLE_BLOCK_FRAMES - 1);
+  inv.swordBlockedTimer = -3;
+  stepLinkStatus(inv);
+  assert.equal(inv.swordBlockedTimer, 0);
+  assert.equal(canSwingSword(inv), true);
 });
 
 test('a like-like steal takes the shared shield, not the ally\'s legs', () => {

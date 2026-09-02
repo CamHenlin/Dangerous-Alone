@@ -2,11 +2,15 @@
  * Which rectangle a foe may walk in.
  *
  * Overworld wanderers use the camera chase pad so they can follow Link
- * across a seam. Underground, every foe — not only bosses — stays in its
- * home cell. The chase pad is what walked Goriyas through dungeon doors.
+ * across a seam. In company that pad is the connected union of every
+ * overlapping view — otherwise a foe on player one's screen treats the
+ * seam as a wall and cannot walk into an ally's adjacent quadrant.
+ * Underground, every foe — not only bosses — stays in its home cell.
+ * The chase pad is what walked Goriyas through dungeon doors.
  */
 
-import { occupyingRoom, roomPlayOrigin } from './continuousCamera.js';
+import { HUD_HEIGHT } from './collision.js';
+import { occupyingRoom, PLAY_H, PLAY_W, roomPlayOrigin } from './continuousCamera.js';
 import { chaseBoundsForCamera, uwEnemyBoundsForRoom } from './roomStream.js';
 
 /** Same box as `OW_ENEMY_BOUNDS` — kept here so this file does not import `enemies.js`. */
@@ -19,17 +23,18 @@ const OW_CHASE_BOUNDS = Object.freeze({
 
 /**
  * @param {'overworld' | 'dungeon' | string} mode
- * @param {{ homeRoomId?: number | null, objType?: number }} enemy
+ * @param {{ homeRoomId?: number | null, objType?: number, x?: number, y?: number }} enemy
  * @param {number} anchorRoomId
  * @param {{ camLocalX?: number, camLocalY?: number } | null} [cam]
+ * @param {readonly { camLocalX?: number, camLocalY?: number }[] | null} [cameras]
  * @returns {{ minX: number, maxX: number, minY: number, maxY: number }}
  */
-export function enemyMotionBounds(mode, enemy, anchorRoomId, cam = null) {
+export function enemyMotionBounds(mode, enemy, anchorRoomId, cam = null, cameras = null) {
   if (mode === 'dungeon') {
     return uwEnemyBoundsForRoom(enemy?.homeRoomId ?? anchorRoomId, anchorRoomId);
   }
-  if (mode === 'overworld' && cam) {
-    return chaseBoundsForCamera(cam.camLocalX ?? 0, cam.camLocalY ?? 0);
+  if (mode === 'overworld') {
+    return connectedChaseBounds(cameras, enemy?.x, enemy?.y, cam);
   }
   return OW_CHASE_BOUNDS;
 }
@@ -45,6 +50,68 @@ export function unionBounds(a, b) {
     minY: Math.min(a.minY, b.minY),
     maxY: Math.max(a.maxY, b.maxY),
   };
+}
+
+function boundsOverlap(a, b) {
+  return a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY;
+}
+
+/**
+ * Chase pad covering the cameras whose views overlap this point — and any
+ * further cameras those pads touch. Adjacent split-screen quadrants become
+ * one walkable rectangle; a leftover room two screens away stays its own
+ * box, so wanderers do not march the forest between the party.
+ *
+ * @param {readonly { camLocalX?: number, camLocalY?: number }[] | null | undefined} cameras
+ * @param {number} [x]
+ * @param {number} [y]
+ * @param {{ camLocalX?: number, camLocalY?: number } | null} [fallback]
+ */
+export function connectedChaseBounds(cameras, x, y, fallback = null) {
+  const list = [...(cameras ?? [])];
+  if (!list.length && fallback) list.push(fallback);
+  if (!list.length) return OW_CHASE_BOUNDS;
+  const pads = list.map((cam) => chaseBoundsForCamera(cam.camLocalX ?? 0, cam.camLocalY ?? 0));
+
+  const seeds = [];
+  const hasPoint = Number.isFinite(x) && Number.isFinite(y);
+  if (hasPoint) {
+    for (let i = 0; i < pads.length; i += 1) {
+      if (boundsContain(pads[i], x, y)) seeds.push(i);
+    }
+    if (!seeds.length) {
+      let best = 0;
+      let bestD = boundsCenterDist(pads[0], x, y);
+      for (let i = 1; i < pads.length; i += 1) {
+        const d = boundsCenterDist(pads[i], x, y);
+        if (d < bestD) {
+          best = i;
+          bestD = d;
+        }
+      }
+      seeds.push(best);
+    }
+  } else {
+    seeds.push(0);
+  }
+
+  const seen = new Uint8Array(pads.length);
+  const stack = [...seeds];
+  for (const i of seeds) seen[i] = 1;
+  while (stack.length) {
+    const i = stack.pop();
+    for (let j = 0; j < pads.length; j += 1) {
+      if (seen[j] || !boundsOverlap(pads[i], pads[j])) continue;
+      seen[j] = 1;
+      stack.push(j);
+    }
+  }
+  let box = null;
+  for (let i = 0; i < pads.length; i += 1) {
+    if (!seen[i]) continue;
+    box = box ? unionBounds(box, pads[i]) : { ...pads[i] };
+  }
+  return box ?? pads[0];
 }
 
 /**
@@ -127,8 +194,10 @@ export function fairyFlightBounds(cameras, x, y, fallback = null, mode = 'overwo
 
 /**
  * Chase pad covering every camera looking at this place. Leftover-room
- * shots and wanderers used to clamp to whoever stepped the world first —
- * player one's screen — and vanish into the anchor.
+ * shots used to clamp to whoever stepped the world first — player one's
+ * screen — and vanish into the anchor. Wanderers use
+ * {@link connectedChaseBounds} instead, so a far leftover view does not
+ * open a forest-sized walk box.
  *
  * @param {readonly { camLocalX?: number, camLocalY?: number }[]} cameras
  * @param {{ camLocalX?: number, camLocalY?: number } | null} [fallback]
@@ -165,9 +234,11 @@ export function chaseBoundsForCameras(cameras, fallback = null) {
  * @param {number} [homeRoomId]
  */
 export function shotMotionBounds(mode, x, y, anchorRoomId, cam = null, homeRoomId) {
+  const camLocalX = cam?.camLocalX ?? 0;
+  const camLocalY = cam?.camLocalY ?? 0;
   const camBox =
     mode === 'overworld' || mode === 'dungeon'
-      ? chaseBoundsForCamera(cam?.camLocalX ?? 0, cam?.camLocalY ?? 0)
+      ? chaseBoundsForCamera(camLocalX, camLocalY)
       : OW_CHASE_BOUNDS;
   if (mode !== 'overworld' && mode !== 'dungeon') return camBox;
   const occ = homeRoomId ?? occupyingRoom(anchorRoomId, x, y).roomId;
@@ -177,5 +248,14 @@ export function shotMotionBounds(mode, x, y, anchorRoomId, cam = null, homeRoomI
     mode === 'dungeon'
       ? uwEnemyBoundsForRoom(occ, anchorRoomId)
       : chaseBoundsForCamera(home.ox - anchor.ox, home.oy - anchor.oy);
-  return unionBounds(camBox, cellBox);
+  // Same cell as the stepping camera: the solo chase pad. A leftover cell
+  // must not union with that pad — adjacent rooms become one corridor, and
+  // Aquamentus fireballs from the room to the right fly into this one.
+  const camOcc = occupyingRoom(
+    anchorRoomId,
+    camLocalX + PLAY_W / 2,
+    camLocalY + HUD_HEIGHT + PLAY_H / 2,
+  ).roomId;
+  if ((occ & 0xff) === (camOcc & 0xff)) return unionBounds(camBox, cellBox);
+  return cellBox;
 }

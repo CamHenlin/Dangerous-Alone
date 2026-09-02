@@ -31,6 +31,20 @@ export const RED_BLACK_KEESE_INIT_SPEED = 0x7f;
 export const FAIRY_INIT_SPEED = 0x7f;
 export const FAIRY_FLYING_MAX_SPEED_FRAC = 0xa0;
 
+/** EndInitFlyer (InitPeahat / flying ghini): Flyer_ObjSpeed $1F, max $A0. */
+export const PEAHAT_INIT_SPEED = 0x1f;
+export const PEAHAT_FLYING_MAX_SPEED_FRAC = 0xa0;
+
+/**
+ * Decide-state random gates (chase if ≥ chaseMin, wander if ≥ wanderMin, else slow).
+ * Flyer_KeeseDecideState / Flyer_PeahatDecideState / Flyer_GhiniDecideState.
+ */
+export const FLYER_DECIDE = Object.freeze({
+  KEESE: Object.freeze({ chaseMin: 0xa0, wanderMin: 0x20 }),
+  PEAHAT: Object.freeze({ chaseMin: 0xb0, wanderMin: 0x20 }),
+  GHINI: Object.freeze({ chaseMin: 0xa0, wanderMin: 0x08 }),
+});
+
 /**
  * @param {number} objType
  * @returns {number}
@@ -38,6 +52,68 @@ export const FAIRY_FLYING_MAX_SPEED_FRAC = 0xa0;
 export function keeseInitFlyerSpeed(objType) {
   // Blue $1B starts at $1F; red $1C / black $1D at $7F (faster ramp).
   return objType === 0x1b ? BLUE_KEESE_INIT_SPEED : RED_BLACK_KEESE_INIT_SPEED;
+}
+
+/**
+ * EndInitFlyer vs InitBlueKeese max-speed byte.
+ * @param {number} objType
+ */
+export function flyerInitMaxSpeed(objType) {
+  if (objType === 0x1b || objType === 0x1c || objType === 0x1d) {
+    return KEESE_FLYING_MAX_SPEED_FRAC;
+  }
+  return PEAHAT_FLYING_MAX_SPEED_FRAC;
+}
+
+/**
+ * InitPeahat / EndInitFlyer $1F; keese keep their color-specific start.
+ * @param {number} objType
+ */
+export function flyerInitSpeed(objType) {
+  if (objType === 0x1b || objType === 0x1c || objType === 0x1d) {
+    return keeseInitFlyerSpeed(objType);
+  }
+  return PEAHAT_INIT_SPEED;
+}
+
+/**
+ * Flyer_*DecideState — next flying state from one random byte.
+ * @param {number} randomByte
+ * @param {number} [chaseMin]
+ * @param {number} [wanderMin]
+ */
+export function flyerDecideState(
+  randomByte,
+  chaseMin = FLYER_DECIDE.KEESE.chaseMin,
+  wanderMin = FLYER_DECIDE.KEESE.wanderMin,
+) {
+  const r = randomByte & 0xff;
+  if (r >= chaseMin) return FLYER_STATE.CHASE;
+  if (r >= wanderMin) return FLYER_STATE.WANDER;
+  return FLYER_STATE.SLOW_DOWN;
+}
+
+/**
+ * Flyer_*DecideState dispatch by object type.
+ * @param {number} objType
+ * @param {number} randomByte
+ */
+export function flyerDecideForType(objType, randomByte) {
+  const gate =
+    objType === 0x1a
+      ? FLYER_DECIDE.PEAHAT
+      : objType === 0x22
+        ? FLYER_DECIDE.GHINI
+        : FLYER_DECIDE.KEESE;
+  return flyerDecideState(randomByte, gate.chaseMin, gate.wanderMin);
+}
+
+/**
+ * Flyer_SlowDown / Flyer_SpeedUp rest timer: Random AND $3F OR $40 → $40–$7F.
+ * @param {number} randomByte
+ */
+export function flyerDelayTimer(randomByte) {
+  return (randomByte & 0x3f) | 0x40;
 }
 
 /**
@@ -123,6 +199,47 @@ export function turnRandomlyDir8(dir, randomByte) {
   const r = randomByte & 0xff;
   if (r < 0xa0) i = r >= 0x50 ? i + 1 : i - 1;
   return DIRECTIONS8[i & 7];
+}
+
+/**
+ * TurnTowardsPlayer8 (Z_04 Flyer_Chase).
+ *
+ * Builds an 8-way toward the chase point, keeps the current heading if that
+ * target is within one turn, otherwise picks a nearby heading that shares a
+ * cardinal bit — or one turn right if none of the TestDir checks pass.
+ *
+ * @param {number} dir current 8-way facing
+ * @param {number} x
+ * @param {number} y
+ * @param {number} chaseX
+ * @param {number} chaseY
+ */
+export function turnTowardsPlayer8(dir, x, y, chaseX, chaseY) {
+  let target = 0;
+  if (chaseX !== x) target = chaseX > x ? DIR.RIGHT : DIR.LEFT;
+  if (chaseY !== y) target |= chaseY > y ? DIR.DOWN : DIR.UP;
+
+  const i = dir8Index(dir);
+  // Three headings turning left: one-right, current, one-left. Exact match
+  // leaves the current facing (the monster is already aimed close enough).
+  let idx = i + 1;
+  for (let n = 0; n < 3; n += 1) {
+    idx &= 7;
+    if (DIRECTIONS8[idx] === target) return dir;
+    idx -= 1;
+  }
+
+  // Three headings turning right, starting one-left of current.
+  idx = (idx + 1) & 7;
+  for (let n = 0; n < 3; n += 1) {
+    idx &= 7;
+    const test = DIRECTIONS8[idx];
+    if ((test & target) !== 0 && (test | target) < 7) return test;
+    idx += 1;
+  }
+
+  // No accept: one turn right of the original facing.
+  return DIRECTIONS8[(idx - 1) & 7];
 }
 
 /**

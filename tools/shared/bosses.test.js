@@ -30,6 +30,7 @@ import {
   tryBombHitEnemy,
   trySwordHitEnemy,
 } from './enemies.js';
+import { PLAY_W } from './continuousCamera.js';
 import { chaseBoundsForCamera, uwEnemyBoundsForRoom } from './roomStream.js';
 import { shootArrow } from './projectiles.js';
 import { SWORD_PHASE, createSwordState } from './sword.js';
@@ -54,6 +55,35 @@ test('adjacent-room boss noise maps to the same DMC slots as Init', () => {
   assert.equal(bossRoarSfx(BOSS.AQUAMENTUS), 'boss_roar_1');
   assert.equal(bossRoarSfx(BOSS.DODONGO), 'boss_roar_2');
   assert.equal(bossRoarSfx(BOSS.MANHANDLA), 'boss_roar_3');
+});
+
+test('Aquamentus still paces $88–$C7 in its own cell', () => {
+  const bounds = uwEnemyBoundsForRoom(0x35, 0x35);
+  const e = createEnemy({ objType: BOSS.AQUAMENTUS, x: 0xa0, y: 0x80 });
+  assert.ok(e);
+  e.dir = DIR.LEFT;
+  e.timer = 40;
+  for (let i = 0; i < 80; i += 1) {
+    e.anim = (e.anim ?? 0) + 1;
+    stepBossAi(e, bounds);
+  }
+  assert.ok(e.x >= 0x88 && e.x <= 0xc7, `x=$${e.x.toString(16)} left the NES window`);
+});
+
+test('Aquamentus keeps $88–$C7 in a leftover east room', () => {
+  // Home $5d, stream anchored on $5c: the dragon sits at $A0+256. Clamping
+  // to this cell's $88–$C7 teleported it into the room on the left the
+  // moment an ally walked out.
+  const bounds = uwEnemyBoundsForRoom(0x5d, 0x5c);
+  const x = 0xa0 + PLAY_W;
+  const e = createEnemy({ objType: BOSS.AQUAMENTUS, x, y: 0x80 });
+  assert.ok(e);
+  assert.equal(e.x, x, 'create must not snap leftover X onto this cell');
+  e.dir = DIR.LEFT;
+  e.timer = 40;
+  stepBossAi(e, bounds);
+  assert.ok(e.x >= 0x88 + PLAY_W, `x=$${e.x.toString(16)} left the home cell`);
+  assert.ok(e.x <= 0xc7 + PLAY_W, `x=$${e.x.toString(16)} walked past $C7 of $5d`);
 });
 
 test('Manhandla stays inside UW BoundByRoom under chase-pad bounds', () => {

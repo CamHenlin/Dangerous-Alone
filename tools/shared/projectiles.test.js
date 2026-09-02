@@ -33,6 +33,21 @@ test('aquamentus shoots three fireballs', () => {
   assert.ok(out.every((p) => p.kind === PROJ.FIREBALL));
 });
 
+test('a leftover Aquamentus still spawns fireballs at the dragon', () => {
+  // Shooter X+$4 used to be masked to 8 bits, so `$A0+256` became `$A4` in
+  // the current cell — the trio appeared in the room to the left.
+  const PLAY_W = 256;
+  const e = createEnemy({ objType: OBJ.AQUAMENTUS, x: 0xa0 + PLAY_W, y: 0x80 });
+  e.shootTimer = 0;
+  const out = [];
+  tryEnemyShoot(e, out);
+  assert.equal(out.length, 3);
+  for (const p of out) {
+    assert.ok(p.x >= PLAY_W, `spawned in the current cell at x=$${p.x.toString(16)}`);
+    assert.equal(p.x, e.x + 4);
+  }
+});
+
 test('projectile expires at bounds', () => {
   const p = createProjectile({ kind: PROJ.ROCK, x: 0, y: 0x80, dir: DIR.LEFT, speed: 4 });
   const bounds = { minX: 0x20, maxX: 0xd0, minY: 0x40, maxY: 0xd0 };

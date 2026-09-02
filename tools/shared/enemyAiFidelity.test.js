@@ -273,7 +273,11 @@ test('ghini turn rate $FF always wins the roll and locks onto Link', () => {
 test('flying ghini $22 keeps its own flyer routine', () => {
   assert.equal(isWandererType(OBJ.FLYING_GHINI), false);
   const e = createEnemy({ objType: OBJ.FLYING_GHINI, x: 0x80, y: 0x8d });
-  assert.equal(e.flyerState, 2);
+  // EndInitFlyer: state 0 (speed-up), max $A0, speed $1F, face down.
+  assert.equal(e.flyerState, 0);
+  assert.equal(e.flyerSpeed, 0x1f);
+  assert.equal(e.flyingMaxSpeedFrac, 0xa0);
+  assert.equal(e.dir, DIR.DOWN);
 });
 
 // --- M11: Ganon visibility ------------------------------------------------

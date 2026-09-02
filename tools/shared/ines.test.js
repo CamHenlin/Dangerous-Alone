@@ -57,7 +57,7 @@ test('prgIdentity crc32 matches known empty-ish vector style', () => {
   const id = prgIdentity(Buffer.alloc(4, 0));
   assert.equal(id.size, 4);
   assert.match(id.crc32, /^[0-9A-F]{8}$/);
-  assert.match(id.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(id.md5, undefined);
 });
 
 test('prgOffsetToBank maps addresses', () => {

@@ -18,7 +18,5 @@ jobs:
         run: npm ci
       - name: Unit tests (no ROM)
         run: npm test
-      - name: Ensure public asset dir exists
-        run: mkdir -p assets/extracted && touch assets/extracted/.gitkeep
       - name: Production build (no ROM / no extracted Nintendo assets)
         run: npm run build

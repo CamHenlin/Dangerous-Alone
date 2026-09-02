@@ -9,7 +9,6 @@ import {
   decodeAllScreens,
   decodeScreen,
   loadOverworldTables,
-  paletteRowForSquareWithBurnHint,
   screenToTileGrid,
   screenSecrets,
   squareToTiles,
@@ -25,11 +24,10 @@ import {
   OW_FIRST_UNWALKABLE,
   OW_WALKABLE_REMAP,
 } from '../shared/collision.js';
-import { decodeBgTile } from '../shared/tileChr.js';
-import { nesColor, rgbaFromNesIndices } from '../shared/nesPalette.js';
 import { encodePngRgba } from '../shared/png.js';
 import { DEFAULT_ROM_PATH, EXTRACTED_DIR, ROOT } from '../shared/paths.js';
 import { GRAPHICS_DIR } from './graphics.js';
+import { renderOwScreenRgba } from '../shared/owScreenRender.js';
 
 export const OVERWORLD_SCHEMA_PATH = path.join(ROOT, 'assets', 'schema', 'overworld.json');
 export const OVERWORLD_DIR = path.join(EXTRACTED_DIR, 'overworld');
@@ -64,45 +62,6 @@ function loadOverworldPalettes() {
     throw new Error('overworld palette set missing');
   }
   return ow;
-}
-
-function renderScreenRgba(screen, tables, patternBins, paletteSet, quest = 1) {
-  const tileGrid = screenToTileGrid(screen, tables);
-  const secrets = screen.secrets ?? screenSecrets(screen, tables, quest);
-  const width = SQUARES_W * 2 * 8;
-  const height = SQUARES_H * 2 * 8;
-  const rgba = new Uint8Array(width * height * 4);
-
-  for (let tr = 0; tr < SQUARES_H * 2; tr += 1) {
-    for (let tc = 0; tc < SQUARES_W * 2; tc += 1) {
-      const squareRow = Math.floor(tr / 2);
-      const squareCol = Math.floor(tc / 2);
-      const palRow = paletteRowForSquareWithBurnHint(
-        squareRow,
-        squareCol,
-        screen.attrs.outerPalette,
-        screen.attrs.innerPalette,
-        secrets,
-      );
-      const colors = rgbaFromNesIndices(paletteSet.rows[palRow]);
-      const [br, bg, bb] = nesColor(paletteSet.rows[palRow][0]);
-      colors[0] = { r: br, g: bg, b: bb, a: 255 };
-
-      const indices = decodeBgTile(tileGrid[tr][tc], tables.tileSources, patternBins);
-      for (let y = 0; y < 8; y += 1) {
-        for (let x = 0; x < 8; x += 1) {
-          const c = colors[indices[y * 8 + x] & 3];
-          const px = ((tr * 8 + y) * width + (tc * 8 + x)) * 4;
-          rgba[px] = c.r;
-          rgba[px + 1] = c.g;
-          rgba[px + 2] = c.b;
-          rgba[px + 3] = 255;
-        }
-      }
-    }
-  }
-
-  return { width, height, rgba };
 }
 
 /**
@@ -161,7 +120,7 @@ export function cmdOverworld({
   const worldRgba = new Uint8Array(worldW * worldH * 4);
 
   for (const screen of screens) {
-    const { width, height, rgba } = renderScreenRgba(
+    const { width, height, rgba } = renderOwScreenRgba(
       screen,
       tables,
       patternBins,
@@ -361,7 +320,7 @@ function writeQuest2PlayOverlays({ tables, patternBins, paletteSet }) {
 
     // Render a simple PNG for the play view (same path as Q1 screen art).
     try {
-      const { width, height, rgba } = renderScreenRgba(
+      const { width, height, rgba } = renderOwScreenRgba(
         screen,
         q2Tables,
         patternBins,

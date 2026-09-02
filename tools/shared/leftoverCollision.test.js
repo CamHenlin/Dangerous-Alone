@@ -13,8 +13,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { DIR, UW_FIRST_UNWALKABLE } from './collision.js';
-import { PLAY_H, PLAY_W, occupyingRoom } from './continuousCamera.js';
+import { PLAY_H, PLAY_W, occupyingRoom, resolveUwOccupyingRoomId, localInRoom } from './continuousCamera.js';
 import { buildDungeonPlayGrid, dungeonPlayOrigin, dungeonTileOpts } from './dungeonPlay.js';
+import { createDoorState } from './dungeonDoors.js';
+import { finalizeLevelMeta } from './dungeons.js';
 import {
   CONTINUOUS_OW,
   LINK_QSPEED,
@@ -31,6 +33,7 @@ import {
   standingTileMulti,
 } from './multiRoomTiles.js';
 import { ROOT } from './paths.js';
+import { stepUwDoorHero } from './uwDoorWalk.js';
 
 const ANCHOR = 0x47;
 const EAST = 0x48;
@@ -576,6 +579,268 @@ test('a 1px north knockback on L9 $23 still walks right along the lip', () => {
     `north-lip shove must not freeze Right (x=$${after.x.toString(16)} y=$${after.y.toString(16)})`,
   );
   assert.equal(after.x, solo.x, `after shove right-stop ${after.x} vs solo ${solo.x}`);
+});
+
+test('leftover Q2 L2 $69 south door walks left/right like the anchor', () => {
+  // Screenshot: leftover at $69's south door cannot move left or right.
+  // Host $79's 56px north lip overlaps $69's diamond-row stop (y=$B8).
+  const raw = extractedUwLevel(2, 3);
+  if (!raw) assert.fail('missing extract q2/level_3 — run dungeon extract');
+  const level = finalizeLevelMeta(raw);
+  const grids = extractedUwWorld(level, 0x79, 1);
+  assert.ok(grids?.has(0x69) && grids?.has(0x79), 'Q2 L2 $69/$79 missing from extract');
+  const room69 = level.rooms.find((r) => r.roomId === 0x69);
+  const ctx69 = {
+    tileGrid: grids.get(0x69),
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+  };
+
+  /**
+   * @param {number} dir
+   */
+  function walkSolo(dir) {
+    const link = createLinkState(0x78, 0xb8, dir);
+    for (let i = 0; i < 80; i += 1) {
+      const x0 = link.x;
+      const y0 = link.y;
+      stepUwDoorHero(link, room69, dir, ctx69);
+      if (link.x === x0 && link.y === y0 && (link.gridOffset ?? 0) === 0) break;
+    }
+    return { x: link.x, y: link.y };
+  }
+
+  /**
+   * @param {number} dir
+   * @param {number} latch
+   */
+  function walkLeftover(dir, latch) {
+    const link = createLinkState(0x78, 0xb8 - PLAY_H, dir);
+    let occId = latch;
+    for (let i = 0; i < 80; i += 1) {
+      occId = resolveUwOccupyingRoomId(0x79, link.x, link.y, occId);
+      const room = level.rooms.find((r) => r.roomId === occId);
+      const local = localInRoom(0x79, occId, link.x, link.y);
+      const localLink = { ...link, x: local.x, y: local.y };
+      const ctx = {
+        tileGrid: grids.get(occId),
+        tileOpts: dungeonTileOpts(),
+        doorState: createDoorState(),
+        rooms: level.rooms,
+      };
+      stepUwDoorHero(localLink, room, dir, ctx);
+      const world = localInRoom(occId, 0x79, localLink.x, localLink.y);
+      if (world.x === link.x && world.y === link.y && (localLink.gridOffset ?? 0) === 0) break;
+      link.x = world.x;
+      link.y = world.y;
+      link.dir = localLink.dir;
+      link.gridOffset = localLink.gridOffset;
+      link.posFrac = localLink.posFrac;
+    }
+    return occupyingRoom(0x79, link.x, link.y);
+  }
+
+  const soloLeft = walkSolo(DIR.LEFT);
+  const leftoverLeft = walkLeftover(DIR.LEFT, 0x79);
+  assert.equal(leftoverLeft.roomId, 0x69);
+  assert.equal(leftoverLeft.x, soloLeft.x, `leftover left x ${leftoverLeft.x} vs solo ${soloLeft.x}`);
+  assert.ok(leftoverLeft.x < 0x70, `leftover $69 left froze at x=$${leftoverLeft.x.toString(16)}`);
+
+  const soloRight = walkSolo(DIR.RIGHT);
+  const leftoverRight = walkLeftover(DIR.RIGHT, 0x79);
+  assert.equal(leftoverRight.x, soloRight.x, `leftover right x ${leftoverRight.x} vs solo ${soloRight.x}`);
+  assert.ok(leftoverRight.x > 0x80, `leftover $69 right froze at x=$${leftoverRight.x.toString(16)}`);
+});
+
+test('leftover Q2 L2 $69 south lip Left matches solo (stale $79 latch)', () => {
+  // Host stays on $79; leftover is idle on $69's south unique-floor lip.
+  // ObjY `$C0` used to X-clamp as `$79`'s north corridor.
+  const raw = extractedUwLevel(2, 3);
+  if (!raw) assert.fail('missing extract q2/level_3 — run dungeon extract');
+  const level = finalizeLevelMeta(raw);
+  const grids = extractedUwWorld(level, 0x79, 1);
+  const room69 = level.rooms.find((r) => r.roomId === 0x69);
+  const ctx69 = {
+    tileGrid: grids.get(0x69),
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+  };
+
+  const solo = createLinkState(0x78, 0xc0, DIR.LEFT);
+  const soloY = solo.y;
+  for (let i = 0; i < 96; i += 1) {
+    const x0 = solo.x;
+    const y0 = solo.y;
+    stepUwDoorHero(solo, room69, DIR.LEFT, ctx69);
+    if (solo.x === x0 && solo.y === y0 && (solo.gridOffset ?? 0) === 0) break;
+  }
+  assert.equal(solo.y, soloY, `solo Left walked north to y=$${solo.y.toString(16)}`);
+
+  const leftover = createLinkState(0x78, 0xc0 - PLAY_H, DIR.LEFT);
+  let occId = 0x79;
+  for (let i = 0; i < 96; i += 1) {
+    occId = resolveUwOccupyingRoomId(0x79, leftover.x, leftover.y, occId);
+    const room = level.rooms.find((r) => r.roomId === occId);
+    const local = localInRoom(0x79, occId, leftover.x, leftover.y);
+    const localLink = { ...leftover, x: local.x, y: local.y };
+    const ctx = {
+      tileGrid: grids.get(occId),
+      tileOpts: dungeonTileOpts(),
+      doorState: createDoorState(),
+      rooms: level.rooms,
+    };
+    stepUwDoorHero(localLink, room, DIR.LEFT, ctx);
+    const world = localInRoom(occId, 0x79, localLink.x, localLink.y);
+    if (world.x === leftover.x && world.y === leftover.y && (localLink.gridOffset ?? 0) === 0) break;
+    leftover.x = world.x;
+    leftover.y = world.y;
+    leftover.dir = localLink.dir;
+    leftover.gridOffset = localLink.gridOffset;
+    leftover.posFrac = localLink.posFrac;
+  }
+  const arrived = occupyingRoom(0x79, leftover.x, leftover.y);
+  assert.equal(arrived.roomId, 0x69);
+  assert.equal(arrived.x, solo.x, `leftover lip left x ${arrived.x} vs solo ${solo.x}`);
+  assert.equal(arrived.y, solo.y, `leftover lip Left walked north (y=$${arrived.y.toString(16)})`);
+  assert.ok(arrived.x < 0x70, `leftover $69 lip Left froze at $${arrived.x.toString(16)},$${arrived.y.toString(16)}`);
+});
+
+test('leftover L3 $5c west wall matches solo after hugging the north strip', () => {
+  // Screenshot: leftover (player two) in L3 `$5c` / `$5d` — halfway into a
+  // wall on one side, stopped a tile short on the other. Host holds `$5d`;
+  // a stale east latch plus "every wall is a door hole" ran collision on
+  // `$5d` while the sprite was in `$5c`.
+  const raw = extractedUwLevel(1, 3);
+  if (!raw) assert.fail('missing extract q1/level_3 — run dungeon extract');
+  const level = finalizeLevelMeta(raw);
+  const grids = extractedUwWorld(level, 0x5d, 1);
+  assert.ok(grids?.has(0x5c) && grids?.has(0x5d), 'L3 $5c/$5d missing from extract');
+  const room5c = level.rooms.find((r) => r.roomId === 0x5c);
+  const ctx5c = {
+    tileGrid: grids.get(0x5c),
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+  };
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} dir
+   */
+  function walkSolo(x, y, dir) {
+    const link = createLinkState(x, y, dir);
+    for (let i = 0; i < 96; i += 1) {
+      const x0 = link.x;
+      const y0 = link.y;
+      stepUwDoorHero(link, room5c, dir, ctx5c);
+      if (link.x === x0 && link.y === y0 && (link.gridOffset ?? 0) === 0) break;
+    }
+    return { x: link.x, y: link.y };
+  }
+
+  /**
+   * @param {number} x
+   * @param {number} y
+   * @param {number} dir
+   * @param {number} latch
+   */
+  function walkLeftover(x, y, dir, latch) {
+    const link = createLinkState(x - PLAY_W, y, dir);
+    let occId = latch;
+    for (let i = 0; i < 96; i += 1) {
+      occId = resolveUwOccupyingRoomId(0x5d, link.x, link.y, occId);
+      const room = level.rooms.find((r) => r.roomId === occId);
+      const local = localInRoom(0x5d, occId, link.x, link.y);
+      const localLink = { ...link, x: local.x, y: local.y };
+      const ctx = {
+        tileGrid: grids.get(occId),
+        tileOpts: dungeonTileOpts(),
+        doorState: createDoorState(),
+        rooms: level.rooms,
+      };
+      stepUwDoorHero(localLink, room, dir, ctx);
+      const world = localInRoom(occId, 0x5d, localLink.x, localLink.y);
+      if (world.x === link.x && world.y === link.y && (localLink.gridOffset ?? 0) === 0) break;
+      link.x = world.x;
+      link.y = world.y;
+      link.dir = localLink.dir;
+      link.gridOffset = localLink.gridOffset;
+      link.posFrac = localLink.posFrac;
+    }
+    return occupyingRoom(0x5d, link.x, link.y);
+  }
+
+  const northSolo = walkSolo(0xc8, 0x50, DIR.LEFT);
+  const northLeftover = walkLeftover(0xc8, 0x50, DIR.LEFT, 0x5d);
+  assert.equal(northLeftover.roomId, 0x5c, `north occupancy $${northLeftover.roomId.toString(16)}`);
+  assert.equal(northLeftover.x, northSolo.x, `north leftover left x ${northLeftover.x} vs solo ${northSolo.x}`);
+  assert.equal(northLeftover.y, northSolo.y, `north leftover left y ${northLeftover.y} vs solo ${northSolo.y}`);
+
+  const stripSolo = walkSolo(0x28, 0x50, DIR.LEFT);
+  const stripLeftover = walkLeftover(0x28, 0x50, DIR.LEFT, 0x5b);
+  assert.equal(stripLeftover.roomId, 0x5c, `strip occupancy $${stripLeftover.roomId.toString(16)}`);
+  assert.equal(stripLeftover.x, stripSolo.x, `strip leftover left x ${stripLeftover.x} vs solo ${stripSolo.x}`);
+  assert.equal(stripLeftover.y, stripSolo.y, `strip leftover left y ${stripLeftover.y} vs solo ${stripSolo.y}`);
+
+  const westSolo = walkSolo(0x40, 0x8d, DIR.LEFT);
+  const westLeftover = walkLeftover(0x40, 0x8d, DIR.LEFT, 0x5b);
+  assert.equal(westLeftover.roomId, 0x5c, `west occupancy $${westLeftover.roomId.toString(16)}`);
+  assert.equal(westLeftover.x, westSolo.x, `west leftover left x ${westLeftover.x} vs solo ${westSolo.x}`);
+  assert.equal(westLeftover.y, westSolo.y, `west leftover left y ${westLeftover.y} vs solo ${westSolo.y}`);
+  assert.ok(westLeftover.x <= 0x28, `leftover $5c west wall froze at x=$${westLeftover.x.toString(16)}`);
+});
+
+test('leftover L3 $5d center column matches solo while the host holds $5c', () => {
+  // Same screenshot pair: the vertical block column in `$5d`. Leftover
+  // standing to its right, walking left, must stop on the same lip as solo.
+  const raw = extractedUwLevel(1, 3);
+  if (!raw) assert.fail('missing extract q1/level_3 — run dungeon extract');
+  const level = finalizeLevelMeta(raw);
+  const grids = extractedUwWorld(level, 0x5c, 1);
+  const room5d = level.rooms.find((r) => r.roomId === 0x5d);
+  const ctx5d = {
+    tileGrid: grids.get(0x5d),
+    tileOpts: dungeonTileOpts(),
+    doorState: createDoorState(),
+    rooms: level.rooms,
+  };
+
+  const solo = createLinkState(0xa8, 0x8d, DIR.LEFT);
+  for (let i = 0; i < 96; i += 1) {
+    const x0 = solo.x;
+    const y0 = solo.y;
+    stepUwDoorHero(solo, room5d, DIR.LEFT, ctx5d);
+    if (solo.x === x0 && solo.y === y0 && (solo.gridOffset ?? 0) === 0) break;
+  }
+
+  const leftover = createLinkState(0xa8 + PLAY_W, 0x8d, DIR.LEFT);
+  let occId = 0x5c;
+  for (let i = 0; i < 96; i += 1) {
+    occId = resolveUwOccupyingRoomId(0x5c, leftover.x, leftover.y, occId);
+    const room = level.rooms.find((r) => r.roomId === occId);
+    const local = localInRoom(0x5c, occId, leftover.x, leftover.y);
+    const localLink = { ...leftover, x: local.x, y: local.y };
+    stepUwDoorHero(localLink, room, DIR.LEFT, {
+      tileGrid: grids.get(occId),
+      tileOpts: dungeonTileOpts(),
+      doorState: createDoorState(),
+      rooms: level.rooms,
+    });
+    const world = localInRoom(occId, 0x5c, localLink.x, localLink.y);
+    if (world.x === leftover.x && world.y === leftover.y && (localLink.gridOffset ?? 0) === 0) break;
+    leftover.x = world.x;
+    leftover.y = world.y;
+    leftover.dir = localLink.dir;
+    leftover.gridOffset = localLink.gridOffset;
+    leftover.posFrac = localLink.posFrac;
+  }
+  const arrived = occupyingRoom(0x5c, leftover.x, leftover.y);
+  assert.equal(arrived.roomId, 0x5d);
+  assert.equal(arrived.x, solo.x, `leftover $5d column x ${arrived.x} vs solo ${solo.x}`);
+  assert.ok(arrived.x >= 0x90 && arrived.x <= 0xa0, `stop at column lip, x=$${arrived.x.toString(16)}`);
 });
 
 test('dungeon leftover two rooms from the anchor still reaches that room\'s walls', () => {

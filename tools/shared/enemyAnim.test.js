@@ -39,6 +39,14 @@ test('UW special sheet follows LevelPatternBlockSrcAddrs', () => {
   assert.equal(sheetForPpuTile(0xac, 'dungeon', 1).sheet, 'uw127');
 });
 
+test('Goriya tiles are Goriyas in L2 and Darknuts in L3', () => {
+  // Same PPU $B8 side-frame: uw127 is a Goriya, uw358 is a Darknut.
+  const side = enemyFrameTile(0x05, 0);
+  assert.equal(side, 0xb8);
+  assert.equal(sheetForPpuTile(side, 'dungeon', 2).sheet, 'uw127');
+  assert.equal(sheetForPpuTile(side, 'dungeon', 3).sheet, 'uw358');
+});
+
 test('octorok facing down uses frame offset 2', () => {
   assert.equal(enemyFrameIndex(0x07, DIR.DOWN, 0), 2);
   assert.equal(enemyFrameTile(0x07, 2), 0xb0);
@@ -87,6 +95,12 @@ test('peahat uses ObjAnimFrameHeap $C6/$C8 mirrored on OW sheet', () => {
   const { sheet, index } = sheetForPpuTile(0xc6, 'overworld');
   assert.equal(sheet, 'overworld');
   assert.equal(index, 0xc6 - 0x8e);
+});
+
+test('peahat wing frame follows Flyer_ObjDistTraveled bit 0', () => {
+  assert.equal(enemyFrameIndex(0x1a, DIR.UP, 0, { flyerDistTraveled: 0 }), 0);
+  assert.equal(enemyFrameIndex(0x1a, DIR.UP, 0, { flyerDistTraveled: 1 }), 1);
+  assert.equal(enemyFrameIndex(0x1a, DIR.UP, 0x08, { flyerDistTraveled: 4 }), 0);
 });
 
 test('walker lynel/moblin use facing frames 0–3', () => {

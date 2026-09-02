@@ -66,35 +66,71 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   let activePaletteSet = initialPaletteSet;
   /** Dungeon level 1–9 selects UW special / boss CHR sheets. */
   let dungeonLevel = 1;
+  /** Bank used by the texture currently being composed (may differ per view). */
+  let drawBank = 1;
 
-  function clearCache() {
-    for (const tex of cache.values()) {
-      tex.destroy(true);
-    }
-    cache.clear();
+  function clampLevel(level) {
+    return Math.max(1, Math.min(9, (level ?? dungeonLevel) | 0));
+  }
+
+  function palTag() {
+    return activePaletteSet?.id ?? '_';
+  }
+
+  function texAt(key) {
+    return cache.get(`${palTag()}:${key}`);
+  }
+
+  function rememberTex(key, tex) {
+    if (tex && tex !== Texture.EMPTY) tex.__zeldaPalette = palTag();
+    cache.set(`${palTag()}:${key}`, tex);
+    return tex;
   }
 
   /**
-   * Swap LevelInfo palette set (OW vs dungeon). Clears texture cache.
+   * Compose with a specific LevelInfo set, then restore the caller's palette.
+   * Cave NPC/fire always bake against the overworld row even while a friend
+   * is looking at a labyrinth.
+   * @param {{ rowsRgb?: number[][][] } | null | undefined} paletteSet
+   * @param {() => Texture | null} fn
+   */
+  function withPalette(paletteSet, fn) {
+    if (paletteSet === activePaletteSet) return fn();
+    const prevSet = activePaletteSet;
+    const prevRows = spriteRows;
+    activePaletteSet = paletteSet;
+    spriteRows = spritePaletteRowsFromSet(paletteSet);
+    try {
+      return fn();
+    } finally {
+      activePaletteSet = prevSet;
+      spriteRows = prevRows;
+    }
+  }
+
+  /**
+   * Swap LevelInfo palette set (OW vs dungeon). Cache keys include the set
+   * id, so overworld and labyrinth textures live side by side — split-screen
+   * captures one place, then the other, without destroying the first.
    * @param {{ rowsRgb?: number[][][] } | null} paletteSet
    */
   function setPaletteSet(paletteSet) {
-    // Same set → keep live textures (cave NPC/fire still reference them).
     if (paletteSet === activePaletteSet) return;
     activePaletteSet = paletteSet;
     spriteRows = spritePaletteRowsFromSet(paletteSet);
-    clearCache();
   }
 
   /**
    * Select level-specific UW special ($9E) / boss ($C0) sheets.
+   * Cache keys already include the sheet id, so L2 and L3 textures can live
+   * side by side — split-screen captures one labyrinth, then the other.
    * @param {number} level 1–9
    */
   function setDungeonLevel(level) {
-    const next = Math.max(1, Math.min(9, level | 0));
+    const next = clampLevel(level);
     if (next === dungeonLevel) return;
     dungeonLevel = next;
-    clearCache();
+    drawBank = next;
   }
 
   function sheetImage(sheetId) {
@@ -154,7 +190,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   function compose16(sheetId, localTile, flags = {}, spritePal = 0) {
     const { mirror = false, flipH = false, flipV = false } = flags;
     const key = `16:${sheetId}:${localTile}:${mirror ? 1 : 0}:${flipH ? 1 : 0}:${flipV ? 1 : 0}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
 
     const { canvas: base, ctx: bctx } = createTileCanvas(16, 16);
@@ -185,7 +221,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
 
     applySpritePalette(src, spritePal);
     tex = textureFromCanvas(src);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -196,14 +232,14 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    */
   function compose8x16(sheetId, localTile, spritePal = 0) {
     const key = `8x16:${sheetId}:${localTile}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas: canvas, ctx: ctx } = createTileCanvas(8, 16);
     drawTile(ctx, sheetId, localTile, 0, 0);
     drawTile(ctx, sheetId, localTile + 1, 0, 8);
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -213,7 +249,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    * @param {{ mirror?: boolean, flipH?: boolean, flipV?: boolean, half?: boolean, spritePal?: number }} [flags]
    */
   function textureFromPpu(ppuTile, mode, flags = {}) {
-    const level = mode === 'dungeon' ? dungeonLevel : 1;
+    const level = mode === 'dungeon' ? drawBank : 1;
     const { sheet, index } = sheetForPpuTile(ppuTile, mode, level);
     const spritePal = flags.spritePal ?? 0;
     if (flags.half) return compose8x16(sheet, index, spritePal);
@@ -228,14 +264,14 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    * @param {{ flipH?: boolean, flipV?: boolean, spritePal?: number }} [flags]
    */
   function textureFromPpuPair(leftPpu, rightPpu, mode, flags = {}) {
-    const level = mode === 'dungeon' ? dungeonLevel : 1;
+    const level = mode === 'dungeon' ? drawBank : 1;
     const spritePal = flags.spritePal ?? 0;
     const flipH = Boolean(flags.flipH);
     const flipV = Boolean(flags.flipV);
     const L = sheetForPpuTile(leftPpu, mode, level);
     const R = sheetForPpuTile(rightPpu, mode, level);
     const key = `pair:${L.sheet}:${L.index}:${R.sheet}:${R.index}:${flipH ? 1 : 0}:${flipV ? 1 : 0}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
 
     const { canvas: base, ctx: bctx } = createTileCanvas(16, 16);
@@ -255,15 +291,17 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
 
     applySpritePalette(src, spritePal);
     tex = textureFromCanvas(src);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
   /**
    * @param {import('@shared/enemies.js').Enemy} e
    * @param {'overworld' | 'dungeon'} mode
+   * @param {number} [level] dungeon pack 1–9; defaults to the last `setDungeonLevel`
    */
-  function textureForEnemy(e, mode) {
+  function textureForEnemy(e, mode, level) {
+    drawBank = mode === 'dungeon' ? clampLevel(level) : 1;
     // BoulderSet is an invisible spawner — never color-stub it.
     if (e.objType === OBJ.BOULDER_SET) return null;
     const spritePal = enemySpritePalette(e.objType, e.anim);
@@ -277,6 +315,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       leeverPhase: e.leeverPhase,
       timer: e.timer,
       wormHead: e.wormHead,
+      flyerDistTraveled: e.flyerDistTraveled,
     });
     // Captured Link: force closed hand (NES ObjAnimFrame = 1).
     if (e.objType === OBJ.WALLMASTER && e.wallmasterGrab) frame = 1;
@@ -304,7 +343,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    * @param {{ flipH?: boolean, flipV?: boolean, mirror?: boolean }} [flags]
    */
   function blitPpu16(ctx, ppuTile, dx, dy, flags = {}) {
-    const { sheet, index } = sheetForPpuTile(ppuTile, 'dungeon', dungeonLevel);
+    const { sheet, index } = sheetForPpuTile(ppuTile, 'dungeon', drawBank);
     const { flipH = false, flipV = false, mirror = false } = flags;
     const { canvas: tmp, ctx: tctx } = createTileCanvas(16, 16);
     drawTile(tctx, sheet, index, 0, 0);
@@ -352,8 +391,8 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const mouths = e.mouthHp ?? [0x40, 0x40, 0x40, 0x40];
     const anim = (e.anim >> 4) & 1;
     const mouthBits = mouths.map((h) => (h > 0 ? 1 : 0)).join('');
-    const key = `manh:${mouthBits}:${anim}:p${spritePal}:L${dungeonLevel}`;
-    let tex = cache.get(key);
+    const key = `manh:${mouthBits}:${anim}:p${spritePal}:L${drawBank}`;
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas: canvas, ctx: ctx } = createTileCanvas(48, 48);
     for (const part of MANHANDLA_PARTS) {
@@ -370,13 +409,13 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     }
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
   function digdoggerTexture(spritePal) {
-    const key = `digdog:p${spritePal}:L${dungeonLevel}`;
-    let tex = cache.get(key);
+    const key = `digdog:p${spritePal}:L${drawBank}`;
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas: canvas, ctx: ctx } = createTileCanvas(32, 32);
     for (const part of DIGDOGGER_BIG_PARTS) {
@@ -384,7 +423,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     }
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -393,8 +432,8 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const open = (e.gohmaEyeOpen ?? false) || ((e.anim & 0x20) !== 0 && (e.timer ?? 0) < 0x10);
     const eyeTile = open ? 0xfe : ((e.anim >> 3) & 1) ? 0xf6 : 0xf4;
     const legTile = (e.anim >> 3) & 1 ? 0xf8 : 0xf0;
-    const key = `gohma:${eyeTile.toString(16)}:${legTile.toString(16)}:p${spritePal}:L${dungeonLevel}`;
-    let tex = cache.get(key);
+    const key = `gohma:${eyeTile.toString(16)}:${legTile.toString(16)}:p${spritePal}:L${drawBank}`;
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas: canvas, ctx: ctx } = createTileCanvas(48, 16);
     for (const part of GOHMA_PARTS) {
@@ -403,7 +442,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     }
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -412,8 +451,8 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const swell = dodongoIsSwelling(e);
     const anim = (e.anim >> 3) & 1;
     const draw = swell ? dodongoBloatedDraw(e.dir) : dodongoWalkDraw(e.dir, anim);
-    const key = `dodo:${swell ? 'b' : 'w'}:${draw.leftTile.toString(16)}:${draw.rightTile?.toString(16) ?? '-'}:${draw.flipH ? 1 : 0}:p${spritePal}:L${dungeonLevel}`;
-    let tex = cache.get(key);
+    const key = `dodo:${swell ? 'b' : 'w'}:${draw.leftTile.toString(16)}:${draw.rightTile?.toString(16) ?? '-'}:${draw.flipH ? 1 : 0}:p${spritePal}:L${drawBank}`;
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas: canvas, ctx: ctx } = createTileCanvas(draw.side ? 32 : 16, 16);
     if (draw.side && draw.rightTile != null) {
@@ -424,7 +463,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     }
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -450,7 +489,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     const bodyDx = e.x - GLEEOK_CANVAS_OX;
     const bodyDy = e.y - GLEEOK_CANVAS_OY;
     for (let i = 0; i < 6; i += 1) {
-      const { sheet, index } = sheetForPpuTile(tiles[i], 'dungeon', dungeonLevel);
+      const { sheet, index } = sheetForPpuTile(tiles[i], 'dungeon', drawBank);
       const off = GLEEOK_BODY_OFFSETS[i];
       drawTile(ctx, sheet, index, bodyDx + off.x, bodyDy + off.y);
       drawTile(ctx, sheet, index + 1, bodyDx + off.x, bodyDy + off.y + 8);
@@ -464,7 +503,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       const segs = necks[n].segs ?? [];
       for (let s = 0; s < segs.length; s += 1) {
         const tile = s === segs.length - 1 ? GLEEOK_HEAD_TILE : GLEEOK_NECK_TILE;
-        const { sheet, index } = sheetForPpuTile(tile, 'dungeon', dungeonLevel);
+        const { sheet, index } = sheetForPpuTile(tile, 'dungeon', drawBank);
         const dx = segs[s].x - GLEEOK_CANVAS_OX;
         const dy = segs[s].y - GLEEOK_CANVAS_OY;
         drawTile(ctx, sheet, index, dx, dy);
@@ -485,8 +524,8 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    */
   function ganonTexture(e, visible) {
     const phase = e.ganonPhase === GANON_PHASE.BROWN ? 'brown' : 'blue';
-    const key = `ganon:${phase}:L${dungeonLevel}:${visible ? 'on' : 'off'}`;
-    let tex = cache.get(key);
+    const key = `ganon:${phase}:L${drawBank}:${visible ? 'on' : 'off'}`;
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas: canvas, ctx: ctx } = createTileCanvas(32, 32);
     if (visible) {
@@ -496,14 +535,14 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
       applyRgbPalette(canvas, ganonPaletteRgb(e.ganonPhase));
     }
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
   /** Solid-color fallback for bosses without frame tables yet. */
   function colorStubTexture(e) {
     const key = `stub:${e.objType}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
     const w = e.objType === OBJ.GEL || e.objType === OBJ.GEL2 ? 8 : 32;
     const h = e.objType === 0x37 /* Zelda */ ? 16 : 32;
@@ -512,7 +551,7 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
     ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
     ctx.fillRect(0, 0, w, h);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -523,21 +562,21 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
   function aquamentusTexture(e, spritePal) {
     const walk = (e.anim >> 4) & 1;
     const mouth = aquamentusMouthOpen(e) ? 1 : 0;
-    const key = `aqua:${walk}:${mouth}:p${spritePal}`;
-    let tex = cache.get(key);
+    const key = `aqua:${walk}:${mouth}:p${spritePal}:L${drawBank}`;
+    let tex = texAt(key);
     if (tex) return tex;
     const tiles = AQUAMENTUS_FRAMES[walk].slice();
     if (mouth) tiles[0] = 0xc0; // open mouth
     const { canvas: canvas, ctx: ctx } = createTileCanvas(24, 32);
     for (let i = 0; i < 6; i += 1) {
-      const { sheet, index } = sheetForPpuTile(tiles[i], 'dungeon', dungeonLevel);
+      const { sheet, index } = sheetForPpuTile(tiles[i], 'dungeon', drawBank);
       const off = AQUAMENTUS_OFFSETS[i];
       drawTile(ctx, sheet, index, off.x, off.y);
       drawTile(ctx, sheet, index + 1, off.x, off.y + 8);
     }
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -547,7 +586,8 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    * @param {import('@shared/projectiles.js').Projectile} p
    * @param {'overworld' | 'dungeon'} mode
    */
-  function textureForProjectile(p, mode) {
+  function textureForProjectile(p, mode, level) {
+    drawBank = mode === 'dungeon' ? clampLevel(level) : 1;
     if (p.kind === PROJ.FIREBALL || p.kind === PROJ.FIREBALL_UNBLOCKABLE) {
       return textureFromPpu(PROJECTILE_TILE.FIREBALL, mode, { half: true, spritePal: 2 });
     }
@@ -561,13 +601,29 @@ export function createEnemySprites(sheets, initialPaletteSet = null) {
    * @param {{ mirror?: boolean, spritePal?: number, half?: boolean }} [flags]
    */
   function textureForCaveSprite(ppuTile, flags = {}) {
-    return textureFromPpu(ppuTile, 'overworld', flags);
+    return withPalette(initialPaletteSet, () => textureFromPpu(ppuTile, 'overworld', flags));
+  }
+
+  /**
+   * Which extracted sheet a type would draw from in this mode/level.
+   * @param {number} objType
+   * @param {'overworld' | 'dungeon'} mode
+   * @param {number} [level]
+   */
+  function sheetFor(objType, mode, level) {
+    const ppu = enemyFrameTile(objType, 0);
+    if (ppu == null) return null;
+    const bank = mode === 'dungeon' ? clampLevel(level) : 1;
+    return sheetForPpuTile(ppu, mode, bank).sheet;
   }
 
   return {
     textureForEnemy,
     textureForProjectile,
     textureForCaveSprite,
+    sheetFor,
+    currentLevel: () => dungeonLevel,
+    currentPalette: () => activePaletteSet?.id ?? null,
     setPaletteSet,
     setDungeonLevel,
   };

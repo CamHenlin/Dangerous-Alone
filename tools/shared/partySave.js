@@ -19,6 +19,8 @@ export const PARTY_SAVE_KEYS = Object.freeze([
   'y',
   'dir',
   'worldId',
+  /** Occupying OW cell when `worldId` is the overworld (leftover-safe continue). */
+  'owRoomId',
 ]);
 
 /**

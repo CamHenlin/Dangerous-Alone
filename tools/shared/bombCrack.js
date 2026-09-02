@@ -12,8 +12,35 @@ import { secretAction } from './owSecrets.js';
 
 export const BOMB_CRACK_SIZE = 16;
 
-/** Public URL (Vite serves `assets/extracted` as `/`). */
+/** Public URL (served from the in-browser asset pack). */
 export const BOMB_CRACK_URL = '/play/bomb_crack.png';
+
+/** Dark core / light edge used when rasterizing `BOMB_CRACK_PIXELS`. */
+export const BOMB_CRACK_RGB = Object.freeze({
+  1: Object.freeze([0x28, 0x18, 0x10]),
+  2: Object.freeze([0xb8, 0xa0, 0x70]),
+});
+
+/**
+ * Authored 16×16 crack overlay (not Nintendo art). Built at extract time so
+ * the play pack does not depend on a checked-in PNG.
+ * @returns {{ width: number, height: number, rgba: Uint8Array }}
+ */
+export function bombCrackRgba() {
+  const width = BOMB_CRACK_SIZE;
+  const height = BOMB_CRACK_SIZE;
+  const rgba = new Uint8Array(width * height * 4);
+  for (const [x, y, shade] of BOMB_CRACK_PIXELS) {
+    const rgb = BOMB_CRACK_RGB[shade];
+    if (!rgb) continue;
+    const i = (y * width + x) * 4;
+    rgba[i] = rgb[0];
+    rgba[i + 1] = rgb[1];
+    rgba[i + 2] = rgb[2];
+    rgba[i + 3] = 255;
+  }
+  return { width, height, rgba };
+}
 
 /**
  * Dual-tone pixel art: [x, y, shade] where shade 1 = dark core, 2 = light edge.

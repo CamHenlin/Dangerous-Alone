@@ -4,6 +4,7 @@ import { createInventory } from './inventory.js';
 import {
   MONEY_OR_LIFE_PERSON,
   dismissMoneyOrLifePerson,
+  isMoneyOrLifePerson,
   isPersonType,
   moneyOrLifeReady,
   tryPayMoneyOrLife,
@@ -12,6 +13,8 @@ import {
 test('person types $4B–$53', () => {
   assert.equal(isPersonType(0x4b), true);
   assert.equal(isPersonType(0x51), true);
+  assert.equal(isMoneyOrLifePerson(0x51), true);
+  assert.equal(isMoneyOrLifePerson(0x4b), false);
   assert.equal(isPersonType(0x52), true);
   assert.equal(isPersonType(0x53), false); // flying rock
   assert.equal(isPersonType(0x2a), false);

@@ -14,6 +14,7 @@ export const KEYS = Object.freeze([
     right: 'ArrowRight',
     a: 'KeyZ',
     b: 'KeyX',
+    select: 'Tab',
   },
   {
     up: 'KeyI',
@@ -22,6 +23,7 @@ export const KEYS = Object.freeze([
     right: 'KeyL',
     a: 'KeyF',
     b: 'KeyG',
+    select: 'KeyY',
   },
   {
     up: 'Numpad8',
@@ -30,6 +32,7 @@ export const KEYS = Object.freeze([
     right: 'Numpad6',
     a: 'Numpad0',
     b: 'NumpadDecimal',
+    select: 'NumpadSubtract',
   },
   {
     up: 'KeyP',
@@ -38,6 +41,7 @@ export const KEYS = Object.freeze([
     right: 'Backslash',
     a: 'KeyN',
     b: 'Minus',
+    select: 'Digit0',
   },
 ]);
 

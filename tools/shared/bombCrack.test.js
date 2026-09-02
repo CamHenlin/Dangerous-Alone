@@ -7,6 +7,7 @@ import { PLAY_H, PLAY_W } from './continuousCamera.js';
 import { ROOT } from './paths.js';
 import {
   BOMB_CRACK_SIZE,
+  bombCrackRgba,
   centerCrackInRect,
   crackInPlayBounds,
   owBombCrackPlacements,
@@ -15,11 +16,17 @@ import {
 import { createDoorState, openDoorPair } from './dungeonDoors.js';
 import { finalizeLevelMeta } from './dungeons.js';
 
-test('bomb_crack.png exists with PNG signature', () => {
-  const path = join(ROOT, 'assets/extracted/play/bomb_crack.png');
-  assert.equal(existsSync(path), true);
-  const buf = readFileSync(path);
-  assert.deepEqual([...buf.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+test('bombCrackRgba paints a transparent 16×16 with opaque crack pixels', () => {
+  const { width, height, rgba } = bombCrackRgba();
+  assert.equal(width, BOMB_CRACK_SIZE);
+  assert.equal(height, BOMB_CRACK_SIZE);
+  assert.equal(rgba.length, 16 * 16 * 4);
+  let opaque = 0;
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] === 255) opaque += 1;
+  }
+  assert.ok(opaque > 20, 'crack should have visible pixels');
+  assert.equal(rgba[0 + 3], 0, 'corner (0,0) stays empty');
 });
 
 test('centerCrackInRect centers 16×16 inside a blast rect', () => {

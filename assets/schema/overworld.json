@@ -4,7 +4,7 @@
   "map": { "widthScreens": 16, "heightScreens": 8 },
   "screen": { "widthSquares": 16, "heightSquares": 11 },
   "offsets": {
-    "roomLayouts": { "prg": "0x15418", "length": 1936 },
+    "roomLayouts": { "prg": "0x15418", "length": 1984 },
     "columnHeap": { "prg": "0x15BD8", "endExclusive": "0x15F9C" },
     "columnDirectory": { "prg": "0x19D0F", "length": 32 },
     "secretsTable": { "prg": "0x16976", "length": 6 },

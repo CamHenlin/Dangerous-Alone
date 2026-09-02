@@ -34,6 +34,11 @@ test('money-or-life offers heart and rupee wares', () => {
   );
 });
 
+test('money-or-life wares hidden once the room is paid', () => {
+  const foes = [{ alive: true, objType: MONEY_OR_LIFE_PERSON }];
+  assert.equal(personOfferWares(foes, { moneyOrLifeTaken: true }).length, 0);
+});
+
 test('no wares without a living offer person', () => {
   assert.equal(personOfferWares([]).length, 0);
   assert.equal(

@@ -112,6 +112,8 @@ function selectScreen(mapIndex) {
 
 async function init() {
   try {
+    const { bootRomAssets } = await import('./romGate.js');
+    await bootRomAssets({ onStatus: setStatus });
     index = await fetchJson('/overworld/overworld_index.json');
 
     app = new Application();

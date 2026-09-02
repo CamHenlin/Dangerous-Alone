@@ -9,6 +9,11 @@ export function isPersonType(objType) {
   return objType >= 0x4b && objType <= 0x52;
 }
 
+/** @param {number} objType */
+export function isMoneyOrLifePerson(objType) {
+  return (objType | 0) === MONEY_OR_LIFE_PERSON;
+}
+
 export const LIFE_OR_MONEY_WARES = Object.freeze([
   { x: 0x58, y: 0x98, kind: 'heart' }, // −1 heart container
   { x: 0x98, y: 0x98, kind: 'rupees' }, // −50 rupees
@@ -19,7 +24,7 @@ export const LIFE_OR_MONEY_WARES = Object.freeze([
  * @param {{ alive?: boolean, objType?: number }[]} enemies
  */
 export function moneyOrLifePersonAlive(enemies) {
-  return enemies.some((e) => e?.alive && e.objType === MONEY_OR_LIFE_PERSON);
+  return enemies.some((e) => e?.alive && isMoneyOrLifePerson(e.objType));
 }
 
 /**
@@ -66,7 +71,7 @@ export function tryPayMoneyOrLife(inv, linkX, linkY) {
  */
 export function dismissMoneyOrLifePerson(enemies) {
   for (const e of enemies) {
-    if (e.objType === MONEY_OR_LIFE_PERSON && e.alive) {
+    if (isMoneyOrLifePerson(e.objType) && e.alive) {
       e.alive = false;
       e.hp = 0;
     }

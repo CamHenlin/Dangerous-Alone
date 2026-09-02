@@ -3,7 +3,7 @@
  * Simplified from Z_04 Update* — enough for NES-like fights.
  */
 
-import { DIR } from './collision.js';
+import { DIR, UW_BOUNDS } from './collision.js';
 import {
   BOSS,
   CHILD_DIGDOGGER,
@@ -50,6 +50,21 @@ export const DODONGO_STATE = Object.freeze({
 
 /** DodongoBloatedWaitTimes — substates 0 / 1 / 2. */
 const DODONGO_BLOATED_WAIT = Object.freeze([0x20, 0x40, 0x40]);
+
+/** Aquamentus_Move X window in a room's own local space. */
+const AQUAMENTUS_MIN_X = 0x88;
+const AQUAMENTUS_MAX_X = 0xc7;
+
+/**
+ * `$88`–`$C7` shifted into the same coordinate space as BoundByRoom `bounds`.
+ * Hardcoding the NES window snapped a leftover Aquamentus into the current
+ * cell the moment an ally walked out of its home room.
+ * @param {{ minX?: number } | null | undefined} bounds
+ */
+function aquamentusXWindow(bounds) {
+  const dx = (bounds?.minX ?? UW_BOUNDS.left) - UW_BOUNDS.left;
+  return { minX: AQUAMENTUS_MIN_X + dx, maxX: AQUAMENTUS_MAX_X + dx };
+}
 
 /**
  * Bloated substates (Dodongo_ObjBloatedSubstate):
@@ -98,7 +113,11 @@ export function initBossAi(e) {
     e.brownTimer = 0;
     e.ganonVisTimer = 0;
   } else if (t === BOSS.AQUAMENTUS) {
-    e.x = Math.max(0x88, Math.min(0xc7, e.x));
+    // Spawn writes room-local X, then streaming offsets. Do not clamp a
+    // leftover coordinate onto this cell's $88–$C7.
+    if (e.x >= 0 && e.x <= 0xff) {
+      e.x = Math.max(AQUAMENTUS_MIN_X, Math.min(AQUAMENTUS_MAX_X, e.x));
+    }
   } else if (t === BOSS.MANHANDLA) {
     e.mouthHp = [0x40, 0x40, 0x40, 0x40];
     e.speedWhole = 0;
@@ -288,14 +307,15 @@ function stepAquamentus(e, bounds) {
     e.dir = e.dir & DIR.LEFT ? DIR.RIGHT : DIR.LEFT;
     e.timer = 40;
   }
-  // Aquamentus_Move: one px every 8 frames within $88–$C7.
+  const walk = aquamentusXWindow(bounds);
+  // Aquamentus_Move: one px every 8 frames within $88–$C7 of the home cell.
   if ((e.anim & 7) === 0) {
     if (e.dir & DIR.LEFT) e.x -= 1;
     if (e.dir & DIR.RIGHT) e.x += 1;
   }
-  if (e.x < 0x88) e.dir = DIR.RIGHT;
-  if (e.x > 0xc7) e.dir = DIR.LEFT;
-  e.x = Math.max(0x88, Math.min(0xc7, e.x));
+  if (e.x < walk.minX) e.dir = DIR.RIGHT;
+  if (e.x > walk.maxX) e.dir = DIR.LEFT;
+  e.x = Math.max(walk.minX, Math.min(walk.maxX, e.x));
   e.y = Math.max(bounds.minY, Math.min(bounds.maxY - 16, e.y));
 }
 

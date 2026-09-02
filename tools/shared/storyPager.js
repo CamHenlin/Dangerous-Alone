@@ -3,11 +3,12 @@
  *
  * Labyrinth-entry describes the place you just walked into, so only
  * people standing in a labyrinth read it — an ally still on the beach
- * must not get "THE AIR CHANGES ON THE FIRST STAIR". Briefings are the
- * plot for the whole party (except a cave visitor, who has their own
- * old man). Each reader turns their own pages; the world stays frozen
- * until the last one has closed their copy. Ordinary NPC talk does not
- * go through here.
+ * must not get "THE AIR CHANGES ON THE FIRST STAIR". Each reader turns
+ * their own pages; the world stays frozen until the last one has closed
+ * their copy. The post-shard briefing is not a party beat: "THE SHARD
+ * IS WARM IN YOUR HAND" belongs to the finder, even if an ally is in
+ * another room of the same labyrinth. Ordinary NPC talk does not go
+ * through here.
  */
 
 function worldId(p) {
@@ -36,11 +37,15 @@ function inLabyrinth(p) {
 /**
  * Who should receive a party story beat.
  *
+ * `levelEntry` is for everyone standing in a labyrinth. `briefing` is
+ * private to the finder and never a party audience.
+ *
  * @param {readonly object[]} players seated player records
  * @param {string} [kind] `levelEntry` or `briefing`
  */
-export function storyReaders(players, kind = 'briefing') {
+export function storyReaders(players, kind = 'levelEntry') {
   const seated = (players ?? []).filter((p) => p && p.active !== false);
+  if (kind === 'briefing') return [];
   if (kind === 'levelEntry') return seated.filter(inLabyrinth);
   return seated.filter((p) => !inCave(p));
 }

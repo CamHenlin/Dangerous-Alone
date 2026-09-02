@@ -241,8 +241,9 @@ export function createHud(deps = {}) {
    * @param {number} [s.rupeesShown] rolling counter value; defaults to the total
    * @param {{ roomId: number, kind: string }[]} [s.mapMarks] Phase 19 radar marks
    * @param {number} [s.frame] free-running counter driving the mark pulse
-   * @param {boolean} [s.compact] print this hero's seat number (radar and
-   *   counters stay — they are per view, and two worlds cannot share one map)
+   * @param {boolean} [s.compact] print this hero's seat number (each
+   *   quadrant keeps its own radar and counters — two worlds cannot share
+   *   one map)
    * @param {number} [s.playerIndex] 0-based seat, printed when compact
    */
   function update(s) {
@@ -260,9 +261,9 @@ export function createHud(deps = {}) {
     }
 
     // Seat number sits in the 16px margin above the map so it never covers
-    // the radar. The purse and radar used to move to the shared strip in
-    // company; that left every quadrant's bar empty, and a friend in a
-    // labyrinth lost their map because the strip can only show one place.
+    // the radar. Each quadrant keeps its own map and counters — a friend
+    // in a labyrinth would lose theirs if one strip tried to show every
+    // place at once.
     if (s.compact) {
       placeText(String((s.playerIndex ?? 0) + 1), 8, 8, COL.text);
     }
@@ -270,8 +271,8 @@ export function createHud(deps = {}) {
     // Rupee / key / bomb — StatusBarStatics $F7 / $F9 / $61 @ col 11;
     // FormatDecimalCountByte @ cols 12–14.
     placeCounterIcon('rupee', LAYOUT.iconX, LAYOUT.rupeeY);
-    // Three glyphs here; the shared strip's four-digit field is what 4p 1020
-    // needs. 2p/3p (510 / 765) still fit, and this is the NES blank rules.
+    // Three glyphs, NES blank rules. 2p/3p (510 / 765) still fit; 4p 1020
+    // saturates at 999.
     placeText(
       formatPartyCount(s.rupeesShown ?? inv.rupees, 3),
       LAYOUT.countX,
@@ -352,7 +353,7 @@ export function createHud(deps = {}) {
     get dock() {
       return dock;
     },
-    /** What the bar last painted — split-screen used to skip the radar. */
+    /** What the bar last painted. */
     probe() {
       const mode = lastState?.mode ?? null;
       const hasInv = Boolean(lastState?.inv);

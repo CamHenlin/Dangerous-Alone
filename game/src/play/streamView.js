@@ -7,9 +7,9 @@
  */
 
 import { Container, Graphics, Sprite } from 'pixi.js';
-import { HUD_HEIGHT } from '@shared/collision.js';
-import { PLAY_H, PLAY_W, roomPlayOrigin } from '@shared/continuousCamera.js';
+import { PLAY_H, PLAY_W, roomStreamOffset } from '@shared/continuousCamera.js';
 import { createRoomStore } from '@shared/roomStore.js';
+import { createStreamFetch } from '@shared/streamFetch.js';
 
 /**
  * @typedef {object} StreamRoom
@@ -28,9 +28,21 @@ import { createRoomStore } from '@shared/roomStore.js';
 export function createStreamView(parent, store = createRoomStore()) {
   const layer = new Container();
   parent.addChildAt(layer, 0);
+  const load = createStreamFetch();
 
   /** @type {Map<number, StreamRoom>} */
   const views = new Map();
+  /** Last `layout()` anchor; new rooms are placed against this immediately. */
+  let layoutAnchor = /** @type {number | null} */ (null);
+
+  /**
+   * @param {StreamRoom} entry
+   */
+  function positionEntry(entry) {
+    const pos = roomStreamOffset(entry.roomId, layoutAnchor ?? entry.roomId);
+    entry.root.x = pos.x;
+    entry.root.y = pos.y;
+  }
 
   /** @param {number} id */
   function ensureView(id) {
@@ -40,6 +52,8 @@ export function createStreamView(parent, store = createRoomStore()) {
       layer.addChild(root);
       entry = { roomId: id, root, sprite: null, fog: null };
       views.set(id, entry);
+      if (layoutAnchor == null) layoutAnchor = id;
+      positionEntry(entry);
     }
     return entry;
   }
@@ -92,15 +106,14 @@ export function createStreamView(parent, store = createRoomStore()) {
 
   /**
    * Position every room relative to the anchor room (local play space).
+   * Remembers the anchor so a later `upsert` does not spawn at (0, 0) for
+   * a frame — that covered the current dungeon/OW screen during neighbor
+   * streaming after `yieldToPaint`.
    * @param {number} anchorRoomId
    */
   function layout(anchorRoomId) {
-    const anchor = roomPlayOrigin(anchorRoomId);
-    for (const entry of views.values()) {
-      const origin = roomPlayOrigin(entry.roomId);
-      entry.root.x = origin.ox - anchor.ox;
-      entry.root.y = HUD_HEIGHT + (origin.oy - anchor.oy);
-    }
+    layoutAnchor = anchorRoomId & 0xff;
+    for (const entry of views.values()) positionEntry(entry);
   }
 
   /** @param {StreamRoom} entry */
@@ -123,9 +136,11 @@ export function createStreamView(parent, store = createRoomStore()) {
   }
 
   function clear() {
+    load.invalidate();
     for (const entry of views.values()) destroyView(entry);
     views.clear();
     store.clear();
+    layoutAnchor = null;
   }
 
   /**
@@ -146,6 +161,7 @@ export function createStreamView(parent, store = createRoomStore()) {
     layer,
     store,
     views,
+    load,
     upsert,
     setFog,
     layout,

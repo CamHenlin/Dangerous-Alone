@@ -2,6 +2,8 @@
  * Quest 2 overworld attribute / layout patches (Z_06 @PatchQ2Rooms).
  */
 
+import { copyBytes } from './bytes.js';
+
 /** AttrsB replacements: room id → new AttrsB byte. */
 export const Q2_ATTRS_B = Object.freeze({
   0x0e: 0x7b,
@@ -67,20 +69,19 @@ export function applyQuest2OverworldPatch(tables) {
 }
 
 /**
- * Clone Buffer / Uint8Array fields so Q1 tables stay intact.
+ * Clone table byte arrays so Q1 tables stay intact.
  * @param {object} tables
  */
 export function cloneOverworldTables(tables) {
-  const cloneBuf = (b) => (Buffer.isBuffer(b) ? Buffer.from(b) : Uint8Array.from(b));
   return {
     ...tables,
-    roomLayouts: cloneBuf(tables.roomLayouts),
-    columnHeap: cloneBuf(tables.columnHeap),
-    screenTable1: cloneBuf(tables.screenTable1),
-    screenTable2: cloneBuf(tables.screenTable2),
-    screenTable3: cloneBuf(tables.screenTable3),
-    monsterTable: cloneBuf(tables.monsterTable),
-    arrangement: cloneBuf(tables.arrangement),
+    roomLayouts: copyBytes(tables.roomLayouts),
+    columnHeap: copyBytes(tables.columnHeap),
+    screenTable1: copyBytes(tables.screenTable1),
+    screenTable2: copyBytes(tables.screenTable2),
+    screenTable3: copyBytes(tables.screenTable3),
+    monsterTable: copyBytes(tables.monsterTable),
+    arrangement: copyBytes(tables.arrangement),
     columnTableOffsets: [...tables.columnTableOffsets],
     secretsTable: [...tables.secretsTable],
     primarySquares: [...tables.primarySquares],
@@ -148,4 +149,27 @@ export function applyQuest2AttrsToPack(pack) {
  */
 export function quest2NeedsLayoutOverlay(mapIndex) {
   return Q2_LAYOUT_ROOMS.includes(mapIndex & 0xff);
+}
+
+/**
+ * Q2 AttrsB cave id for a room, or `null` when quest 1's value stands.
+ * `$8B` is the monster-table overflow write, not a room.
+ * @param {number} mapIndex
+ * @returns {number | null}
+ */
+export function quest2CaveId(mapIndex) {
+  const id = mapIndex & 0xff;
+  if (id === 0x8b) return null;
+  const b = Q2_ATTRS_B[id];
+  return b == null ? null : (b >> 2) & 0x3f;
+}
+
+/**
+ * Q2 AttrsF ignore-secret bit when that byte is patched, else `null`.
+ * @param {number} mapIndex
+ * @returns {boolean | null}
+ */
+export function quest2IgnoreSecret(mapIndex) {
+  const f = Q2_ATTRS_F[mapIndex & 0xff];
+  return f == null ? null : Boolean(f & 0x40);
 }

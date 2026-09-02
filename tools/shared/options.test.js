@@ -5,14 +5,18 @@ import {
   DEFAULT_BINDS_P2,
   DEFAULT_BINDS_P3,
   DEFAULT_BINDS_P4,
+  DEFAULT_PAD_BINDS,
   DEFAULT_PAD_SLOTS,
   DEFAULT_PLAYER_BINDS,
   bindsForPlayer,
+  codeLabel,
   loadOptions,
   normalizeOptions,
+  padBindsForPlayer,
   padsForPlayer,
   saveOptions,
 } from './options.js';
+import { padBtn } from './padBinds.js';
 
 function memoryStorage() {
   /** @type {Map<string, string>} */
@@ -98,4 +102,28 @@ test('per-seat binds and pads survive a round-trip', () => {
   assert.deepEqual(bindsForPlayer(loaded, 0).b, ['KeyM']);
   assert.deepEqual(bindsForPlayer(loaded, 1).start, ['KeyU']);
   assert.deepEqual(loaded.padSlots, [0, 2, 1, 3]);
+});
+
+test('a missing pad remap still uses the standard layout', () => {
+  const o = normalizeOptions({ binds: { a: ['KeyQ'] } });
+  assert.deepEqual(padBindsForPlayer(o, 0).left, [...DEFAULT_PAD_BINDS.left]);
+  assert.deepEqual(padBindsForPlayer(o, 1).a, [...DEFAULT_PAD_BINDS.a]);
+});
+
+test('per-seat pad remaps survive a round-trip', () => {
+  const storage = memoryStorage();
+  saveOptions(
+    {
+      playerPadBinds: [{ ...DEFAULT_PAD_BINDS, left: [padBtn(6)] }, DEFAULT_PAD_BINDS],
+    },
+    storage,
+  );
+  const loaded = loadOptions(storage);
+  assert.deepEqual(padBindsForPlayer(loaded, 0).left, [padBtn(6)]);
+  assert.deepEqual(padBindsForPlayer(loaded, 1).left, [...DEFAULT_PAD_BINDS.left]);
+});
+
+test('codeLabel names pad sources the same way as keys', () => {
+  assert.equal(codeLabel('PadBtn:14'), 'Pad ←');
+  assert.equal(codeLabel('KeyJ'), 'J');
 });

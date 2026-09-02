@@ -6,8 +6,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CELLAR_EXIT_MIN_Y,
+  CELLAR_FLOOR_TILE,
+  CELLAR_FLOOR_Y,
+  CELLAR_INNER_STAIRS_X,
   CELLAR_KEESE_TYPE,
   CELLAR_LADDER_XS,
+  CELLAR_STAIRS_TILE,
   CELLAR_STAND_Y,
   cellarEnterSpawn,
   cellarExitsFor,
@@ -266,18 +270,22 @@ test('cellar $3F treasure layout has ladder shaft + black floor', () => {
   assert.equal(squares[0][3], 0x00);
   // Ladder shaft squares.
   assert.equal(squares[1][3], 0x01);
-  // Floor corridor uses square $03 (wall) flanking open $02.
+  // Ceiling void uses square $02 (CHR $F3).
   assert.equal(squares[0][0], 0x02);
   const grid = composeCellarRoomTiles(0x3f);
   assert.equal(grid.length, PLAY_ROWS);
   assert.equal(grid[0].length, PLAY_COLS);
   // Ladder open mouth tiles are $24.
-  assert.equal(grid[0][6], 0x24);
-  assert.equal(grid[0][7], 0x24);
-  // Square $02 floor is normalized to walkable $24 (ROM CHR $F3).
-  assert.equal(grid[0][0], 0x24);
+  assert.equal(grid[0][6], CELLAR_FLOOR_TILE);
+  assert.equal(grid[0][7], CELLAR_FLOOR_TILE);
+  // Square $02 stays ROM CHR $F3 (solid void under UW $78).
+  assert.equal(grid[0][0], 0xf3);
   // Brick walls from square $03 stay $FA.
   assert.equal(grid[2][0], 0xfa);
+  // Square $0C floor lip: blank $F3 over walkable $24.
+  assert.equal(grid[16][8], 0xf3);
+  assert.equal(grid[17][8], CELLAR_FLOOR_TILE);
+  assert.equal(grid[2][6], CELLAR_STAIRS_TILE);
 });
 
 test('composeDungeonRoomTiles routes cellars away from UW walls', () => {
@@ -285,8 +293,110 @@ test('composeDungeonRoomTiles routes cellars away from UW walls', () => {
   const grid = composeDungeonRoomTiles(room);
   // UW FillWalls would plant $E0 at (1,1); cellar layout does not.
   assert.notEqual(grid[1][1], 0xe0);
-  assert.equal(grid[0][0], 0x24);
+  assert.equal(grid[0][0], 0xf3);
   assert.equal(grid[2][0], 0xfa);
+});
+
+const CELLAR_WALK = { firstUnwalkable: UW_FIRST_UNWALKABLE, walkableRemap: [] };
+
+/**
+ * @param {number[][]} grid
+ * @param {number} x
+ * @param {number} y
+ * @param {number} dir
+ * @param {number} frames
+ */
+function walkCellar(grid, x, y, dir, frames) {
+  const link = createLinkState(x, y, dir);
+  for (let i = 0; i < frames; i += 1) {
+    stepLink(link, grid, dir, LINK_QSPEED, NO_ROOM_BOUNDS, CELLAR_WALK);
+    if (link.y < CELLAR_EXIT_MIN_Y) link.y = CELLAR_EXIT_MIN_Y;
+  }
+  return link;
+}
+
+test('cellar blanks $F3 are solid; only stairs $6F and floor $24 walk', () => {
+  const grid = composeCellarRoomTiles(0x3f);
+  const walkable = new Set();
+  for (const row of grid) {
+    for (const tile of row) {
+      if (tile < UW_FIRST_UNWALKABLE) walkable.add(tile);
+    }
+  }
+  assert.deepEqual([...walkable].sort((a, b) => a - b), [
+    CELLAR_FLOOR_TILE,
+    CELLAR_STAIRS_TILE,
+  ]);
+  assert.equal(grid[0][0] >= UW_FIRST_UNWALKABLE, true, 'ceiling $F3 is solid');
+});
+
+test('cellar stairs: Link cannot walk the void at the top', () => {
+  const grid = composeCellarRoomTiles(0x3f);
+  const x = CELLAR_LADDER_XS[0];
+  assert.equal(
+    canLinkMove(grid, x, CELLAR_STAND_Y, DIR.LEFT, NO_ROOM_BOUNDS, CELLAR_WALK),
+    false,
+  );
+  assert.equal(
+    canLinkMove(grid, x, CELLAR_STAND_Y, DIR.RIGHT, NO_ROOM_BOUNDS, CELLAR_WALK),
+    false,
+  );
+  assert.equal(
+    canLinkMove(grid, x, CELLAR_STAND_Y, DIR.DOWN, NO_ROOM_BOUNDS, CELLAR_WALK),
+    true,
+  );
+  const climbed = walkCellar(grid, x, CELLAR_STAND_Y, DIR.UP, 80);
+  assert.ok(climbed.y < 0x40, `expected climb toward exit, Y=$${climbed.y.toString(16)}`);
+  const sidestep = walkCellar(grid, climbed.x, climbed.y, DIR.LEFT, 40);
+  assert.equal(sidestep.x, climbed.x, 'void beside the mouth must stay solid');
+});
+
+test('cellar $3E floor strip connects both ladders; $F3 above it does not', () => {
+  const grid = composeCellarRoomTiles(0x3e);
+  const left = CELLAR_LADDER_XS[0];
+  const down = walkCellar(grid, left, CELLAR_STAND_Y, DIR.DOWN, 250);
+  assert.equal(down.y, CELLAR_FLOOR_Y);
+  const across = walkCellar(grid, down.x, down.y, DIR.RIGHT, 250);
+  assert.ok(
+    across.x >= CELLAR_LADDER_XS[1],
+    `expected to reach the right ladder, X=$${across.x.toString(16)}`,
+  );
+  assert.equal(
+    canLinkMove(grid, 0x80, CELLAR_FLOOR_Y, DIR.UP, NO_ROOM_BOUNDS, CELLAR_WALK),
+    false,
+    'blank $F3 above the floor lip is solid',
+  );
+  assert.equal(
+    canLinkMove(grid, left, CELLAR_FLOOR_Y, DIR.UP, NO_ROOM_BOUNDS, CELLAR_WALK),
+    true,
+    'stairs from the floor stay open',
+  );
+});
+
+test('cellar $3F treasure alcove is reached by inner stairs, not the void', () => {
+  const grid = composeCellarRoomTiles(0x3f);
+  const left = CELLAR_LADDER_XS[0];
+  // Mid-ladder, the alcove is still walled off from the entrance shaft.
+  assert.equal(
+    canLinkMove(grid, left, 0x8d, DIR.RIGHT, NO_ROOM_BOUNDS, CELLAR_WALK),
+    false,
+  );
+  const floor = walkCellar(grid, left, CELLAR_STAND_Y, DIR.DOWN, 250);
+  const toInner = walkCellar(grid, CELLAR_INNER_STAIRS_X, floor.y, DIR.UP, 120);
+  assert.ok(
+    toInner.y <= 0x9d,
+    `inner stairs should reach the alcove lip, Y=$${toInner.y.toString(16)}`,
+  );
+  assert.equal(
+    canLinkMove(grid, 0xc0, 0x9d, DIR.LEFT, NO_ROOM_BOUNDS, CELLAR_WALK),
+    true,
+    'item lip $C0,$9D is floor',
+  );
+  assert.equal(
+    canLinkMove(grid, 0xc0, 0x9d, DIR.UP, NO_ROOM_BOUNDS, CELLAR_WALK),
+    false,
+    'alcove $F3 above the lip is solid',
+  );
 });
 
 test('cellar rooms spawn 4 blue keese at fixed positions', () => {

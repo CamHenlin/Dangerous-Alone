@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { B_ITEM, SWORD, createInventory } from './inventory.js';
+import { B_ITEM, B_SLOT_ORDER, SWORD, createInventory } from './inventory.js';
 import {
   BOX_INVENTORY,
   BOX_SELECT,
@@ -46,7 +46,7 @@ test('bItemIcon reflects owned gear and tiers', () => {
   inv.arrow = 2;
   assert.deepEqual(bItemIcon(inv, B_ITEM.BOW), { tile: 0x28, pal: 1 });
   inv.letter = 1;
-  assert.deepEqual(bItemIcon(inv, B_ITEM.POTION), { tile: 0x4c, pal: 0 });
+  assert.deepEqual(bItemIcon(inv, B_ITEM.POTION), { tile: 0x4c, pal: 1 });
   inv.potion = 2;
   assert.deepEqual(bItemIcon(inv, B_ITEM.POTION), { tile: 0x40, pal: 2 });
 });
@@ -64,6 +64,11 @@ test('passiveIcons lists owned equipment keys', () => {
 
 test('bSlotPos uses NES SubmenuItemXs / sprite Y', () => {
   // HUD docks bottom while menu is open — submenuY is NES absolute.
+  assert.deepEqual(
+    SUBMENU_B_SLOTS.map((s) => s.id),
+    [...B_SLOT_ORDER],
+    'grid slots must stay in cycle order',
+  );
   assert.equal(submenuY(NES_PASSIVE_Y), NES_PASSIVE_Y);
   const boom = bSlotPos(SUBMENU_B_SLOTS[0]);
   assert.equal(boom.x, 0x80);

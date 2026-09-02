@@ -41,7 +41,7 @@ const BOSS_ROAR_SAMPLE_BITS = new Set([0x10, 0x20, 0x40]);
  * @property {(name: string) => void} playFanfare
  * @property {() => void} stopMusic
  * @property {() => void} stopSfx
- * @property {(name: string) => void} playSfx
+ * @property {(name: string, opts?: { background?: boolean }) => void} playSfx
  * @property {() => void} dispose
  * @property {(on: boolean) => void} setMuted
  * @property {() => boolean} isMuted
@@ -527,9 +527,10 @@ export function createAudio(pack) {
     return buf;
   }
 
-  function playSampleCue(sfx, start) {
+  function playSampleCue(sfx, start, opts = {}) {
     const c = ensureSfxCtx();
-    const decision = requestSample(mixer, sfx.bit);
+    const bit = opts.background ? sfx.bit | 0x80 : sfx.bit;
+    const decision = requestSample(mixer, bit);
     mixer = decision.state;
     const buf = sampleBuffer(sfx, decision.initialDac);
     const src = c.createBufferSource();
@@ -545,8 +546,9 @@ export function createAudio(pack) {
 
   /**
    * @param {string} name
+   * @param {{ background?: boolean }} [opts]
    */
-  function playSfx(name) {
+  function playSfx(name, opts = {}) {
     const sfx = pack.sfx?.[name];
     if (!sfx) return;
     // Sea ($20) is re-requested every OW frame on shoreline rooms; the NES
@@ -558,14 +560,14 @@ export function createAudio(pack) {
       if (mixer.effect === 0x20) return;
       mixer = { ...mixer, effect: 0x20 };
     }
-    // Adjacent-room boss rumble is the same: DriveSample every UW frame
-    // while LevelBlock bits 5–6 are set. DMC is one shot, so ignore the
-    // request until the slot is free rather than stacking PCM.
+    // Adjacent-room rumble ORs $80 (DAC $7F) and is retriggered by the sim
+    // every $A0 frames. DMC is one shot — skip while the slot is busy.
     const roarClaim = sfx.kind === 'sample' && BOSS_ROAR_SAMPLE_BITS.has(sfx.bit);
     if (roarClaim) {
       if (mixer.sample !== 0) return;
       mixer = { ...mixer, sample: sfx.bit };
     }
+    const background = Boolean(opts.background);
     const gen = sfxGen;
     void unlock().then(() => {
       if (gen !== sfxGen) {
@@ -578,7 +580,7 @@ export function createAudio(pack) {
       const bus = /** @type {GainNode} */ (cueBus);
 
       if (sfx.kind === 'sample') {
-        playSampleCue(sfx, start);
+        playSampleCue(sfx, start, { background });
         return;
       }
 

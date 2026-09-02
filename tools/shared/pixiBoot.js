@@ -42,9 +42,12 @@ export function withTimeout(promise, ms, message) {
  */
 export async function initPixiApp(app, options = {}, boot = {}) {
   // Dynamic import keeps this module loadable under node:test (no `navigator`).
-  const { Application, CanvasRenderer, Container, WebGLRenderer } = await import(
+  const { Application, Assets, CanvasRenderer, Container, WebGLRenderer } = await import(
     'pixi.js'
   );
+  // Pack images are served by a window.fetch interceptor. Pixi's default
+  // texture worker has its own fetch and would 404 those URLs.
+  Assets.setPreferences({ preferWorkers: false });
 
   const timeoutMs = boot.timeoutMs ?? 8000;
   const host = boot.host ?? null;

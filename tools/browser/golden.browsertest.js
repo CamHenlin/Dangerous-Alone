@@ -15,6 +15,7 @@ import { after, before, describe, test } from 'node:test';
 import { chromium } from 'playwright';
 import { openGame } from './gameDriver.js';
 import { startGameServer } from './gameServer.js';
+import { frameSize } from '../shared/splitLayout.js';
 import {
   KEYS,
   hero,
@@ -221,15 +222,16 @@ describe('browser goldens', { concurrency: false }, () => {
       w: document.querySelector('canvas')?.width ?? 0,
       h: document.querySelector('canvas')?.height ?? 0,
     }));
-    // 512×544 NES pixels, times the renderer resolution (the art scale).
-    assert.ok(size.w >= 512, `the canvas grew for two columns, got ${size.w}`);
-    assert.ok(size.h >= 544, `two players open the 2×2, got ${size.h}`);
+    // Co-op NES pixels (2×2 + gutter), times the renderer resolution.
+    const coop = frameSize(2);
+    assert.ok(size.w >= coop.width, `the canvas grew for two columns, got ${size.w}`);
+    assert.ok(size.h >= coop.height, `two players open the 2×2, got ${size.h}`);
     const layout = await game.state();
-    assert.equal(layout.sharedBar, true, 'the purse lives on the strip');
+    assert.equal(layout.sharedBar, false, 'the purse lives on each quadrant bar');
     assert.equal(layout.compactHud, true);
     assert.equal(layout.hud?.map, true, 'each quadrant still has a minimap');
     assert.equal(layout.hud?.counters, true, 'each quadrant still has rupee/key/bomb counts');
-    assert.equal(layout.canvasH, 544);
+    assert.equal(layout.canvasH, coop.height);
     assert.equal(layout.joinPrompts, 2, 'empty cells are join prompts');
     const caps = await game.page.evaluate(() => window.zeldaDebug.caps());
     assert.equal(caps.rupeeCap, 510);
@@ -613,10 +615,10 @@ describe('browser goldens', { concurrency: false }, () => {
       `cellar tiles were dropped, got ${JSON.stringify(after.uwStreamRooms)}`,
     );
 
-    const x = after.heroes[0].x;
-    await game.press(['ArrowRight'], 20);
+    const y = after.heroes[0].y;
+    await game.press(['ArrowDown'], 20);
     const walked = await hero(game, 0);
-    assert.ok(walked.x > x, 'player one could not walk in the cellar');
+    assert.ok(walked.y > y, 'player one could not walk in the cellar');
     assert.ok(walked.world?.startsWith('cellar:'));
     await game.close();
   });
@@ -635,6 +637,14 @@ describe('browser goldens', { concurrency: false }, () => {
     assert.equal(after.heroes[0].world, 'dungeon:1');
     assert.equal(after.heroes[0].linkRoom, 0x73, 'player one must stay in $73');
     assert.equal(after.heroes[1].linkRoom, 0x22, 'player two should land on the cellar exit room');
+    assert.ok(
+      (after.uwStreamRooms ?? []).includes(0x22),
+      `player two's landing cell was missing from the stream, got ${JSON.stringify(after.uwStreamRooms)}`,
+    );
+    assert.ok(
+      !(after.uwFoggedRooms ?? []).includes(0x22),
+      `player two climbed into fog, got ${JSON.stringify(after.uwFoggedRooms)}`,
+    );
     await game.close();
   });
 
@@ -1042,12 +1052,13 @@ describe('browser goldens', { concurrency: false }, () => {
     const joined = await game.state();
     assert.equal(joined.heroes.filter((h) => h.active).length, 2, 'H sits player two down');
     assert.equal(joined.invOpen, false, 'the join Start must not open the submenu');
-    assert.equal(joined.canvasW, 512);
-    assert.equal(joined.canvasH, 544, 'two players open the 2×2, not a 2-up strip');
-    assert.equal(joined.sharedBar, true);
+    const coop = frameSize(2);
+    assert.equal(joined.canvasW, coop.width);
+    assert.equal(joined.canvasH, coop.height, 'two players open the 2×2, not a 2-up strip');
+    assert.equal(joined.sharedBar, false);
     assert.equal(joined.joinPrompts, 2);
     const wide = await game.page.evaluate(() => document.querySelector('canvas')?.width ?? 0);
-    assert.ok(wide >= 512, `the canvas grew, got ${wide}`);
+    assert.ok(wide >= coop.width, `the canvas grew, got ${wide}`);
     const y = joined.heroes[0].y;
     await game.press(['ArrowDown'], 20);
     assert.notEqual((await game.state()).heroes[0].y, y, 'the world still moves after a join');
@@ -1086,12 +1097,13 @@ describe('browser goldens', { concurrency: false }, () => {
       w: document.querySelector('canvas')?.width ?? 0,
       h: document.querySelector('canvas')?.height ?? 0,
     }));
-    assert.ok(size.w >= 512, `wide enough for two columns, got ${size.w}`);
-    assert.ok(size.h >= 544, `tall enough for the 2×2 and a bar, got ${size.h}`);
+    const coop = frameSize(3);
+    assert.ok(size.w >= coop.width, `wide enough for two columns, got ${size.w}`);
+    assert.ok(size.h >= coop.height, `tall enough for the 2×2, got ${size.h}`);
     const caps = await game.page.evaluate(() => window.zeldaDebug.caps());
     assert.equal(caps.rupeeCap, 765);
     assert.equal(caps.maxBombs, 24);
-    assert.equal(st.sharedBar, true, 'the purse lives on the strip under the 2×2');
+    assert.equal(st.sharedBar, false, 'no leftover strip under the 2×2');
     assert.equal(st.compactHud, true);
     assert.equal(st.joinPrompts, 1, 'the empty cell is a join prompt');
     await game.close();
@@ -1102,10 +1114,11 @@ describe('browser goldens', { concurrency: false }, () => {
     await game.step(2);
     const st = await game.state();
     assert.equal(st.heroes.filter((h) => h.active).length, 4);
-    assert.equal(st.canvasW, 512);
-    assert.equal(st.canvasH, 544);
+    const coop = frameSize(4);
+    assert.equal(st.canvasW, coop.width);
+    assert.equal(st.canvasH, coop.height);
     assert.equal(st.joinPrompts, 0);
-    assert.equal(st.sharedBar, true);
+    assert.equal(st.sharedBar, false);
     assert.equal(st.compactHud, true);
     assert.equal(st.joinHint, '');
     const caps = await game.page.evaluate(() => window.zeldaDebug.caps());
@@ -1121,10 +1134,11 @@ describe('browser goldens', { concurrency: false }, () => {
     assert.equal(left, true);
     const st = await game.state();
     assert.equal(st.heroes.filter((h) => h.active).length, 2);
-    assert.equal(st.canvasW, 512);
-    assert.equal(st.canvasH, 544, 'two players are still the company frame');
+    const coop = frameSize(2);
+    assert.equal(st.canvasW, coop.width);
+    assert.equal(st.canvasH, coop.height, 'two players are still the company frame');
     assert.equal(st.joinPrompts, 2);
-    assert.equal(st.sharedBar, true);
+    assert.equal(st.sharedBar, false);
     assert.equal(st.compactHud, true);
     const caps = await game.page.evaluate(() => window.zeldaDebug.caps());
     assert.equal(caps.rupeeCap, 510);

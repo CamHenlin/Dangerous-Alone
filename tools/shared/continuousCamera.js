@@ -28,6 +28,23 @@ export function roomPlayOrigin(roomId) {
 }
 
 /**
+ * Playfield position of a streamed room relative to the camera's layout
+ * anchor. Call this as soon as the room's container is created — leaving a
+ * neighbor at (0, 0) until the next `layout()` covers the current screen.
+ * @param {number} roomId
+ * @param {number} anchorRoomId
+ * @returns {{ x: number, y: number }}
+ */
+export function roomStreamOffset(roomId, anchorRoomId) {
+  const anchor = roomPlayOrigin(anchorRoomId);
+  const origin = roomPlayOrigin(roomId);
+  return {
+    x: origin.ox - anchor.ox,
+    y: HUD_HEIGHT + (origin.oy - anchor.oy),
+  };
+}
+
+/**
  * Local object position → absolute play-space (Y strips HUD).
  * @param {number} roomId
  * @param {number} localX
@@ -83,6 +100,33 @@ export function localInRoom(anchorRoomId, toRoomId, x, y) {
 }
 
 /**
+ * BoundByRoom overflow into the door hole that faces `latchedId`.
+ *
+ * Kept here (not dungeonDoors) so occupancy resolution does not import a
+ * module that already imports us. Mirrors `inUwDoorCavity` on that one side.
+ *
+ * Treating *every* wall as a hole kept a leftover latch while hugging a
+ * different wall — collision then ran on the neighbour's grid (sprite
+ * halfway into this room's bricks, or stopped a tile short of them).
+ * Only the seam that still belongs to the old cell should hold the latch.
+ *
+ * @param {number} hereId
+ * @param {number} latchedId
+ * @param {number} x here-local X
+ * @param {number} y here-local Y
+ */
+function inUwDoorHoleTowardLatch(hereId, latchedId, x, y) {
+  const here = hereId & 0xff;
+  const latched = latchedId & 0xff;
+  // South matches `inUwDoorCavity`: unique-floor ObjY `$BD–$C4` is not a hole.
+  if (latched === neighborRoomId(here, DIR.RIGHT)) return x >= 0xe0;
+  if (latched === neighborRoomId(here, DIR.LEFT)) return x < 0x20;
+  if (latched === neighborRoomId(here, DIR.DOWN)) return y >= 0xc5;
+  if (latched === neighborRoomId(here, DIR.UP)) return y < 0x5d;
+  return false;
+}
+
+/**
  * Which dungeon cell this hero should walk and collide in.
  *
  * `latchedId` is the last room they officially occupied (spawn, door cross).
@@ -91,6 +135,22 @@ export function localInRoom(anchorRoomId, toRoomId, x, y) {
  * an ally's latch naming the old cell while their numbers now mean the new
  * one, and `tileAtPlayPixel` clamps those off-grid samples onto the neighbour's
  * west wall (ghost collision in the room you are looking at).
+ *
+ * The 56px claim lip of the *old* cell overlaps the neighbour's interior
+ * floor. Q2 L2 `$69` stops leftover against diamonds at local y=`$B8`, which
+ * is exactly {@link ANCHOR_SEAM_LIP} north of host `$79`. Keeping `$79` there
+ * treated that floor as `$79`'s north doorway and clamped X so Left/Right
+ * did nothing. Unique floor (`$B8–$C4`) is not a door hole, so occupancy
+ * follows the feet.
+ *
+ * The door hole *facing the latch* must keep it. `detectUwDoorCross` only
+ * fires at `gridOffset === 0`; yielding the idle frame in `$59`'s south
+ * cavity rewrote occupancy to `$59` before `$69`'s north seam was tested,
+ * so the world never rebased and `$59` stayed fogged (black).
+ *
+ * The other three walls are this cell's own floor overflow — leftover
+ * walking Left into them on the neighbour's grid is the "halfway into a
+ * wall / can't reach the bricks" screenshot.
  *
  * @param {number} anchorRoomId
  * @param {number} x
@@ -102,9 +162,16 @@ export function resolveUwOccupyingRoomId(anchorRoomId, x, y, latchedId) {
   if (latchedId == null) return here;
   const latched = latchedId & 0xff;
   if (latched === here) return here;
-  const local = localInRoom(anchorRoomId, latched, x, y);
-  if (canClaimAnchorCross(local.x, local.y)) return latched;
-  return here;
+  const latchedLocal = localInRoom(anchorRoomId, latched, x, y);
+  if (!canClaimAnchorCross(latchedLocal.x, latchedLocal.y)) return here;
+  const hereLocal = localInRoom(anchorRoomId, here, x, y);
+  if (
+    inAnchorPlayArea(hereLocal.x, hereLocal.y)
+    && !inUwDoorHoleTowardLatch(here, latched, hereLocal.x, hereLocal.y)
+  ) {
+    return here;
+  }
+  return latched;
 }
 
 /**
@@ -152,6 +219,40 @@ export function canClaimAnchorCross(linkX, linkY, lip = ANCHOR_SEAM_LIP) {
   if (linkX >= PLAY_W && linkX < PLAY_W + lip && playY >= 0 && playY < PLAY_H) return true;
   if (linkX >= 0 && linkX < PLAY_W && playY >= -lip && playY < 0) return true;
   if (linkX >= 0 && linkX < PLAY_W && playY >= PLAY_H && playY < PLAY_H + lip) return true;
+  return false;
+}
+
+/**
+ * Whether this overworld hero may rebase the streaming anchor this frame.
+ *
+ * {@link canClaimAnchorCross} is also leftover occupancy: a door lip, a
+ * neighbour cell. The 56px lip must stay claimable so a stride that landed
+ * one pixel past the seam can finish the exit — but an *idle* leftover on
+ * that lip must not. They steal the stream every frame, the ally is rebased
+ * the other way, and {@link snapOwWalkY} glues both to the seam: left/right
+ * still works, up/down does nothing, until a knockback shoves someone off.
+ *
+ * @param {number} linkX
+ * @param {number} linkY
+ * @param {number} [gridOffset]
+ * @param {number} [inputMask]
+ * @param {number} [lip]
+ */
+export function mayOwnOwAnchor(
+  linkX,
+  linkY,
+  gridOffset = 0,
+  inputMask = 0,
+  lip = ANCHOR_SEAM_LIP,
+) {
+  if (inAnchorPlayArea(linkX, linkY)) return true;
+  if (!canClaimAnchorCross(linkX, linkY, lip)) return false;
+  if ((gridOffset ?? 0) !== 0) return true;
+  const playY = linkY - HUD_HEIGHT;
+  if ((inputMask & DIR.DOWN) && playY >= PLAY_H) return true;
+  if ((inputMask & DIR.UP) && playY < 0) return true;
+  if ((inputMask & DIR.RIGHT) && linkX >= PLAY_W) return true;
+  if ((inputMask & DIR.LEFT) && linkX < 0) return true;
   return false;
 }
 
@@ -379,6 +480,24 @@ export function roomsForCameras(cameras, opts = {}) {
 }
 
 /**
+ * Stream the room underfoot first, then its edge neighbors, then corners.
+ * A seam cross that still needs art must not wait behind diagonal prefetch.
+ * @param {Iterable<number>} ids
+ * @param {number} anchorId
+ * @returns {number[]}
+ */
+export function sortRoomsNearestFirst(ids, anchorId) {
+  const ac = roomCol(anchorId);
+  const ar = roomRow(anchorId);
+  return [...ids].sort((a, b) => {
+    const da = Math.abs(roomCol(a) - ac) + Math.abs(roomRow(a) - ar);
+    const db = Math.abs(roomCol(b) - ac) + Math.abs(roomRow(b) - ar);
+    if (da !== db) return da - db;
+    return (a & 0xff) - (b & 0xff);
+  });
+}
+
+/**
  * True when the axis-aligned rect is completely outside the camera view.
  * @param {{ x: number, y: number, w?: number, h?: number }} rect local object space (Y includes HUD)
  * @param {number} camLocalX
@@ -540,16 +659,27 @@ export function clampMapEdgePos(x, y, roomId) {
 
 /**
  * Dungeon rooms that should be drawn as fog (not yet visited).
+ *
+ * The stream anchor is always revealed, and so is every cell a hero is
+ * standing in: a cellar ladder can drop someone several rooms away from
+ * whoever holds the entrance, and that landing is not unexplored fog.
+ *
  * @param {Iterable<number>} candidateRoomIds
- * @param {Set<number>} visited
+ * @param {Iterable<number> | null | undefined} visited
  * @param {number} currentRoomId
+ * @param {Iterable<number>} [occupiedIds]
  * @returns {Set<number>}
  */
-export function foggedRooms(candidateRoomIds, visited, currentRoomId) {
+export function foggedRooms(candidateRoomIds, visited, currentRoomId, occupiedIds = []) {
+  const revealed = new Set();
+  revealed.add(currentRoomId & 0xff);
+  for (const id of visited ?? []) revealed.add(id & 0xff);
+  for (const id of occupiedIds) revealed.add(id & 0xff);
   const fog = new Set();
   for (const id of candidateRoomIds) {
-    if (id === currentRoomId) continue;
-    if (!visited.has(id)) fog.add(id);
+    const rid = id & 0xff;
+    if (revealed.has(rid)) continue;
+    fog.add(rid);
   }
   return fog;
 }

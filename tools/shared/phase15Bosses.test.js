@@ -15,7 +15,12 @@ import {
   spawnDungeonEnemies,
   trySwordHitEnemy,
 } from './enemies.js';
-import { applyQuest2LevelInfo, Q2_LEVEL_INFO_REPLACEMENTS } from './quest2LevelInfo.js';
+import {
+  applyQuest2LevelInfo,
+  Q2_LEVEL_INFO_REPLACEMENTS,
+  q2CaveIdForLevel,
+  q2LevelNumberForCave,
+} from './quest2LevelInfo.js';
 import { SWORD_PHASE, createSwordState } from './sword.js';
 import { SWORD } from './inventory.js';
 
@@ -140,6 +145,18 @@ test('Q2 LevelInfo L1 start/boss/item from replacements', () => {
   assert.equal(level.startRoom, 0x77);
   assert.equal(level.bossRoom, 0x07);
   assert.equal(level.triforceRoom, 0x08);
+  assert.equal(level.levelNumber, 1);
   assert.deepEqual(level.cellarRooms, [0x28]);
   assert.equal(level.itemPositions[3].packed, 0xb7);
+});
+
+test('Q2 LevelInfo swaps displayed levels 2 and 3', () => {
+  const expected = [1, 3, 2, 5, 4, 6, 8, 7, 9];
+  for (let cave = 1; cave <= 9; cave += 1) {
+    assert.equal(q2LevelNumberForCave(cave), expected[cave - 1]);
+    assert.equal(q2CaveIdForLevel(expected[cave - 1]), cave);
+  }
+  const level = { quest: 2, level: 2, cellarRooms: [], itemPositions: [], drawnMap: [] };
+  applyQuest2LevelInfo(level);
+  assert.equal(level.levelNumber, 3);
 });

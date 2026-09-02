@@ -375,7 +375,7 @@ function walkerFrameIndex(dir, anim) {
  * @param {number} objType
  * @param {number} dir
  * @param {number} anim
- * @param {{ leeverPhase?: number, timer?: number }} [meta]
+ * @param {{ leeverPhase?: number, timer?: number, flyerDistTraveled?: number }} [meta]
  */
 export function enemyFrameIndex(objType, dir, anim, meta = {}) {
   const tiles = FRAME_TILES[objType];
@@ -448,6 +448,18 @@ export function enemyFrameIndex(objType, dir, anim, meta = {}) {
   // DrawFairy: every 4 frames switch $50 ↔ $52.
   if (objType === T.POND_FAIRY) {
     return (anim >> 2) & 1;
+  }
+
+  // UpdatePeahat: Flyer_ObjDistTraveled bit 0. Resting flyers sit still.
+  if (objType === T.PEAHAT && meta.flyerDistTraveled != null) {
+    return meta.flyerDistTraveled & 1;
+  }
+  // UpdateKeese: dist bit 1 (wings at half the peahat rate).
+  if (
+    (objType === T.BLUE_KEESE || objType === T.RED_KEESE || objType === T.BLACK_KEESE)
+    && meta.flyerDistTraveled != null
+  ) {
+    return (meta.flyerDistTraveled & 2) >> 1;
   }
 
   return walkBit(anim) % tiles.length;

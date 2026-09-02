@@ -8,6 +8,18 @@ const PLAY_COLS = 32;
 /** UW stairs primary tiles (and consecutive WriteSquareUW siblings). */
 export const STAIRS_TILES = Object.freeze(new Set([0x70, 0x71, 0x72, 0x73]));
 
+/** Cellar ladder / stairs (SecondarySquaresOW square $01). */
+export const CELLAR_STAIRS_TILE = 0x6f;
+/** Cellar floor (square $00 mouths and square $0C bottom lip). */
+export const CELLAR_FLOOR_TILE = 0x24;
+/**
+ * NES-aligned Y on the cellar floor strip (square $0C bottom, ObjY ≡ $D).
+ * Hotspot Y+$0B samples the $24 row; one cell up is blank $F3 void.
+ */
+export const CELLAR_FLOOR_Y = 0xbd;
+/** Inner treasure-alcove stairs on layout $3F (square col 11). */
+export const CELLAR_INNER_STAIRS_X = 0xb0;
+
 /**
  * RoomLayoutUWCellar0 / 1 + ColumnHeapUWCellar (Z_05 @ $A3B4 / PRG $163B4).
  * Descriptors use table 0 only (PatchColumnDirectoryForCellar).
@@ -108,6 +120,12 @@ export function decodeCellarSquares(layoutId) {
 /**
  * LayoutRoomOrCaveOW for UW cellars — full 22×32 play area (no FillWalls/doors).
  * Browser-safe (no Node Buffer).
+ *
+ * Secondary square $02 is CHR $F3 (blank). Mode 9 still uses UW
+ * `ObjectFirstUnwalkableTile` `$78`, so `$F3` is solid void — the black
+ * above the brick and the black above the floor lip. Link only walks
+ * ladder `$6F` and floor `$24`, matching NES.
+ *
  * @param {number} layoutId $3E tunnel / $3F treasure
  * @returns {number[][]}
  */
@@ -123,9 +141,7 @@ export function composeCellarRoomTiles(layoutId) {
       const tiles = squareToTiles(squares[sr][sc], primary, secondary, secrets);
       const col = sc * 2;
       const row = sr * 2;
-      // Secondary square $02 is CHR $F3 (blank). Visually black floor, but UW
-      // collision treats ≥$78 as solid — normalize to walkable floor $24.
-      const [ul, ll, ur, lr] = tiles.map(cellarFloorTile);
+      const [ul, ll, ur, lr] = tiles.map((t) => t & 0xff);
       grid[row][col] = ul;
       grid[row + 1][col] = ll;
       grid[row][col + 1] = ur;
@@ -133,11 +149,6 @@ export function composeCellarRoomTiles(layoutId) {
     }
   }
   return grid;
-}
-
-/** @param {number} tile */
-function cellarFloorTile(tile) {
-  return (tile & 0xff) === 0xf3 ? 0x24 : tile & 0xff;
 }
 
 /**

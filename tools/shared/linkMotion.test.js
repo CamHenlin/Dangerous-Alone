@@ -11,6 +11,7 @@ import {
   canLinkMove,
   createLinkState,
   ejectLinkFromSolid,
+  isLinkSpriteBlocked,
   isLinkStandingSolid,
   linkWalkSprite,
   onGrid,
@@ -82,8 +83,15 @@ test('pickSingleDir prefers up then down then left then right', () => {
   assert.equal(pickSingleDir(0), 0);
 });
 
-test('spawn point is on NES walk grid', () => {
-  assert.equal(onGrid(0x78, 0x8d), true);
+test('isLinkSpriteBlocked checks the right 8px only in the underworld', () => {
+  const grid = openGrid();
+  // y=$8d hotspot is play row 11; x=$80 is column 16.
+  grid[11][16] = 0xf4;
+  const uw = { firstUnwalkable: 0x78, walkableRemap: [] };
+  assert.equal(isLinkStandingSolid(grid, 0x78, 0x8d, uw), false);
+  assert.equal(isLinkSpriteBlocked(grid, 0x78, 0x8d, uw), true);
+  assert.equal(isLinkSpriteBlocked(grid, 0x70, 0x8d, uw), false);
+  assert.equal(isLinkSpriteBlocked(grid, 0x78, 0x8d, {}), false, 'OW must not use the extra foot');
 });
 
 test('four QSpeed steps average 1.5 px/frame on open ground', () => {

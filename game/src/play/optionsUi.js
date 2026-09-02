@@ -1,4 +1,12 @@
-import { bindsForPlayer, codeLabel, saveOptions } from '@shared/options.js';
+import { bindsForPlayer, codeLabel, padBindsForPlayer, padsForPlayer, saveOptions } from '@shared/options.js';
+import { activePadSources, formatGamepadSlots, formatPadProbe, hidDpadCodesFromDirs, isPadCode, newPadSource } from '@shared/padBinds.js';
+import {
+  grantHidDpad,
+  hidDpadDebugLine,
+  hidDpadDirs,
+  hidDpadListening,
+  padHasStrippedDpad,
+} from '@shared/hidDpad.js';
 
 const ACTIONS = [
   { id: 'up', label: 'Up' },
@@ -8,7 +16,7 @@ const ACTIONS = [
   { id: 'a', label: 'A (sword)' },
   { id: 'b', label: 'B (item)' },
   { id: 'start', label: 'Start (inv)' },
-  { id: 'select', label: 'Select (continue menu)' },
+  { id: 'select', label: 'Select (cycle item / continue)' },
 ];
 
 /**
@@ -33,9 +41,16 @@ export function createOptionsUi(api) {
   /** @type {string | null} */
   let rebindAction = null;
   let selectedPlayer = 0;
+  let loopRaf = 0;
+  /** @type {Set<string> | null} */
+  let rebindBaseline = null;
 
   function currentBinds(opts) {
     return bindsForPlayer(opts, selectedPlayer);
+  }
+
+  function currentPadBinds(opts) {
+    return padBindsForPlayer(opts, selectedPlayer);
   }
 
   function padSelectValue(opts) {
@@ -43,6 +58,12 @@ export function createOptionsUi(api) {
     if (slot === -1) return 'none';
     if (slot == null) return 'all';
     return String(slot);
+  }
+
+  function bindLabels(opts, actionId) {
+    const keys = (currentBinds(opts)[actionId] ?? []).map(codeLabel);
+    const pads = (currentPadBinds(opts)[actionId] ?? []).map(codeLabel);
+    return [...keys, ...pads].join(' / ');
   }
 
   function render() {
@@ -66,17 +87,107 @@ export function createOptionsUi(api) {
     const bindsBox = el.querySelector('#opt-binds');
     if (bindsBox) {
       bindsBox.innerHTML = '';
-      const binds = currentBinds(opts);
       for (const action of ACTIONS) {
         const row = document.createElement('div');
         row.className = 'opt-bind-row';
-        const labels = (binds[action.id] ?? []).map(codeLabel).join(' / ');
+        const labels = bindLabels(opts, action.id);
         row.innerHTML = `<span>${action.label}</span><button type="button" data-action="${action.id}">${
-          rebindAction === action.id ? 'Press key…' : labels
+          rebindAction === action.id ? 'Press key or pad…' : labels
         }</button>`;
         bindsBox.appendChild(row);
       }
     }
+  }
+
+  function stopLoop() {
+    if (loopRaf) cancelAnimationFrame(loopRaf);
+    loopRaf = 0;
+    rebindBaseline = null;
+  }
+
+  function updateProbe() {
+    const probe = el.querySelector('#opt-pad-probe');
+    const hidBtn = el.querySelector('#opt-hid-dpad');
+    const hidHint = el.querySelector('#opt-hid-hint');
+    if (!probe) return;
+    const allPads = navigator.getGamepads?.() ?? [];
+    const pads = padsToWatch(api.getOptions());
+    const parts = [
+      pads.length ? pads.map((p) => formatPadProbe(p)).join('\n\n') : formatPadProbe(null),
+      formatGamepadSlots(allPads),
+    ];
+    const hidLine = hidDpadDebugLine();
+    if (hidLine) parts.push(hidLine);
+    probe.textContent = parts.join('\n');
+    const listed = Array.from(allPads);
+    const stripped = listed.some((p) => padHasStrippedDpad(p));
+    const dragon = listed.some((p) => /Vendor:\s*0079/i.test(p?.id ?? ''));
+    const canHid = Boolean(globalThis.navigator?.hid);
+    if (hidBtn instanceof HTMLElement) hidBtn.hidden = !(canHid && (dragon || stripped));
+    if (hidHint instanceof HTMLElement && hidHint.dataset.locked !== '1') {
+      hidHint.hidden = !(canHid && (dragon || stripped) && !hidDpadListening());
+    }
+  }
+
+  function startLoop() {
+    if (loopRaf) return;
+    const tick = () => {
+      if (el.hidden) {
+        loopRaf = 0;
+        return;
+      }
+      updateProbe();
+      if (rebindAction) {
+        const pads = padsToWatch(api.getOptions());
+        const hidCodes = hidDpadCodesFromDirs(hidDpadDirs());
+        if (rebindBaseline == null) {
+          rebindBaseline = new Set([...pads.flatMap((p) => activePadSources(p)), ...hidCodes]);
+        } else {
+          const source = newPadSource(pads, rebindBaseline, undefined, hidCodes);
+          if (source) {
+            applySource(rebindAction, source);
+            rebindAction = null;
+            rebindBaseline = null;
+            render();
+          }
+        }
+      }
+      loopRaf = requestAnimationFrame(tick);
+    };
+    loopRaf = requestAnimationFrame(tick);
+  }
+
+  function padsToWatch(opts) {
+    const list = navigator.getGamepads?.() ?? [];
+    const slot = opts.padSlots?.[selectedPlayer];
+    if (typeof slot === 'number' && slot >= 0) {
+      const claimed = list[slot];
+      if (claimed) return [claimed];
+    }
+    return padsForPlayer(list);
+  }
+
+  function applySource(action, source) {
+    const opts = api.getOptions();
+    if (isPadCode(source)) {
+      const playerPadBinds = (opts.playerPadBinds ?? []).map((b) => ({ ...b }));
+      while (playerPadBinds.length < 4) playerPadBinds.push({});
+      const next = { ...(playerPadBinds[selectedPlayer] ?? {}) };
+      next[action] = [source];
+      playerPadBinds[selectedPlayer] = next;
+      api.setOptions(saveOptions({ ...opts, playerPadBinds }));
+      return;
+    }
+    const playerBinds = (opts.playerBinds ?? []).map((b) => ({ ...b }));
+    while (playerBinds.length < 4) playerBinds.push({});
+    const next = { ...(playerBinds[selectedPlayer] ?? {}) };
+    next[action] = [source];
+    playerBinds[selectedPlayer] = next;
+    const patch = { ...opts, playerBinds };
+    if (selectedPlayer === 0) {
+      patch.binds = { ...opts.binds, [action]: [source] };
+    }
+    api.setOptions(saveOptions(patch));
   }
 
   el.querySelector('#opt-scale')?.addEventListener('change', (e) => {
@@ -96,6 +207,7 @@ export function createOptionsUi(api) {
     const t = /** @type {HTMLSelectElement} */ (e.target);
     selectedPlayer = Number(t.value) || 0;
     rebindAction = null;
+    rebindBaseline = null;
     render();
   });
 
@@ -123,8 +235,28 @@ export function createOptionsUi(api) {
     }
   });
 
+  el.querySelector('#opt-hid-dpad')?.addEventListener('click', async () => {
+    const status = el.querySelector('#opt-hid-status');
+    const hint = el.querySelector('#opt-hid-hint');
+    if (status instanceof HTMLElement) {
+      status.hidden = false;
+      status.textContent = 'Look at the top of the Chrome window and pick the USB Gamepad.';
+    }
+    const result = await grantHidDpad();
+    if (status instanceof HTMLElement) {
+      status.hidden = false;
+      status.textContent = result.reason;
+    }
+    if (hint instanceof HTMLElement) {
+      hint.dataset.locked = '1';
+      hint.hidden = result.ok;
+    }
+    updateProbe();
+  });
+
   el.querySelector('#opt-close')?.addEventListener('click', () => {
     rebindAction = null;
+    stopLoop();
     el.hidden = true;
     api.onClose?.();
   });
@@ -133,6 +265,7 @@ export function createOptionsUi(api) {
     const btn = /** @type {HTMLElement} */ (e.target).closest('button[data-action]');
     if (!btn) return;
     rebindAction = btn.getAttribute('data-action');
+    rebindBaseline = null;
     render();
   });
 
@@ -142,21 +275,13 @@ export function createOptionsUi(api) {
     e.stopPropagation();
     if (e.code === 'Escape') {
       rebindAction = null;
+      rebindBaseline = null;
       render();
       return;
     }
-    const opts = api.getOptions();
-    const playerBinds = (opts.playerBinds ?? []).map((b) => ({ ...b }));
-    while (playerBinds.length < 4) playerBinds.push({});
-    const next = { ...(playerBinds[selectedPlayer] ?? {}) };
-    next[rebindAction] = [e.code];
-    playerBinds[selectedPlayer] = next;
-    const patch = { ...opts, playerBinds };
-    if (selectedPlayer === 0) {
-      patch.binds = { ...opts.binds, [rebindAction]: [e.code] };
-    }
-    api.setOptions(saveOptions(patch));
+    applySource(rebindAction, e.code);
     rebindAction = null;
+    rebindBaseline = null;
     render();
   };
   window.addEventListener('keydown', onKey, true);
@@ -165,11 +290,14 @@ export function createOptionsUi(api) {
     open() {
       el.hidden = false;
       rebindAction = null;
+      rebindBaseline = null;
       render();
+      startLoop();
     },
     close() {
       el.hidden = true;
       rebindAction = null;
+      stopLoop();
     },
     get visible() {
       return !el.hidden;

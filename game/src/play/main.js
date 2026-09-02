@@ -13,11 +13,14 @@ import {
   UW_ROOM_BOUNDS,
   createLinkState,
   ejectLinkFromSolid,
+  isLinkStandingSolid,
   oppositeDir,
   overworldLinkQSpeed,
   pickSingleDir,
+  snapLinkToWalkGrid,
   stepLink,
   stepShove,
+  onWalkGrid,
   writeLinkMotion,
 } from '@shared/linkMotion.js';
 import {
@@ -38,7 +41,7 @@ import {
   createCamera,
   detectRoomCross,
   foggedRooms,
-  canClaimAnchorCross,
+  mayOwnOwAnchor,
   inAnchorPlayArea,
   localToWorld,
   occupyingRoom,
@@ -50,10 +53,11 @@ import {
   rectFullyOffEveryCamera,
   roomPlayOrigin,
   roomsForCameras,
+  sortRoomsNearestFirst,
   solvePlayCamera,
   worldToLocal,
 } from '@shared/continuousCamera.js';
-import { canvasCssScale } from '@shared/displayScale.js';
+import { canvasCssScale, visibleAvail } from '@shared/displayScale.js';
 import { QUAD_H, QUAD_W, emptyQuadrants, frameSize, quadrantOrigin } from '@shared/splitLayout.js';
 import {
   getLinkCollidingTileMulti,
@@ -73,11 +77,13 @@ import {
   roomHasLivingEnemies,
   roomsNeedingSpawn,
   shiftPositions,
+  streamMissingVisibleRooms,
   tagEnemyHomeRoom,
 } from '@shared/roomStream.js';
 import { enemyMotionBounds, fairyFlightBounds, shotMotionBounds } from '@shared/enemyBounds.js';
 import {
   clearClockFreeze,
+  clockCoversOccupancy,
   clockFreezeActive,
   enemyIsClockFrozen,
   shouldClearClock,
@@ -92,6 +98,8 @@ import {
 } from '@shared/enemyViewActivation.js';
 import { createAudioBus } from '@shared/audioBus.js';
 import { createRoomStore } from '@shared/roomStore.js';
+import { yieldToPaint } from '@shared/idleYield.js';
+import { copyRgbaPixels } from '@shared/rgbaImage.js';
 import { tryTakeRupeeStash } from '@shared/rupeeStash.js';
 import {
   beginScreenScroll,
@@ -100,6 +108,7 @@ import {
   stepScreenScroll,
 } from '@shared/screenScroll.js';
 import { createStreamView } from './streamView.js';
+import { peekPackRgba } from '../assetHost.js';
 import { doorFaceIndex, openSidesForRoom } from '@shared/dungeonRoomLayout.js';
 import {
   createShutterAnim,
@@ -160,6 +169,7 @@ import {
   clearShopVisitTaken,
   describeCave,
   getCave,
+  ITEM,
   moneyGameResultLabels,
   moneyGameStakeLabels,
   rollMoneyGameAmounts,
@@ -190,6 +200,7 @@ import {
 } from '@shared/owSecrets.js';
 import {
   contrastingTreePaletteRow,
+  owScreenNesScale,
   paletteRowForSquare,
   recolorBurnTreeSquareRgba,
 } from '@shared/overworld.js';
@@ -252,6 +263,7 @@ import {
   applyQuest2AttrsToPack,
   quest2NeedsLayoutOverlay,
 } from '@shared/quest2OwPatch.js';
+import { q2CaveIdForLevel } from '@shared/quest2LevelInfo.js';
 import {
   DROP_DAMAGE_BOMB,
   DROP_ITEM,
@@ -284,19 +296,25 @@ import {
 } from '@shared/projectiles.js';
 import {
   createRaftRide,
+  planRaftDockRideFromAnchor,
   planRaftNorthApproachFromAnchor,
+  RAFT_STATE,
   snapRaftNorthEntry,
   stepRaftRide,
   tryStartRaftRide,
 } from '@shared/raft.js';
 import {
-  bossNoiseSfx,
   bossRoarSfx,
   isBossType,
   isGanon,
   isGleeok,
   isZelda,
 } from '@shared/bosses.js';
+import {
+  dungeonBossRoomCleared,
+  bossNoiseSfxForVisit,
+  stepBossNoise,
+} from '@shared/bossNoise.js';
 import { sfxNamesForWeaponHit } from '@shared/combatSfx.js';
 import {
   BOOM_PHASE,
@@ -314,14 +332,18 @@ import {
   restoreArmosReveals,
 } from '@shared/armosSecrets.js';
 import {
+  hydrateLadder,
   ladderAllowsStanding,
   overworldTileOptsWithLadder,
+  snapshotLadder,
   stepLadderObject,
   tryPlaceLadder,
 } from '@shared/ladder.js';
 import {
   dismissMoneyOrLifePerson,
+  isMoneyOrLifePerson,
   isPersonType,
+  moneyOrLifePersonAlive,
   moneyOrLifeReady,
   tryPayMoneyOrLife,
 } from '@shared/moneyOrLife.js';
@@ -393,7 +415,7 @@ import {
   tryUnlockFacingKeyDoor,
 } from '@shared/dungeonPlay.js';
 import { OPEN_UW_GRID, detectOwnedUwDoorCross, uwDoorMotionMode } from '@shared/uwDoorWalk.js';
-import { finalizeLevelMeta, roomToTileGrid } from '@shared/dungeons.js';
+import { finalizeLevelMeta, displayedDungeonLevel, roomToTileGrid } from '@shared/dungeons.js';
 import {
   activePlayers,
   createInventoryView,
@@ -409,7 +431,9 @@ import {
   respawnAlly,
   respawnBeside,
   sameRespawnArea,
+  snapCoopWalkGrid,
   shouldFollowAllyWorld,
+  shouldRestartAtOverworldStart,
   shouldRestartInOwnDungeon,
   standUpAfterDeath,
   targetableLinks,
@@ -436,7 +460,6 @@ import { createStoryPager, storyReaders } from '@shared/storyPager.js';
 import { applyPartyCaps, shareHeartContainer } from '@shared/coopEconomy.js';
 import { BOMB_LINK_DAMAGE, bombHurtsHero } from '@shared/coopCombat.js';
 import { applyPartySnapshot, snapshotParty } from '@shared/partySave.js';
-import { sharedBarOrigin } from '@shared/sharedBar.js';
 import {
   caveWorldId,
   cellarWorldId,
@@ -539,8 +562,10 @@ import {
   bindsForPlayer,
   codeLabel,
   loadOptions,
+  padBindsForPlayer,
   saveOptions,
 } from '@shared/options.js';
+import { restoreHidDpad } from '@shared/hidDpad.js';
 import { createInput } from './input.js';
 import { createLinkFrames } from './linkSprite.js';
 import { createDeathUi } from './deathUi.js';
@@ -553,7 +578,6 @@ import { createItemSprites } from './itemSprites.js';
 import { createEnemySprites } from './enemySprites.js';
 import { enemySpriteOffset } from '@shared/bossSpriteLayouts.js';
 import { createHud } from './hud.js';
-import { createSharedBar } from './sharedBar.js';
 import { createInventoryUi } from './inventoryUi.js';
 import { createCaveScene } from './caveScene.js';
 import { createTextBox } from './textBox.js';
@@ -575,10 +599,12 @@ import {
   CAVE_ENTER_SPAWN,
   CAVE_WARE_XS,
   CAVE_WARE_Y,
+  caveNpcInteractKey,
   caveWareSlots,
   checkCaveExit,
   clearCaveTransitState,
   createCaveTileGrid,
+  nearCaveNpc,
   roadStairUnderLink,
   wareUnderLink,
 } from '@shared/caveRoom.js';
@@ -602,7 +628,7 @@ function setStatus(text) {
 async function fetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`${url}: ${res.status} — run: npm run extract -- overworld`);
+    throw new Error(`${url}: ${res.status} — drop a Zelda .nes ROM onto the window`);
   }
   return res.json();
 }
@@ -626,12 +652,14 @@ function bgUrl(mapIndex, quest = 1) {
 }
 
 async function main() {
+  const { bootRomAssets } = await import('../romGate.js');
+  await bootRomAssets({ onStatus: setStatus });
   const worldIndex = await fetchJson('/play/world_index.json');
   const urlParams = new URLSearchParams(window.location.search);
   /**
    * How many heroes to start with, until players can join from the title.
-   * Known before the renderer so a two-player boot is 512×544 from the first
-   * pixel, not a 256×240 canvas that later stretches.
+   * Known before the renderer so a two-player boot is the co-op frame from
+   * the first pixel, not a 256×240 canvas that later stretches.
    */
   const maxPlayers = DEFAULT_PLAYER_BINDS.length;
   let playerCount = Math.min(
@@ -643,6 +671,7 @@ async function main() {
   INTERNAL_H = framePx.height;
 
   let options = loadOptions();
+  restoreHidDpad();
   // Must happen before the renderer is created and before any sheet URL is
   // built: the whole graphics pipeline reads the active scale rather than
   // being passed it, and the renderer resolution is fixed at init.
@@ -677,8 +706,14 @@ async function main() {
 
   function resizeCanvas() {
     const pad = 32;
-    const availW = stageEl.clientWidth - pad;
-    const availH = stageEl.clientHeight - pad;
+    // Visible box, not clientHeight: a co-op canvas can stretch the stage
+    // past the window, and sizing 256×240 from that leftover height clips
+    // the ending.
+    const { availW, availH } = visibleAvail(
+      stageEl.getBoundingClientRect(),
+      { width: window.innerWidth, height: window.innerHeight },
+      pad,
+    );
     const scale = canvasCssScale({
       availW,
       availH,
@@ -687,8 +722,9 @@ async function main() {
       option: options.scale,
     });
     // Always win over the stylesheet. A 256×240 max-width used to squash the
-    // 512×544 co-op frame once the fitted width exceeded that NES-aspect cap.
+    // co-op frame once the fitted width exceeded that NES-aspect cap.
     app.canvas.style.maxWidth = 'none';
+    app.canvas.style.maxHeight = 'none';
     app.canvas.style.width = `${INTERNAL_W * scale}px`;
     app.canvas.style.height = `${INTERNAL_H * scale}px`;
   }
@@ -786,52 +822,13 @@ async function main() {
   }
 
   /**
-   * Swap OW ↔ dungeon sprite palettes. Must detach every live sprite that
-   * holds a cached enemy/item texture first — `setPaletteSet` destroys those
-   * textures, and Pixi blacks the GL context if anything still samples them
-   * (dungeon exit → overworld was the common trigger; a cave still open
-   * while someone walks into a labyrinth is the co-op one).
+   * Bind sprite palettes to the place in focus. Cache keys include the
+   * LevelInfo set, so overworld, cave, and each labyrinth keep their own
+   * textures — like dungeon CHR banks, split-screen captures one palette
+   * then the other without destroying the first (or recolouring a friend
+   * still standing on the beach).
    */
   function applyEnemyPaletteForMode() {
-    clearEnemies();
-    clearFxLayer();
-    bombs = [];
-    flames = [];
-    swordSprite.visible = false;
-    swordSprite.texture = Texture.EMPTY;
-    // Link frames share the same SP0 row; drop before destroy.
-    linkSprite.texture = Texture.EMPTY;
-    if (liftSprite) liftSprite.texture = Texture.EMPTY;
-    for (const p of players) {
-      if (p.gfx?.link) p.gfx.link.texture = Texture.EMPTY;
-      if (p.gfx?.sword) p.gfx.sword.texture = Texture.EMPTY;
-    }
-    for (const spr of roomItemSprites.values()) spr.texture = Texture.EMPTY;
-    for (const id of worlds.ids()) {
-      const w = worlds.get(id);
-      if (!w) continue;
-      for (const map of [w.enemyGfx, w.projGfx, w.dropGfx]) {
-        if (!map) continue;
-        for (const g of map.values()) {
-          if (g?.texture) g.texture = Texture.EMPTY;
-        }
-      }
-      for (const g of w.pondHeartGfx ?? []) {
-        if (g?.texture) g.texture = Texture.EMPTY;
-      }
-      for (const g of w.personWareGfx?.values() ?? []) {
-        if (g?.texture) g.texture = Texture.EMPTY;
-        if (g?.children) {
-          for (const child of g.children) {
-            if (child?.texture) child.texture = Texture.EMPTY;
-          }
-        }
-      }
-    }
-    for (const scene of caveScenes.values()) scene.releaseCachedTextures();
-    hud.releaseItemSprites();
-    closeAllMenus();
-
     if (mode === 'dungeon' && dungeon?.level) {
       enemySprites.setDungeonLevel(dungeon.level);
       const set = paletteById.get(`level_${dungeon.level}`) ?? owPaletteSet;
@@ -844,7 +841,6 @@ async function main() {
       items.setPaletteSet(owPaletteSet);
       frames.setPaletteSet(owPaletteSet);
     }
-    for (const scene of caveScenes.values()) scene.rebuildCachedTextures();
   }
 
   function floorFrame() {
@@ -862,7 +858,7 @@ async function main() {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+    ctx.putImageData(new ImageData(copyRgbaPixels(width, height, rgba).data, width, height), 0, 0);
     return markScaled(Texture.from(canvas));
   }
 
@@ -1333,10 +1329,6 @@ async function main() {
     commonBg: sheetTextures.commonBg,
     misc: sheetTextures.misc,
   });
-  const sharedBar = createSharedBar({
-    commonBg: sheetTextures.commonBg,
-    misc: sheetTextures.misc,
-  });
 
   const invUis = Array.from({ length: maxPlayers }, () =>
     createInventoryUi({
@@ -1684,7 +1676,7 @@ async function main() {
       secretLatchRooms.has(rid)
       || Boolean(dungeon?.clearedRooms?.has(rid))
       || roomAllDead(enemiesInRoom(enemies, room.roomId));
-    return `L${dungeon?.level ?? '?'} $${room.roomId.toString(16)}  foes=${foes}  clear=${cleared ? 1 : 0}${owExit}`;
+    return `L${displayedDungeonLevel(dungeon?.levelData) || dungeon?.level || '?'} $${room.roomId.toString(16)}  foes=${foes}  clear=${cleared ? 1 : 0}${owExit}`;
   }
 
   function refreshStubLabel() {
@@ -1708,8 +1700,6 @@ async function main() {
    * `createPlayer()` below takes this same object (Phase 23).
    */
   let cam = createCamera();
-  /** Monotonic token so overlapping stream fetches ignore stale results. */
-  let streamFetchGen = 0;
 
   /**
    * Weapon shots use Anim_ItemFrameTiles + facing; rocks/fireballs stay on enemy CHR.
@@ -1721,7 +1711,7 @@ async function main() {
     if (p.kind === PROJ.ARROW || p.kind === PROJ.SILVER_ARROW) {
       return items.arrowTexture(p.dir);
     }
-    return enemySprites.textureForProjectile(p, mode);
+    return enemySprites.textureForProjectile(p, mode, dungeon?.level);
   }
 
   const caveSceneDeps = {
@@ -1786,8 +1776,9 @@ async function main() {
   );
   for (const box of textBoxes) world.addChild(box.root);
   const textBox = textBoxes[0];
-  // Co-op story beats (`levelEntry`, `briefing`) live on a second box so a
-  // cave conversation can keep crawling while someone else reads the plot.
+  // Co-op labyrinth-entry lives on a second box so a cave conversation can
+  // keep crawling while someone else reads the plot. The post-shard briefing
+  // is private to the finder and uses that seat's box.
   const storyBox = createTextBox({
     commonBg: sheetTextures.commonBg,
     playSfx: (name) => fx.playSfx(name),
@@ -1868,10 +1859,14 @@ async function main() {
   let inv = createInventoryView(sharedInv);
   /**
    * Which place the shared `inv.clock` is actually freezing. Tags live on
-   * that world's foes; a friend in a cellar must not expire them.
+   * that world's foes; a friend in a cellar must not expire them. The room
+   * is the occupying cell at pickup — leftover OW has no scroll, so that
+   * cell is the NES room change.
    * @type {string | null}
    */
   let clockWorldId = null;
+  /** @type {number | null} */
+  let clockRoomId = null;
   const debugCollision = urlParams.get('debug') === '1' || urlParams.get('coll') === '1';
   const skipTitle =
     urlParams.get('skipTitle') === '1'
@@ -1888,6 +1883,7 @@ async function main() {
   const inputs = Array.from({ length: maxPlayers }, (_, i) =>
     createInput(bindsForPlayer(options, i), {
       padIndex: playerCount > 1 ? i : null,
+      padBinds: padBindsForPlayer(options, i),
     }),
   );
   /** Player one's device. The menus, the dialogue and the title read this. */
@@ -1974,6 +1970,7 @@ async function main() {
             halfHearts: p.inv?.halfHearts ?? 0,
             maxHalfHearts: p.inv?.maxHalfHearts ?? 0,
             paralyzed: p.inv?.paralyzed ?? 0,
+            invuln: p.inv?.invuln ?? 0,
             world: p.world?.id ?? null,
             swinging: isSwordActive(p.sword),
             swingKind: p.sword?.kind ?? 0,
@@ -2050,6 +2047,9 @@ async function main() {
             dir: b.dir,
           })),
           uwStreamRooms: [...uwStream.views.keys()],
+          uwFoggedRooms: [...uwStream.views.entries()]
+            .filter(([, entry]) => entry.fog?.visible)
+            .map(([id]) => id),
           owStreamRooms: [...owStream.views.keys()],
           story: storyPager
             ? {
@@ -2062,6 +2062,8 @@ async function main() {
           cinematic: playerCount > 1 && !splitLayer.visible,
           canvasW: INTERNAL_W,
           canvasH: INTERNAL_H,
+          cssW: app.canvas.clientWidth,
+          cssH: app.canvas.clientHeight,
           dark: heroSeesDark(hostPlayer(players) ?? players[0]),
           candleLit: Boolean(candleStateAt(hostPlayer(players) ?? players[0]).lit),
           raft: (() => {
@@ -2080,7 +2082,7 @@ async function main() {
               complete: Boolean(b.complete),
             })),
           deadMenu: deathUi.visible,
-          sharedBar: sharedBar.root.visible,
+          sharedBar: false,
           compactHud: playerCount > 1,
           hud: hud.probe(),
           joinPrompts: joinPrompts.length,
@@ -2221,7 +2223,14 @@ async function main() {
         }),
         marks: () => currentMapMarks(),
         say: (pages) => openTextBox(pages, { kind: 'debug' }),
-        briefing: (level) => openLevelBriefing(level),
+        briefing: (level, index) => {
+          const p =
+            index == null
+              ? focus.current
+              : players.find((q) => q.index === index && q.active);
+          if (!p) return false;
+          return focus.on(p, () => openLevelBriefing(level));
+        },
         /**
          * Jump to mode `$13`. Without an argument it plays from Zelda's line;
          * `ending('epilogue')` skips the ROM beats and opens on the first
@@ -2272,33 +2281,69 @@ async function main() {
           return out;
         },
         revealed: () => [...owSecretsRevealed],
-        /** Why Link is (or is not) allowed to move this frame. */
-        moveProbe: () => {
-          const grids = owRooms.gridMap();
-          const dirs = { up: DIR.UP, down: DIR.DOWN, left: DIR.LEFT, right: DIR.RIGHT };
-          /** @type {Record<string, unknown>} */
-          const can = {};
-          for (const [name, d] of Object.entries(dirs)) {
-            can[name] = getLinkCollidingTileMulti(grids, roomId, link.x, link.y, d, {});
-          }
+        /**
+         * Occupying-room secret lookup for a leftover flame / bomb. The
+         * stream anchor's pack is the wrong list when player two is on a
+         * neighbour beach.
+         */
+        owSecretProbe: (x, y) => {
+          const occ = occupyingRoom(roomId, x, y);
+          const occId = occ.roomId & 0xff;
+          const pack = owRooms.pack(occId);
           return {
-            gates: {
-              busy: heroIsBusy(),
-              screenBound: Boolean(screen) && (screen.mapIndex & 0xff) === (roomId & 0xff),
-              fairyHalt: pondFairyHalt,
-              whirlwindCarrying: Boolean(whirlwind?.carrying),
-              whirlwindAlive: Boolean(whirlwind?.alive),
-              swordActive: isSwordActive(sword),
-              shovePixels: inv.shovePixels,
-              itemLiftTimer: inv.itemLiftTimer ?? 0,
-              raftActive: currentRaft().active,
-              dead: inv.dead,
-              undergroundExitType: currentUndergroundExitType(),
-            },
-            link: { ...link },
-            standing: standingTileMulti(grids, roomId, link.x, link.y),
-            lookAhead: can,
+            anchor: roomId,
+            occId,
+            localX: occ.x,
+            localY: occ.y,
+            secrets: pack?.secrets ?? null,
+            hasGrid: Boolean(owRooms.tileGrid(occId)),
+            flames: flames
+              .filter((f) => f.alive)
+              .map((f) => ({ x: f.x, y: f.y, phase: f.phase, dir: f.dir })),
           };
+        },
+        /**
+         * Why Link is (or is not) allowed to move this frame. Without an
+         * argument it reads whoever holds the focus; co-op needs to ask about
+         * an ally without disturbing the party.
+         * @param {number} [index]
+         */
+        moveProbe: (index) => {
+          const read = () => {
+            const grids = owRooms.gridMap();
+            const dirs = { up: DIR.UP, down: DIR.DOWN, left: DIR.LEFT, right: DIR.RIGHT };
+            /** @type {Record<string, unknown>} */
+            const can = {};
+            for (const [name, d] of Object.entries(dirs)) {
+              can[name] = getLinkCollidingTileMulti(grids, roomId, link.x, link.y, d, {});
+            }
+            return {
+              gates: {
+                busy: heroIsBusy(),
+                screenBound: Boolean(screen) && (screen.mapIndex & 0xff) === (roomId & 0xff),
+                fairyHalt: pondFairyHalt,
+                whirlwindCarrying: Boolean(whirlwind?.carrying),
+                whirlwindAlive: Boolean(whirlwind?.alive),
+                swordActive: isSwordActive(sword),
+                shovePixels: inv.shovePixels,
+                itemLiftTimer: inv.itemLiftTimer ?? 0,
+                raftActive: currentRaft().active,
+                dead: inv.dead,
+                undergroundExitType: currentUndergroundExitType(),
+              },
+              anchorRoomId: roomId,
+              link: { ...link },
+              standing: standingTileMulti(grids, roomId, link.x, link.y),
+              lookAhead: can,
+            };
+          };
+          if (index == null) return read();
+          const p = players.find((q) => q.index === index && q.active);
+          if (!p) return null;
+          const held = focus.current;
+          const out = focus.on(p, read);
+          if (held) focus.to(held);
+          return out;
         },
         /** Warp tile / cave-entry answer under Link right now. */
         warpProbe: () => {
@@ -2383,6 +2428,11 @@ async function main() {
             max: p.inv.maxHalfHearts,
             hh: p.inv.halfHearts,
           }));
+        },
+        /** Patch the shared bag (playtests: drop the debug-kit stepladder). */
+        patchInv: (patch) => {
+          Object.assign(inv, patch);
+          return { ...inv };
         },
         poseHero: (index, x, y, dir, inRoom) => {
           const p = players.find((q) => q.index === index);
@@ -2617,6 +2667,8 @@ async function main() {
             hudMap: Boolean(p.view?.hudMap),
             hudCounters: Boolean(p.view?.hudCounters),
             hudMode: p.view?.hudMode ?? null,
+            enemyLevel: p.view?.enemyLevel ?? null,
+            spritePalette: p.view?.spritePalette ?? null,
             dialogueText: p.view?.dialogueText ?? '',
             dialogueKind: p.view?.dialogueKind ?? null,
             stubText: p.view?.stubText ?? '',
@@ -2628,8 +2680,9 @@ async function main() {
               ? focus.current
               : players.find((q) => q.index === index);
           if (!p) return [];
-          const list =
-            p.world === focus.current?.world ? enemies : (p.world?.enemies ?? []);
+          const live = p.world === focus.current?.world;
+          const list = live ? enemies : (p.world?.enemies ?? []);
+          const gfx = live ? enemyGfx : (p.world?.enemyGfx ?? null);
           return list
             .filter((e) => e.alive)
             .map((e) => ({
@@ -2638,6 +2691,12 @@ async function main() {
               y: e.y,
               home: e.homeRoomId ?? null,
               objType: e.objType,
+              sheet: enemySprites.sheetFor(
+                e.objType,
+                p.world?.mode ?? mode,
+                p.world?.dungeon?.level,
+              ),
+              spritePalette: gfx?.get(e.id)?.texture?.__zeldaPalette ?? null,
               clockFrozen: Boolean(e.clockFrozen),
             }));
         },
@@ -2839,7 +2898,10 @@ async function main() {
     const join = p2 ? `${codeLabel(p2)} / spare Start joins` : 'spare Start joins';
     help.textContent = `${move} move · ${b.a.map(codeLabel).join('/')} sword · ${b.b
       .map(codeLabel)
-      .join('/')} B-item · ${b.start.map(codeLabel).slice(0, 2).join('/')} inv · ${join} · M mute · ,/. volume`;
+      .join('/')} B-item · ${(b.select ?? []).map(codeLabel).slice(0, 2).join('/')} cycle item · ${b.start
+      .map(codeLabel)
+      .slice(0, 2)
+      .join('/')} inv · ${join} · M mute · ,/. volume`;
   }
 
   function refreshJoinHint() {
@@ -3080,7 +3142,19 @@ async function main() {
       inv.map = 0;
       inv.compass = 0;
     }
+    restoreSavedLadder(!healed ? pos.ladder : null);
+    ensureLinkNotInSolid();
     return healed;
+  }
+
+  /**
+   * Re-seat the one-tile stepladder after a file continue. Mid-gap saves used
+   * to come back with `ladderObj` cleared, so the `$5F` dock became a trap.
+   * @param {unknown} saved
+   */
+  function restoreSavedLadder(saved) {
+    ladderObj = hydrateLadder(saved);
+    syncLadderSprite();
   }
 
   /**
@@ -3109,12 +3183,86 @@ async function main() {
    */
   function applySavedPose(p, snap) {
     if (!p?.link) return;
-    if (snap.x != null) p.link.x = snap.x;
-    if (snap.y != null) p.link.y = snap.y;
+    let x = snap.x;
+    let y = snap.y;
+    // New files store occupying-local OW coords plus `owRoomId`. Convert
+    // into leftover space for whatever cell is the stream after load.
+    if (
+      snap.owRoomId != null
+      && (p.world?.mode ?? mode) === 'overworld'
+    ) {
+      const anchor = (p.world?.roomId ?? roomId) & 0xff;
+      const local = localInRoom(snap.owRoomId, anchor, snap.x ?? 0, snap.y ?? 0);
+      x = local.x;
+      y = local.y;
+    }
+    if (x != null) p.link.x = x;
+    if (y != null) p.link.y = y;
     if (snap.dir != null) p.link.dir = snap.dir;
     p.link.posFrac = 0;
     p.link.gridOffset = 0;
     p.link.moving = false;
+    if ((p.world?.mode ?? mode) === 'overworld' && !onWalkGrid(p.link.x, p.link.y)) {
+      snapLinkToWalkGrid(p.link);
+    }
+  }
+
+  /**
+   * Overworld party poses as occupying-local so a continue does not restore
+   * leftover `$5F` dock numbers against `$4F`'s tile grid.
+   * @param {readonly object[]} snaps
+   */
+  function localizeOwPartySnaps(snaps) {
+    return snaps.map((snap) => {
+      const p = players.find((q) => q.index === snap.index);
+      if (!p?.link || (p.world?.mode ?? '') !== 'overworld') return snap;
+      const anchor = (p.world?.roomId ?? roomId) & 0xff;
+      const occ = occupyingRoom(anchor, snap.x ?? p.link.x, snap.y ?? p.link.y);
+      return { ...snap, x: occ.x, y: occ.y, owRoomId: occ.roomId & 0xff };
+    });
+  }
+
+  function collectSaveState() {
+    snapshotAllDungeonProgress();
+    const host = hostPlayer(players) ?? players[0];
+    return focus.on(host, () => {
+      const owOcc = mode === 'overworld' ? occupyingRoom(roomId, link.x, link.y) : null;
+      const dx = owOcc ? owOcc.x - link.x : 0;
+      const dy = owOcc ? owOcc.y - link.y : 0;
+      const savedLadder = snapshotLadder(ladderObj);
+      if (savedLadder && (dx || dy)) {
+        savedLadder.x += dx;
+        savedLadder.y += dy;
+      }
+      return {
+        name: saveName,
+        deaths: deathCount,
+        inv,
+        mode,
+        roomId: owOcc ? owOcc.roomId : roomId,
+        x: owOcc ? owOcc.x : link.x,
+        y: owOcc ? owOcc.y : link.y,
+        dir: link.dir,
+        ladder: savedLadder,
+        caveReturn,
+        dungeon:
+          mode === 'dungeon' && dungeon
+            ? {
+                level: dungeon.level,
+                fromRoomId: dungeon.fromRoomId,
+                roomId: dungeon.room?.roomId ?? roomId,
+              }
+            : null,
+        owSecretsRevealed,
+        caveTaken,
+        owItemsTaken,
+        hintMarks,
+        toldStory,
+        dungeonProgress,
+        party: localizeOwPartySnaps(snapshotParty(players)),
+        questCompleted,
+      };
+    });
   }
 
   /**
@@ -3168,40 +3316,6 @@ async function main() {
     }
   }
 
-  function collectSaveState() {
-    snapshotAllDungeonProgress();
-    const host = hostPlayer(players) ?? players[0];
-    return focus.on(host, () => {
-      return {
-        name: saveName,
-        deaths: deathCount,
-        inv,
-        mode,
-        roomId,
-        x: link.x,
-        y: link.y,
-        dir: link.dir,
-        caveReturn,
-        dungeon:
-          mode === 'dungeon' && dungeon
-            ? {
-                level: dungeon.level,
-                fromRoomId: dungeon.fromRoomId,
-                roomId: dungeon.room?.roomId ?? roomId,
-              }
-            : null,
-        owSecretsRevealed,
-        caveTaken,
-        owItemsTaken,
-        hintMarks,
-        toldStory,
-        dungeonProgress,
-        party: snapshotParty(players),
-        questCompleted,
-      };
-    });
-  }
-
   function persistSave(reason = '') {
     if (activeSlot == null || !playing) return;
     // Mode $13 has already written `questCompleted`. Keep that snapshot —
@@ -3220,6 +3334,7 @@ async function main() {
     options = next;
     for (let i = 0; i < inputs.length; i += 1) {
       inputs[i].setBinds(bindsForPlayer(options, i));
+      inputs[i].setPadBinds(padBindsForPlayer(options, i));
     }
     syncPadAssignment();
     applyDisplayOptions();
@@ -3379,7 +3494,6 @@ async function main() {
    */
   const splitLayer = new Container();
   app.stage.addChildAt(splitLayer, 0);
-  app.stage.addChild(sharedBar.root);
 
   function attachPlayerView(p) {
     if (p.view) return p.view;
@@ -3441,6 +3555,20 @@ async function main() {
     return root;
   }
 
+  /** Match the GL buffer and the CSS picture to a new NES-pixel size. */
+  function applyFrameSize(width, height) {
+    INTERNAL_W = width;
+    INTERNAL_H = height;
+    app.renderer.resize(INTERNAL_W, INTERNAL_H);
+    resizeCanvas();
+    // The stage may still be the old co-op height for this frame. Refit
+    // after layout so the 256×240 picture uses the visible viewport.
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      app.render();
+    });
+  }
+
   /**
    * Drop split-screen for something that was authored against 256×240 —
    * the ending, the continue menu. The party is still seated; the picture
@@ -3451,13 +3579,7 @@ async function main() {
   function presentCinematic() {
     closeDialogue();
     splitLayer.visible = false;
-    sharedBar.show(false);
-    if (INTERNAL_W !== QUAD_W || INTERNAL_H !== QUAD_H) {
-      INTERNAL_W = QUAD_W;
-      INTERNAL_H = QUAD_H;
-      app.renderer.resize(INTERNAL_W, INTERNAL_H);
-      resizeCanvas();
-    }
+    applyFrameSize(QUAD_W, QUAD_H);
     if (frame.parent !== app.stage) app.stage.addChildAt(frame, 0);
   }
 
@@ -3472,22 +3594,11 @@ async function main() {
     const n = activePlayers(players).length;
     playerCount = n;
     const px = frameSize(n);
-    INTERNAL_W = px.width;
-    INTERNAL_H = px.height;
-    app.renderer.resize(INTERNAL_W, INTERNAL_H);
-    resizeCanvas();
+    applyFrameSize(px.width, px.height);
     for (const p of players) detachPlayerView(p);
     clearJoinPrompts();
     splitLayer.visible = n > 1;
     applyPartyCaps(sharedInv, n);
-    const barAt = sharedBarOrigin(n);
-    if (barAt) {
-      sharedBar.root.x = barAt.x;
-      sharedBar.root.y = barAt.y;
-      sharedBar.show(true);
-    } else {
-      sharedBar.show(false);
-    }
     if (n <= 1) {
       if (frame.parent !== app.stage) app.stage.addChildAt(frame, 0);
       for (const p of players) {
@@ -3525,6 +3636,9 @@ async function main() {
       }
     }
   }
+  // Empty seats start with padIndex null (every pad). Assign claimed slots
+  // before the first Start, or one controller sits players 2–4 at once.
+  syncPadAssignment();
 
   function hideHeroGfx(p) {
     if (!p?.gfx) return;
@@ -4021,18 +4135,49 @@ async function main() {
     return focus.current?.world?.id ?? null;
   }
 
+  function clockOccupancyHere() {
+    return occupyingRoomIdOf(focus.current);
+  }
+
+  /** True when the focused hero is standing in the cell InvClock covers. */
   function clockIsHere() {
-    return Boolean(clockWorldId) && clockWorldId === clockWorldHere();
+    return clockCoversOccupancy(clockWorldId, clockRoomId, clockWorldHere(), clockOccupancyHere());
+  }
+
+  function occupyingRoomsInClockWorld() {
+    const ids = [];
+    for (const p of activePlayers(players)) {
+      if ((p.world?.id ?? null) !== clockWorldId) continue;
+      ids.push(occupyingRoomIdOf(p));
+    }
+    return ids;
   }
 
   function endClockFreeze() {
     clearClockFreeze(inv, enemies);
     clockWorldId = null;
+    clockRoomId = null;
   }
 
-  function endClockIfHere() {
-    if (!clockIsHere()) return;
+  /** Wipe InvClock when this world's entities go away (hard cut / last player left). */
+  function endClockIfWorldHere() {
+    if (!clockWorldId || clockWorldId !== clockWorldHere()) return;
     endClockFreeze();
+  }
+
+  function expireClockIfVacated() {
+    if (!inv.clock || !clockWorldId) return;
+    if (
+      shouldClearClock(
+        clockWorldId,
+        clockWorldHere(),
+        enemies,
+        clockRoomId,
+        occupyingRoomsInClockWorld(),
+      )
+    ) {
+      endClockFreeze();
+    }
   }
 
   /**
@@ -4212,10 +4357,10 @@ async function main() {
   }
 
   /**
-   * Labyrinth-entry holds only people standing in a labyrinth. Briefings
-   * still hold every non-cave reader — they are the plot. Cave speech is
-   * neither: NES lets you walk the shop while the text crawls, and a friend
-   * walking into a labyrinth must not replace the old man you are reading.
+   * Labyrinth-entry holds only people standing in a labyrinth. The
+   * post-shard briefing is private to the finder. Cave speech is neither:
+   * NES lets you walk the shop while the text crawls, and a friend walking
+   * into a labyrinth must not replace the old man you are reading.
    */
   function storyAudience(kind) {
     return storyReaders(activePlayers(players), kind);
@@ -4294,7 +4439,7 @@ async function main() {
   }
 
   function isPartyStoryKind(kind) {
-    return kind === 'briefing' || kind === 'levelEntry';
+    return kind === 'levelEntry';
   }
 
   /**
@@ -4371,6 +4516,28 @@ async function main() {
       // its grid before the first walk, or they clip through OPEN_UW_GRID.
       const anchor = p.world === focus.current?.world ? roomId : (p.world?.roomId ?? roomId);
       ids.push(occupyingRoom(anchor, p.link.x, p.link.y).roomId & 0xff);
+    }
+    return ids;
+  }
+
+  /** Overworld cells leftover heroes are still standing in. */
+  function occupiedOverworldRoomIds() {
+    /** @type {number[]} */
+    const ids = [];
+    const here = focus.current?.world;
+    for (const p of activePlayers(players)) {
+      if (p.world !== here || p.world?.mode !== 'overworld') continue;
+      const anchor = p.world === here ? roomId : (p.world?.roomId ?? roomId);
+      ids.push(occupyingRoom(anchor, p.link.x, p.link.y).roomId & 0xff);
+      // A leftover dock ride must not lose `$55` / `$45` to pruneTo while
+      // an ally's camera is still looking at the forest.
+      const ride = p.raftRide;
+      if (ride?.active) {
+        const dock = (ride.roomId || occupyingRoom(anchor, p.link.x, p.link.y).roomId) & 0xff;
+        ids.push(dock);
+        const north = neighborRoomId(dock, DIR.UP);
+        if (north != null) ids.push(north & 0xff);
+      }
     }
     return ids;
   }
@@ -4579,7 +4746,7 @@ async function main() {
     clearPersonWareSprites();
     clearPondHeartSprites();
     pondFairyHalt = false;
-    endClockIfHere(); // InvClock clears on room / screen change
+    endClockIfWorldHere(); // InvClock dies with this world's foes
     clearRoomItemSprites();
     roomItem = null;
     roomItems = new Map();
@@ -4598,6 +4765,9 @@ async function main() {
   }
 
   function syncEnemySprites() {
+    applyEnemyPaletteForMode();
+    const bank = mode === 'dungeon' && dungeon?.level ? dungeon.level : 1;
+    enemySprites.setDungeonLevel(bank);
     for (const e of enemies) {
       let g = enemyGfx.get(e.id);
       if (!e.alive) {
@@ -4608,7 +4778,7 @@ async function main() {
         }
         continue;
       }
-      const tex = enemySprites.textureForEnemy(e, mode);
+      const tex = enemySprites.textureForEnemy(e, mode, bank);
       if (!g) {
         g = new Sprite(tex ?? Texture.EMPTY);
         enemyLayer.addChild(g);
@@ -4809,12 +4979,12 @@ async function main() {
 
   /**
    * Dungeon foes stay in their home cell. Overworld wanderers may chase
-   * across a seam via the camera pad — that pad is what walked Goriyas
-   * through dungeon doors.
-   * @param {{ objType: number, homeRoomId?: number | null }} e
+   * across a seam via the camera pad — and in company, across any cameras
+   * whose pads overlap, so a foe can walk from one quadrant into another.
+   * @param {{ objType: number, homeRoomId?: number | null, x?: number, y?: number }} e
    */
   function enemyBoundsFor(e) {
-    return enemyMotionBounds(mode, e, roomId, cam);
+    return enemyMotionBounds(mode, e, roomId, cam, sessionCameras());
   }
 
   function clearFxLayer() {
@@ -5008,12 +5178,39 @@ async function main() {
    * Cameras looking at this place. A friend in a labyrinth has a dungeon
    * camera whose numbers are not overworld rooms — mixing them in streams
    * Moblin screens onto the start map and lets those foes chase a ghost.
+   * A death-spin still counts: their quadrant is still a picture of this
+   * place.
    */
-  function sessionCameras() {
-    const here = focus.current?.world;
+  function camerasForWorld(world) {
+    if (!world) return activePlayers(players).map((p) => p.cam);
     return activePlayers(players)
-      .filter((p) => !here || p.world === here)
+      .filter((p) => p.world === world)
       .map((p) => p.cam);
+  }
+
+  function sessionCameras() {
+    return camerasForWorld(focus.current?.world);
+  }
+
+  /**
+   * Neighbour tiles this camera can already see. Called from presentViews so
+   * a cancelled fetch (ally entered a dungeon) is retried without walking
+   * another seam, and so a death-spin still has rooms under it.
+   */
+  function refreshVisibleStream() {
+    const world = focus.current?.world;
+    const cams = camerasForWorld(world);
+    if (mode === 'overworld') {
+      if (streamMissingVisibleRooms(owStream, cams)) {
+        void ensureOwNeighbors({ restart: false });
+      }
+      return;
+    }
+    if (mode === 'dungeon') {
+      if (streamMissingVisibleRooms(uwStream, cams, { cols: 16, rows: 8 })) {
+        void ensureUwNeighbors({ restart: false });
+      }
+    }
   }
 
   function applyPlayCamera() {
@@ -5078,6 +5275,7 @@ async function main() {
         // One playfield, many places: show the layers that belong to this
         // hero's world and hide the rest, so a cave and the overworld can
         // share a scene graph without painting over each other.
+        applyEnemyPaletteForMode();
         presentWorldLayers();
         doorFrameLayer.visible = mode === 'dungeon';
         showCaveSceneFor(p);
@@ -5087,6 +5285,7 @@ async function main() {
           playField.x = 0;
           playField.y = 0;
         }
+        refreshVisibleStream();
         syncDarkOverlay();
         applyMenuChrome(p);
         if (stubLabel) {
@@ -5130,6 +5329,8 @@ async function main() {
           p.view.hudMap = bar.map;
           p.view.hudCounters = bar.counters;
           p.view.hudMode = bar.mode;
+          p.view.enemyLevel = enemySprites.currentLevel();
+          p.view.spritePalette = enemySprites.currentPalette();
         }
         for (const other of players) {
           const here = other.active && other.world === p.world;
@@ -5142,9 +5343,9 @@ async function main() {
           }
           if (other.gfx?.tag) other.gfx.tag.visible = here && other !== p;
         }
-        // A private conversation is only in the reader's quadrant. A
-        // labyrinth-entry beat is only in labyrinth views; a briefing is
-        // in every non-cave view. Each reader sees their own page.
+        // A private conversation (including the post-shard briefing) is
+        // only in the reader's quadrant. Labyrinth-entry is only in
+        // labyrinth views. Each reader sees their own page.
         const showStory = playerIsStoryReader(p) && storyBox.active;
         if (showStory) {
           storyBox.seekPage(storyPager.pageOf(p.index));
@@ -5213,11 +5414,21 @@ async function main() {
    * @param {number} [inputMask]
    */
   function overworldLinkTileOpts(inputMask = 0) {
-    const baseOpts = overworldTileOptsWithLadder(inv, roomId);
-    const pondFloor = pondCollisionFloor(pondSecret, owSecretsRevealed, roomId);
+    const occ = occupyingOwPack();
+    const baseOpts = overworldTileOptsWithLadder(inv, occ.roomId);
+    const pondFloor = pondCollisionFloor(pondSecret, owSecretsRevealed, occ.roomId);
     if (pondFloor != null) baseOpts.firstUnwalkable = pondFloor;
-    return continuousTileOpts(
-      prepareLadderTileOpts(screen?.tileGrid ?? null, inputMask, 'overworld', baseOpts),
+    // Probe water with the occupying cell + multi-room look-ahead. The
+    // streaming-anchor grid used to clamp leftover `$5F` dock coords onto
+    // `$4F` and plant the stepladder in the ocean.
+    const continuous = continuousTileOpts(baseOpts);
+    return prepareLadderTileOpts(
+      occ.tileGrid ?? screen?.tileGrid ?? null,
+      inputMask,
+      'overworld',
+      continuous,
+      false,
+      occ.roomId,
     );
   }
 
@@ -5271,18 +5482,76 @@ async function main() {
 
   /**
    * After a co-op regroup, the party is standing in the ally's cell. If that
-   * cell is leftover, nobody can claim the stream (`canClaimAnchorCross` is
+   * cell is leftover, nobody can claim the stream (`mayOwnOwAnchor` is
    * false past the seam lip) and the next room never loads — look-ahead into
    * a missing grid is solid, which is "can't walk off the right of this screen".
    * @param {object} p
    */
+  /**
+   * Occupying cell a co-op regroup wanted as the stream, whose pack was
+   * still in flight. Without a retry the party stays leftover: they can
+   * walk the current picture but the next seam's grid never loads, and a
+   * `$20` shove is what skips that wall.
+   * @type {number | null}
+   */
+  let pendingOwRegroupDest = null;
+
   function adoptOccupyingOwAnchor(p) {
     if (mode !== 'overworld' || !p?.link) return;
     const dest = regroupAnchorRoomId(roomId, p);
-    if (dest == null) return;
+    if (dest == null) {
+      if (pendingOwRegroupDest != null && (roomId & 0xff) === pendingOwRegroupDest) {
+        pendingOwRegroupDest = null;
+      }
+      return;
+    }
+    // Rebase+soft-enter onto a room whose pack is not in the store yet nulls
+    // `screen`. stepHero used to skip the overworld entirely then, so the
+    // bind retry in stepOverworld never ran and both heroes froze until a
+    // knockback happened to move them. Prefetch and keep leftover walking.
+    if (!owRooms.tileGrid(dest) || !owRooms.pack(dest)) {
+      pendingOwRegroupDest = dest;
+      prefetchOwRoom(dest);
+      return;
+    }
+    pendingOwRegroupDest = null;
     rebaseToRoom(dest);
     softEnterOwRoom(dest, p.link.dir || DIR.DOWN);
     applyPlayCamera();
+  }
+
+  function retryPendingOwRegroup() {
+    if (mode !== 'overworld' || pendingOwRegroupDest == null) return;
+    if (!firstInWorldThisFrame('owRegroupAnchor')) return;
+    const dest = pendingOwRegroupDest & 0xff;
+    if ((roomId & 0xff) === dest) {
+      pendingOwRegroupDest = null;
+      return;
+    }
+    if (!owRooms.tileGrid(dest) || !owRooms.pack(dest)) {
+      prefetchOwRoom(dest);
+      return;
+    }
+    pendingOwRegroupDest = null;
+    rebaseToRoom(dest);
+    softEnterOwRoom(dest, link.dir || DIR.DOWN);
+    snapWorldToWalkGrid(focus.current?.world);
+    applyPlayCamera();
+  }
+
+  /**
+   * Death regroup copies x,y onto a stride, and leftover rebase shifts every
+   * hero in the world. Either one can leave the party off the walk lattice,
+   * where stepLink will not start a new cell — the same pose a `$20` hit
+   * snaps off. Do that snap here so they do not need an enemy to walk.
+   * @param {object | null | undefined} world
+   */
+  function snapWorldToWalkGrid(world) {
+    if (mode !== 'overworld' || !world) return;
+    for (const q of activePlayers(players)) {
+      if (q.world !== world) continue;
+      snapCoopWalkGrid(q.link);
+    }
   }
 
   /**
@@ -5295,6 +5564,25 @@ async function main() {
     const a = roomPlayOrigin(roomId);
     const b = roomPlayOrigin(fromRoom);
     return { x: x + (b.ox - a.ox), y: y + (b.oy - a.oy) };
+  }
+
+  /**
+   * Land on the live overworld without rebuilding it. `fromRoom` + spawn
+   * are the doorstep in that room's own local space; the stream may be
+   * anchored somewhere else (an ally walked back to `$77` while you were
+   * in the raft-island cave).
+   * @param {number} fromRoom
+   * @param {{ x?: number, y?: number, dir?: number }} spawn
+   */
+  function placeOnLiveOverworld(fromRoom, spawn) {
+    const here = offsetFromRoom(fromRoom, spawn.x, spawn.y);
+    link.x = here.x;
+    link.y = here.y;
+    if (spawn.dir != null) link.dir = spawn.dir;
+    link.posFrac = 0;
+    link.gridOffset = 0;
+    link.moving = false;
+    void ensureOwRoom(fromRoom);
   }
 
   /**
@@ -5443,9 +5731,10 @@ async function main() {
     if (from != null) {
       dropRoomEnemies(from);
     }
-    // Clock only covers the foes that were visible at pickup.
-    endClockIfHere();
     roomId = nextRoomId & 0xff;
+    // Occupancy is only right after the stream rebases; leftover walks
+    // never come through here, so stepCombat also expires a vacated cell.
+    expireClockIfVacated();
     // Per-room fixtures are re-derived every time the binding lands, so a room
     // that was still streaming on the first pass still gets its pond state.
     const applyRoomState = () => {
@@ -5459,7 +5748,7 @@ async function main() {
     applyRoomState();
     if (bound) spawnOwRoomEnemies(roomId, dir);
     const me = focus.current;
-    void ensureOwNeighbors()
+    void ensureOwNeighbors({ restart: false })
       .then(() => {
         resumeAs(me);
         if (mode !== 'overworld' || (roomId & 0xff) !== (nextRoomId & 0xff)) return;
@@ -5492,7 +5781,7 @@ async function main() {
       .then(() => {
         resumeAs(me);
         if (mode !== 'overworld') return;
-        return ensureOwNeighbors();
+        return ensureOwNeighbors({ restart: false });
       })
       .catch((err) => {
         console.warn(`OW prefetch $${id.toString(16)} failed`, err);
@@ -5512,10 +5801,6 @@ async function main() {
   }
 
   /**
-   * Fetch + upsert one OW screen into the stream (secrets already revealed).
-   * @param {number} mapIndex
-   */
-  /**
    * Room loads still in flight.
    *
    * A room's tiles arrive over `fetch`, so which frame it lands on depends on
@@ -5524,17 +5809,49 @@ async function main() {
    * drains this to zero at each frame boundary (`zeldaDebug.pendingLoads()`).
    */
   let pendingRoomLoads = 0;
+  /** @type {Map<number, Promise<unknown>>} */
+  const owRoomInflight = new Map();
+  /** @type {Map<number, Promise<unknown>>} */
+  const uwRoomInflight = new Map();
+  /** @type {Map<string, import('pixi.js').Texture>} */
+  const owBgTexCache = new Map();
+
+  /**
+   * OW background without the PNG round-trip the pack host uses for `Assets.load`.
+   * First visit rasters CHR→RGBA; later visits reuse the GPU texture.
+   * @param {number} mapIndex
+   * @param {number} [quest]
+   */
+  async function loadOwBgTexture(mapIndex, quest = 1) {
+    const url = bgUrl(mapIndex, quest);
+    const cached = owBgTexCache.get(url);
+    if (cached && !cached.destroyed) return cached;
+    const packed = peekPackRgba(url);
+    let tex;
+    if (packed) {
+      tex = textureFromRgba(packed.rgba, packed.width, packed.height);
+    } else {
+      tex = markScaled(await Assets.load(url));
+      tex.source.scaleMode = 'nearest';
+    }
+    if (tex) owBgTexCache.set(url, tex);
+    return tex;
+  }
 
   /**
    * @param {number} mapIndex
    */
   async function ensureOwRoom(mapIndex) {
+    const id = mapIndex & 0xff;
+    const hit = owRoomInflight.get(id);
+    if (hit) return hit;
     pendingRoomLoads += 1;
-    try {
-      return await loadOwRoom(mapIndex);
-    } finally {
+    const p = loadOwRoom(id).finally(() => {
       pendingRoomLoads -= 1;
-    }
+      owRoomInflight.delete(id);
+    });
+    owRoomInflight.set(id, p);
+    return p;
   }
 
   /**
@@ -5542,14 +5859,25 @@ async function main() {
    * @param {boolean} [fogged]
    */
   async function ensureUwRoom(rid, fogged = false) {
-    pendingRoomLoads += 1;
-    try {
-      return await loadUwRoom(rid, fogged);
-    } finally {
-      pendingRoomLoads -= 1;
+    const id = rid & 0xff;
+    const hit = uwRoomInflight.get(id);
+    if (hit) {
+      await hit;
+      return loadUwRoom(id, fogged);
     }
+    pendingRoomLoads += 1;
+    const p = loadUwRoom(id, fogged).finally(() => {
+      pendingRoomLoads -= 1;
+      uwRoomInflight.delete(id);
+    });
+    uwRoomInflight.set(id, p);
+    return p;
   }
 
+  /**
+   * Fetch + upsert one OW screen into the stream (secrets already revealed).
+   * @param {number} mapIndex
+   */
   async function loadOwRoom(mapIndex) {
     const id = mapIndex & 0xff;
     const me = focus.current;
@@ -5623,11 +5951,12 @@ async function main() {
     restoreArmosReveals(tileGrid, id, owSecretsRevealed);
     let tex;
     try {
-      tex = markScaled(await Assets.load(bgUrl(id, inv.quest)));
+      tex = await loadOwBgTexture(id, inv.quest);
     } catch {
-      tex = markScaled(await Assets.load(bgUrl(id, 1)));
+      tex = await loadOwBgTexture(id, 1);
     }
     resumeAs(me);
+    if (!tex) return stream.get(id);
     tex.source.scaleMode = 'nearest';
     const entry = stream.upsert(id, tex, { tileGrid, pack, fogged: false });
     applyBurnTreeColorHints(entry?.sprite ?? null, pack, id);
@@ -5655,25 +5984,64 @@ async function main() {
     return entry;
   }
 
-  async function ensureOwNeighbors() {
+  /** @type {Promise<void>} */
+  let owNeighborWork = Promise.resolve();
+
+  /**
+   * @param {{ restart?: boolean }} [opts]
+   *   `restart: false` (presentViews / seam prefetch) skips when a sweep is
+   *   already running so a per-frame retry cannot pile up. The live sweep
+   *   re-reads the camera each room, so a seam cross does not cancel it.
+   *   `restart: true` waits for that sweep, then fills any new gaps — hard
+   *   cuts that must not play on missing collision grids.
+   */
+  async function ensureOwNeighbors({ restart = false } = {}) {
     const me = focus.current;
     const stream = owStream;
-    const gen = ++streamFetchGen;
-    applyPlayCamera();
-    const ids = roomsForCameras(sessionCameras(), { margin: 1 });
-    const anchor = roomId;
-    for (const id of ids) {
-      if (gen !== streamFetchGen) return;
-      await ensureOwRoom(id);
-      resumeAs(me);
+    if (!stream?.load) return;
+    if (stream.load.busy) {
+      if (!restart) return;
+      await owNeighborWork;
+      if (stream.load.busy) return;
     }
-    if (gen !== streamFetchGen) return;
-    stream.pruneTo(ids);
-    stream.layout(anchor);
-    resumeAs(me);
-    if (mode === 'overworld' && (roomId & 0xff) === (anchor & 0xff)) {
-      bg = stream.get(roomId)?.sprite ?? bg;
-    }
+    const gen = stream.load.begin();
+    const work = (async () => {
+      const yieldBetween = !heroIsBusy();
+      let loaded = 0;
+      try {
+        while (!stream.load.stale(gen)) {
+          applyPlayCamera();
+          const ids = roomsForCameras(camerasForWorld(me?.world), { margin: 1 });
+          const keep = [
+            ...new Set([...ids, ...occupiedOverworldRoomIds()].map((id) => id & 0xff)),
+          ];
+          const missing = sortRoomsNearestFirst(
+            keep.filter((id) => !owRoomReady(id)),
+            roomId,
+          );
+          if (missing.length === 0) {
+            stream.pruneTo(keep);
+            stream.layout(roomId);
+            resumeAs(me);
+            if (mode === 'overworld') {
+              bg = stream.get(roomId)?.sprite ?? bg;
+            }
+            return;
+          }
+          await ensureOwRoom(missing[0]);
+          resumeAs(me);
+          stream.layout(roomId);
+          loaded += 1;
+          if (stream.load.stale(gen)) return;
+          if (yieldBetween && loaded > 1) await yieldToPaint();
+          if (loaded > 24) return;
+        }
+      } finally {
+        stream.load.end(gen);
+      }
+    })();
+    owNeighborWork = work;
+    await work;
   }
 
   /**
@@ -5804,38 +6172,86 @@ async function main() {
     return entry;
   }
 
-  async function ensureUwNeighbors() {
+  /** @type {Promise<void>} */
+  let uwNeighborWork = Promise.resolve();
+
+  /**
+   * @param {number} rid
+   * @param {boolean} fogged
+   */
+  function uwRoomStreamReady(rid, fogged) {
+    const id = rid & 0xff;
+    const existing = uwStream.get(id);
+    return Boolean(uwRooms.tileGrid(id) && (existing?.sprite || fogged));
+  }
+
+  /**
+   * @param {{ restart?: boolean }} [opts] same join rules as {@link ensureOwNeighbors}
+   */
+  async function ensureUwNeighbors({ restart = false } = {}) {
     if (!dungeon) return;
-    const gen = ++streamFetchGen;
-    applyPlayCamera();
-    // Cellars sit on the map grid but are stairs-only — never stream them as
-    // neighbors, and never stream map-adjacent top-down rooms while inside one.
-    const ids = streamableUwRooms(
-      roomsForCameras(sessionCameras(), { margin: 1, cols: 16, rows: 8 }),
-      roomId,
-      dungeon.levelData,
-    );
-    const keep = [...new Set([...ids, ...occupiedUnderworldRoomIds()].map((id) => id & 0xff))];
-    const fog = foggedRooms(ids, dungeon.visitedRooms, roomId);
-    for (const id of keep) {
-      if (gen !== streamFetchGen) return;
-      await ensureUwRoom(id, fog.has(id));
+    const me = focus.current;
+    const stream = uwStream;
+    if (!stream?.load) return;
+    if (stream.load.busy) {
+      if (!restart) return;
+      await uwNeighborWork;
+      if (stream.load.busy) return;
     }
-    if (gen !== streamFetchGen) return;
-    uwStream.pruneTo(keep);
-    uwDoorFrames.pruneTo(keep);
-    for (const id of keep) {
-      const fogged = fog.has(id) && id !== roomId;
-      uwStream.setFog(id, fogged);
-      const frame = uwDoorFrames.get(id);
-      if (frame?.sprite) frame.sprite.visible = !fogged;
-      if (frame?.fog) frame.fog.visible = false;
-      syncUwBombCracks(uwStream.get(id), uwRooms.pack(id), fogged);
-    }
-    uwStream.layout(roomId);
-    uwDoorFrames.layout(roomId);
-    syncShutterOverlays();
-    roomSprite = uwStream.get(roomId)?.sprite ?? roomSprite;
+    const gen = stream.load.begin();
+    const work = (async () => {
+      const yieldBetween = !heroIsBusy();
+      let loaded = 0;
+      try {
+        while (!stream.load.stale(gen) && dungeon) {
+          applyPlayCamera();
+          // Cellars sit on the map grid but are stairs-only — never stream them as
+          // neighbors, and never stream map-adjacent top-down rooms while inside one.
+          const ids = streamableUwRooms(
+            roomsForCameras(camerasForWorld(me?.world), { margin: 1, cols: 16, rows: 8 }),
+            roomId,
+            dungeon.levelData,
+          );
+          const occupied = occupiedUnderworldRoomIds();
+          const keep = [...new Set([...ids, ...occupied].map((id) => id & 0xff))];
+          const fog = foggedRooms(ids, dungeon.visitedRooms, roomId, occupied);
+          const missing = sortRoomsNearestFirst(
+            keep.filter((id) => !uwRoomStreamReady(id, fog.has(id))),
+            roomId,
+          );
+          if (missing.length === 0) {
+            stream.pruneTo(keep);
+            uwDoorFrames.pruneTo(keep);
+            for (const id of keep) {
+              const fogged = fog.has(id) && id !== roomId;
+              stream.setFog(id, fogged);
+              const frame = uwDoorFrames.get(id);
+              if (frame?.sprite) frame.sprite.visible = !fogged;
+              if (frame?.fog) frame.fog.visible = false;
+              syncUwBombCracks(stream.get(id), uwRooms.pack(id), fogged);
+            }
+            stream.layout(roomId);
+            uwDoorFrames.layout(roomId);
+            syncShutterOverlays();
+            roomSprite = stream.get(roomId)?.sprite ?? roomSprite;
+            return;
+          }
+          const id = missing[0];
+          await ensureUwRoom(id, fog.has(id));
+          resumeAs(me);
+          stream.layout(roomId);
+          uwDoorFrames.layout(roomId);
+          loaded += 1;
+          if (stream.load.stale(gen)) return;
+          if (yieldBetween && loaded > 1) await yieldToPaint();
+          if (loaded > 24) return;
+        }
+      } finally {
+        stream.load.end(gen);
+      }
+    })();
+    uwNeighborWork = work;
+    await work;
   }
 
   /**
@@ -5861,9 +6277,12 @@ async function main() {
       spawned = spawned.filter((e) => persistsAfterRoomClear(e.objType));
     }
     if (dungeon.takenItems.has(id)) {
-      // Bomb-upgrade person and Grumble both use the UW-item room flag.
+      // Bomb-upgrade, money-or-life, and Grumble all use the UW-item room flag.
       spawned = spawned.filter(
-        (e) => !isBombUpgradePerson(e.objType) && !isGrumble(e.objType),
+        (e) =>
+          !isBombUpgradePerson(e.objType)
+          && !isMoneyOrLifePerson(e.objType)
+          && !isGrumble(e.objType),
       );
     }
     // InitUnderworldPersonC: full Triforce dismisses L9 gatekeeper + opens shutters.
@@ -5951,31 +6370,64 @@ async function main() {
       void loadDungeonRoom(exit.nextRoomId, exit.dir);
       return;
     }
-    beginBusy(me);
+    const nextId = room.roomId & 0xff;
+    const hadRoom = Boolean(uwRooms.tileGrid(nextId) && uwStream.get(nextId)?.sprite);
+
+    if (exit.unlocked) {
+      refreshDungeonRoomVisual();
+      refreshHud();
+      fx.playSfx('door');
+      setStatus(`Unlocked door (${inv.keys} keys left)`);
+    }
+
+    roomId = exit.nextRoomId;
+    personDialogueForRoom = null;
+    if (me) me.personDialogueForRoom = null;
+    expireClockIfVacated();
+    dungeon.room = room;
+    dungeon.visitedRooms.add(room.roomId);
+
+    let doorsDirty = Boolean(exit.unlocked);
+    const enteredSide = entrySideForFacing(exit.dir);
+    if (enteredSide && !dungeon.clearedRooms.has(room.roomId)) {
+      if (closeShutterBehind(dungeon.doorState, room, enteredSide)) {
+        beginAnimatedShutterClose(room, enteredSide);
+        doorsDirty = true;
+      }
+    }
+    restoreClearedShutters(dungeon.doorState, dungeon.clearedRooms, level);
+    sealLastBossShutters(dungeon.doorState, level, dungeon.lastBossDefeated);
+
+    // Seam coords were set by the caller — keep them so the door reads as a
+    // walkable path (no dungeonRoomSpawn / lip-clamp teleport).
+    link.dir = exit.dir;
+    link.posFrac = 0;
+    link.gridOffset = 0;
+    if (me) {
+      me.uwOccRoomId = room.roomId;
+      me.uwDoorwayBlockSide = entrySideForFacing(exit.dir);
+    }
+    dungeon.doorwayBlockSide = entrySideForFacing(exit.dir);
+    enterCandleRoom(room.roomId, room);
+
+    dungeon.roomKillCount = 0;
+    floorTiles = room.squares ? roomToTileGrid(room, [...UW_PRIMARY_SQUARES]) : null;
+    ladderObj = null;
+    pushBlock = ensurePushBlock(room);
+    pushBlockTex = null;
+    ensureRoomItem(room);
+    if (dungeon.clearedRooms.has(room.roomId)) {
+      secretLatchRooms.add(room.roomId & 0xff);
+      if (openRoomShutters(dungeon.doorState, room).length) doorsDirty = true;
+    }
+
+    flames = [];
+    statueState = createStatueState(room.layoutId ?? -1);
+    closePrivateDialogue(me);
+
+    const halt = !hadRoom;
+    if (halt) beginBusy(me);
     try {
-      if (exit.unlocked) {
-        refreshDungeonRoomVisual();
-        refreshHud();
-        fx.playSfx('door');
-        setStatus(`Unlocked door (${inv.keys} keys left)`);
-      }
-
-      endClockIfHere();
-      roomId = exit.nextRoomId;
-      personDialogueForRoom = null;
-      if (me) me.personDialogueForRoom = null;
-      dungeon.room = room;
-      dungeon.visitedRooms.add(room.roomId);
-
-      const enteredSide = entrySideForFacing(exit.dir);
-      if (enteredSide && !dungeon.clearedRooms.has(room.roomId)) {
-        if (closeShutterBehind(dungeon.doorState, room, enteredSide)) {
-          beginAnimatedShutterClose(room, enteredSide);
-        }
-      }
-      restoreClearedShutters(dungeon.doorState, dungeon.clearedRooms, level);
-      sealLastBossShutters(dungeon.doorState, level, dungeon.lastBossDefeated);
-
       await ensureUwRoom(room.roomId, false);
       resumeAs(me);
       // Never fall back to the room Link just left: `dungeonTileGrid` is the
@@ -5983,49 +6435,24 @@ async function main() {
       // a stale alias tears collision away from the art it belongs to.
       dungeonTileGrid = uwRooms.tileGrid(room.roomId);
       roomSprite = uwStream.get(room.roomId)?.sprite ?? null;
-
-      // Seam coords were set by the caller — keep them so the door reads as a
-      // walkable path (no dungeonRoomSpawn / lip-clamp teleport).
-      link.dir = exit.dir;
-      link.posFrac = 0;
-      link.gridOffset = 0;
-      if (me) {
-        me.uwOccRoomId = room.roomId;
-        me.uwDoorwayBlockSide = entrySideForFacing(exit.dir);
-      }
-      dungeon.doorwayBlockSide = entrySideForFacing(exit.dir);
-      enterCandleRoom(room.roomId, room);
-
-      // Per-room fixtures for the new anchor (enemies already rebased).
-      dungeon.roomKillCount = 0;
-      floorTiles = room.squares ? roomToTileGrid(room, [...UW_PRIMARY_SQUARES]) : null;
-      ladderObj = null;
-      pushBlock = ensurePushBlock(room);
       applyPushBlockRoomArt(room.roomId);
-      pushBlockTex = null;
-      ensureRoomItem(room);
-      if (dungeon.clearedRooms.has(room.roomId)) {
-        secretLatchRooms.add(room.roomId & 0xff);
-        openRoomShutters(dungeon.doorState, room);
-      }
-
-      flames = [];
-      statueState = createStatueState(room.layoutId ?? -1);
-      closePrivateDialogue(me);
-
-      refreshDungeonRoomVisual();
-      await ensureUwNeighbors();
-      resumeAs(me);
+      if (hadRoom && doorsDirty) refreshDungeonRoomVisual();
       spawnUwRoomEnemies(room.roomId, exit.dir);
       spawnVisibleUwRooms(exit.dir);
       applyPlayCamera();
       syncDarkOverlay();
       refreshHud();
       if (stubLabel) stubLabel.text = dungeonStubText(room);
-      setStatus(`Level ${dungeon.level} room $${room.roomId.toString(16)}`);
+      setStatus(`Level ${displayedDungeonLevel(dungeon.levelData)} room $${room.roomId.toString(16)}`);
     } finally {
-      endBusy(me);
+      if (halt) endBusy(me);
     }
+    void ensureUwNeighbors({ restart: false }).then(() => {
+      resumeAs(me);
+      if (mode !== 'dungeon' || (roomId & 0xff) !== nextId) return;
+      spawnVisibleUwRooms(exit.dir);
+      applyPlayCamera();
+    });
   }
 
   /**
@@ -6139,9 +6566,9 @@ async function main() {
     try {
       let tex;
       try {
-        tex = markScaled(await Assets.load(bgUrl(nextRoomId, inv.quest)));
+        tex = await loadOwBgTexture(nextRoomId, inv.quest);
       } catch {
-        tex = markScaled(await Assets.load(bgUrl(nextRoomId, 1)));
+        tex = await loadOwBgTexture(nextRoomId, 1);
       }
       resumeAs(me);
       tex.source.scaleMode = 'nearest';
@@ -6286,14 +6713,7 @@ async function main() {
         // exit onto `$37` does not drop you at those numbers on `$77`.
         resumeAs(me);
         mode = 'overworld';
-        const here = offsetFromRoom(mapIndex, spawn.x, spawn.y);
-        link.x = here.x;
-        link.y = here.y;
-        if (spawn.dir != null) link.dir = spawn.dir;
-        link.posFrac = 0;
-        link.gridOffset = 0;
-        link.moving = false;
-        void ensureOwRoom(mapIndex);
+        placeOnLiveOverworld(mapIndex, spawn);
         applyPlayCamera();
         refreshHud();
         return;
@@ -6303,7 +6723,6 @@ async function main() {
       ladderObj = null;
       cancelScreenScroll();
       const keepDungeonStream = dungeonOccupiedByOthers(me);
-      if (!keepDungeonStream) streamFetchGen += 1;
       owStream.clear();
       if (!keepDungeonStream) {
         uwStream.clear();
@@ -6330,7 +6749,7 @@ async function main() {
         stubLabel.destroy();
         stubLabel = null;
       }
-      // After room sprites are gone — palette swap destroys enemy/item caches.
+      // Bind this place's sprite palettes; leftover worlds keep their own.
       applyEnemyPaletteForMode();
 
       roomId = mapIndex;
@@ -6360,7 +6779,7 @@ async function main() {
       link.gridOffset = 0;
       link.moving = false;
 
-      await ensureOwNeighbors();
+      await ensureOwNeighbors({ restart: true });
       resumeAs(me);
       if (loadGen !== worldLoadGen) return;
       // Hard load: wipe foes + their sprites. A bare `enemies = []` orphans
@@ -6490,12 +6909,36 @@ async function main() {
         me.uwOccRoomId = nextRoomId & 0xff;
         me.uwDoorwayBlockSide = null;
       }
-      await ensureUwRoom(nextRoomId, false);
-      resumeAs(me);
-      applyPlayCamera();
-      refreshHud();
-      fx.playSfx('stairs');
-      return true;
+      const destRoom = dungeon.levelData.rooms.find(
+        (r) => (r.roomId & 0xff) === (nextRoomId & 0xff),
+      );
+      dungeon.visitedRooms?.add(nextRoomId & 0xff);
+      if (destRoom) dungeon.visitedRooms?.add(destRoom.roomId);
+      beginBusy(me);
+      try {
+        // Load the landing cell, then restart the labyrinth stream so an
+        // in-flight neighbour fetch (computed before this hero existed
+        // upstairs) cannot prune it, and so leftover fog does not cover a
+        // room someone is standing in.
+        await ensureUwRoom(nextRoomId, false);
+        resumeAs(me);
+        if (destRoom) {
+          enterCandleRoom(nextRoomId, destRoom);
+          ensurePushBlock(destRoom);
+          applyPushBlockRoomArt(nextRoomId);
+          ensureRoomItem(destRoom);
+        }
+        await ensureUwNeighbors({ restart: true });
+        resumeAs(me);
+        spawnUwRoomEnemies(nextRoomId, spawn.dir ?? DIR.DOWN);
+        applyPlayCamera();
+        syncDarkOverlay();
+        refreshHud();
+        fx.playSfx('stairs');
+        return true;
+      } finally {
+        endBusy(me);
+      }
     }
 
     const progress = dungeon;
@@ -6541,7 +6984,6 @@ async function main() {
       if (!keepDungeonStream) {
         clearEnemies();
         cancelScreenScroll();
-        streamFetchGen += 1;
         uwStream.clear();
         uwDoorFrames.clear();
         closePrivateDialogue(me);
@@ -6679,16 +7121,16 @@ async function main() {
       stubLabel.y = HUD_HEIGHT + 4;
       world.addChild(stubLabel);
 
-      titleEl.textContent = `Play — Level ${dungeon.level}`;
+      titleEl.textContent = `Play — Level ${displayedDungeonLevel(dungeon.levelData)}`;
       flames = [];
       statueState = createStatueState(room.layoutId ?? -1);
-      await ensureUwNeighbors();
+      await ensureUwNeighbors({ restart: true });
       resumeAs(me);
       applyPlayCamera();
       syncDarkOverlay();
       const darkNote = room.floorItem?.dark ? '  DARK' : '';
       setStatus(
-        `Level ${dungeon.level} room $${room.roomId.toString(16)}  monster=$${
+        `Level ${displayedDungeonLevel(dungeon.levelData)} room $${room.roomId.toString(16)}  monster=$${
           room.monster?.id?.toString(16) ?? 0
         }${darkNote}`,
       );
@@ -6843,7 +7285,7 @@ async function main() {
     // Only on a real descent from the overworld — a save resumed inside the
     // labyrinth is not the moment to introduce it.
     if (!opts.spawnOverride && resumeRoom === dungeon.levelData.startRoom) {
-      tellLevelEntryStory(levelId);
+      tellLevelEntryStory(displayedDungeonLevel(dungeon.levelData));
     }
   }
 
@@ -6853,17 +7295,20 @@ async function main() {
       setStatus(`Cave $${caveId.toString(16)} (missing table)`);
       return;
     }
-    // Doorstep to come back out onto, taken before the move. `roomId` here is
-    // the stream anchor (leftover coords stay valid on the way out). The
-    // occupying cell is the NES room-flag screen: leftover $2F must not share
-    // a take-any flag with its neighbour, and after the move the cave world's
-    // live `roomId` is 0 (`createWorld` default) — passing that would empty
-    // every take-any / door / moblin cave after looting one.
+    // Doorstep to come back out onto, taken before the move. Store the
+    // occupying cell in that room's local space — not the stream origin.
+    // Leftover coords relative to `$77` go stale the moment an ally rebases
+    // the overworld to start while you are still inside the raft-island cave.
+    // The occupying cell is also the NES room-flag screen: leftover $2F must
+    // not share a take-any flag with its neighbour, and after the move the
+    // cave world's live `roomId` is 0 (`createWorld` default) — passing that
+    // would empty every take-any / door / moblin cave after looting one.
     const entranceRoom = occupyingOwPack().roomId & 0xff;
+    const doorstep = offsetToRoom(entranceRoom, link.x, link.y);
     const returnPose = {
-      roomId,
-      x: link.x,
-      y: link.y,
+      roomId: entranceRoom,
+      x: doorstep.x,
+      y: doorstep.y,
       dir: DIR.DOWN,
     };
     const me = focus.current;
@@ -6887,7 +7332,9 @@ async function main() {
     // Cancel in-flight OW stream fetches so they cannot prune/layout mid-cave.
     // Only when this player is the last one outside — a friend still walking
     // the overworld still needs those fetches.
-    if (!worldOccupiedByOthers(from, me)) streamFetchGen += 1;
+    if (!worldOccupiedByOthers(from, me)) {
+      (from?.stream ?? owStream).load?.invalidate();
+    }
     // Hide OW under the cave scene when nobody else is looking at it.
     // presentViews flips the layers per quadrant when the party is split.
     if (!worldOccupiedByOthers(from, me)) {
@@ -6902,6 +7349,7 @@ async function main() {
     flames = [];
     projectiles = [];
     mode = 'cave';
+    applyEnemyPaletteForMode();
     playField.x = 0;
     playField.y = 0;
     caveTileGrid = createCaveTileGrid();
@@ -6961,9 +7409,9 @@ async function main() {
     closePrivateDialogue(me);
     closePlayerMenu(me);
     world.y = 0;
-    // Hide cave first — loadOverworldScreen may rebuild sprite caches, and
-    // destroyed textures still bound to visible cave/HUD sprites black the GL context.
-    // Only tear the scene down when this player is the last one in it.
+    // Hide cave first so a leftover interior is not still on the playfield
+    // when the overworld comes back. Only tear the scene down when this
+    // player is the last one in it.
     if (!worldOccupiedByOthers(me?.world, me)) {
       dropCaveScene(me?.world?.id);
       caveTileGrid = null;
@@ -6989,12 +7437,7 @@ async function main() {
 
     if (joiningLive) {
       resumeAs(me);
-      link.x = spawn.x;
-      link.y = spawn.y;
-      if (spawn.dir != null) link.dir = spawn.dir;
-      link.posFrac = 0;
-      link.gridOffset = 0;
-      link.moving = false;
+      placeOnLiveOverworld(destRoom, spawn);
       applyPlayCamera();
       refreshHud();
       fx.playSfx('stairs');
@@ -7006,7 +7449,6 @@ async function main() {
     // but refresh neighbors + spawns like loadOverworldScreen / raft soft-cross.
     // Skipping ensureOwNeighbors left missing grids as solid and pinned foes.
     if (screen && destRoom === roomId && owStream.get(roomId)) {
-      streamFetchGen += 1;
       owStream.layer.visible = true;
       if (bg) bg.visible = true;
       link.x = spawn.x;
@@ -7023,7 +7465,7 @@ async function main() {
       spawnOwRoomEnemies(roomId, spawn.dir ?? link.dir);
       projectiles = [];
       bombs = [];
-      await ensureOwNeighbors();
+      await ensureOwNeighbors({ restart: true });
       resumeAs(me);
       spawnVisibleOwRooms(spawn.dir ?? link.dir);
       applyPlayCamera();
@@ -7112,12 +7554,23 @@ async function main() {
       return;
     }
 
-    if (potionShopWaresHidden(cave, inv)) return;
+    if (potionShopWaresHidden(cave, inv)) {
+      if (canShowLetter(cave, inv)) {
+        tryUseB();
+        return;
+      }
+      setStatus('Bring the letter from the old man');
+      return;
+    }
     const entranceRoom = caveEntranceRoomId();
-    const slot = wareUnderLink(
-      link,
-      caveWareSlots(cave, caveTaken, inv, entranceRoom),
-    );
+    const slots = caveWareSlots(cave, caveTaken, inv, entranceRoom);
+    const slot =
+      wareUnderLink(link, slots)
+      ?? (
+        cave.kind === 'letter' && nearCaveNpc(link) && (inv.letter ?? 0) < 1
+          ? slots.find((s) => s.item === ITEM.LETTER) ?? null
+          : null
+      );
     if (!slot) return;
     const result = tryBuyCaveSlot(inv, cave, slot.index, caveTakenState());
     if (!result.ok) {
@@ -7147,12 +7600,11 @@ async function main() {
   function stepCave(inputMask) {
     if (!caveTileGrid || inv.dead) return;
     // CheckLiftItem halts the player while the item is held overhead.
-    // Status timers (including itemLiftTimer) live in stepCombat for OW/UW;
-    // caves never enter that path, so tick them here or the TakeItem pose
-    // never ends and Link stays frozen after a gift/letter.
+    // itemLiftTimer is ticked in tickStatusTimers after this step, same as
+    // the flashing-bubble sword countdown — caves must not freeze the pose
+    // (or the sword) because they never enter stepCombat.
     if ((inv.itemLiftTimer ?? 0) > 0) {
       syncItemLiftSprite();
-      stepLinkStatus(inv);
       return;
     }
     syncItemLiftSprite();
@@ -7169,18 +7621,21 @@ async function main() {
     const me = focus.current;
     const cave = caveView()?.cave;
     if (cave) {
-      const slots = potionShopWaresHidden(cave, inv)
+      const hidden = potionShopWaresHidden(cave, inv);
+      const slots = hidden
         ? []
         : caveWareSlots(cave, caveTaken, inv, caveEntranceRoomId());
       const overWare = wareUnderLink(link, slots);
       const overRoad =
         cave.kind === 'road' ? roadStairUnderLink(link) : -1;
+      const overNpc = caveNpcInteractKey(cave, inv, link, hidden);
       // Moblin / gamble / shop / gift: ware touch. Door repair charges on enter.
+      // Locked medicine shop (and the letter cave) also accept the dweller.
       const targetKey = overWare
         ? overWare.key
         : overRoad >= 0
           ? `road:${overRoad}`
-          : null;
+          : overNpc;
       if (!targetKey) {
         if (me) me.caveInteractLatch = false;
       } else if (me && me.caveInteractLatch !== targetKey) {
@@ -7194,25 +7649,37 @@ async function main() {
       me.caveExitLatch = true;
       void leaveCave();
     }
-    stepLinkStatus(inv);
   }
 
   function applyOwSecretReveal(action, x, y) {
-    if (!screen?.tileGrid) return [];
+    // Flame / bomb coords are anchor-local. Graves already convert to the
+    // occupying cell; using `screen` here burnt the host's tree (or none)
+    // while leftover $47's orange bush sat under the fire.
+    const occ = occupyingRoom(roomId, x, y);
+    const occId = occ.roomId & 0xff;
+    const tileGrid =
+      owRooms.tileGrid(occId)
+      ?? ((occId === (roomId & 0xff)) ? screen?.tileGrid : null);
+    const pack = owRooms.pack(occId);
+    const secrets =
+      pack?.secrets
+      ?? ((occId === (roomId & 0xff)) ? screen?.secrets : null)
+      ?? [];
+    if (!tileGrid) return [];
     const opened = tryRevealSecrets(
-      screen.secrets,
+      secrets,
       owSecretsRevealed,
-      roomId,
+      occId,
       action,
-      x,
-      y,
-      screen.tileGrid,
+      occ.x,
+      occ.y,
+      tileGrid,
     );
     for (const secret of opened) {
-      patchOwBgSquare(secret.col, secret.row, tilesForSecretMarker(secret.marker));
+      patchOwBgSquare(secret.col, secret.row, tilesForSecretMarker(secret.marker), occId);
     }
     if (opened.length) {
-      syncOwBombCracks(owStream.get(roomId), roomId);
+      syncOwBombCracks(owStream.get(occId), occId);
       fx.playSfx('secret');
       setStatus(`Secret revealed (${action})!`);
     }
@@ -7302,13 +7769,20 @@ async function main() {
     closeStoryBeat();
     closePlayerMenu(me);
     world.y = 0;
+    // The finder keeps the Mode $12 pose until *they* walk out. An ally
+    // leaving first must not drop the shard from the finder's hands, and
+    // an ally still underground must not keep the finder frozen in the pose
+    // on the overworld.
+    if (me?.liftItemType === 0x1b) {
+      holdingTriforceLift = false;
+      me.liftItemType = null;
+      liftItemType = null;
+      syncItemLiftSprite();
+    }
     // Only the last one out takes the lights. An ally still in the labyrinth
     // needs the stream, the tile grid, and the map/compass on their HUD.
     if (lastOut) {
       ladderObj = null;
-      holdingTriforceLift = false;
-      liftItemType = null;
-      syncItemLiftSprite();
       inv.map = 0;
       inv.compass = 0;
       darkOverlay.visible = false;
@@ -7339,6 +7813,10 @@ async function main() {
     const levelDataByLevel = new Map();
     if (dungeon?.levelData) {
       levelDataByLevel.set(dungeon.level, dungeon.levelData);
+      const shown = displayedDungeonLevel(dungeon.levelData);
+      if (shown && shown !== dungeon.level) {
+        levelDataByLevel.set(shown, dungeon.levelData);
+      }
     }
     return {
       screens: worldIndex.screens,
@@ -7491,8 +7969,10 @@ async function main() {
       return;
     }
     const roomFoes = enemiesInRoom(enemies, dungeon.room.roomId);
+    const offerTaken = dungeon.takenItems.has(dungeon.room.roomId);
     const wares = personOfferWares(roomFoes, {
-      bombTaken: dungeon.takenItems.has(dungeon.room.roomId),
+      bombTaken: offerTaken,
+      moneyOrLifeTaken: offerTaken,
     });
     const live = new Set(wares.map((w) => w.id));
     for (const [id, g] of [...personWareGfx.entries()]) {
@@ -7661,7 +8141,9 @@ async function main() {
 
   /**
    * The between-labyrinth briefing: what the shard means, where to go next,
-   * and what treasure was left on the floor behind you.
+   * and what treasure was left on the floor behind you. Private to the
+   * finder — an ally in another room of the same labyrinth is not reading
+   * "THE SHARD IS WARM IN YOUR HAND".
    * @param {number} level
    */
   function openLevelBriefing(level) {
@@ -7671,29 +8153,7 @@ async function main() {
     });
     if (!pages.length) return;
     applyStoryMarks(marks);
-    if (activePlayers(players).length > 1) {
-      openStoryBeat(pages, 'briefing', { level, missed: missed.length });
-      return;
-    }
     openTextBox(pages, { kind: 'briefing', meta: { level, missed: missed.length } });
-  }
-
-  /**
-   * The between-labyrinth briefing walks the whole party out. Closing it
-   * as whoever finished reading last used to leave the others underground.
-   */
-  async function exitDungeonParty() {
-    const leaving = activePlayers(players).filter((p) => {
-      const id = String(p.world?.id ?? '');
-      return id.startsWith('dungeon:') || id.startsWith('cellar:');
-    });
-    for (const p of leaving) {
-      const id = String(p.world?.id ?? '');
-      if (!id.startsWith('dungeon:') && !id.startsWith('cellar:')) continue;
-      await focus.on(p, () => exitDungeon());
-    }
-    const host = hostPlayer(players) ?? players[0];
-    if (host) focus.to(host);
   }
 
   /**
@@ -7701,12 +8161,13 @@ async function main() {
    */
   function onDialogueClosed(res) {
     if (res.kind === 'briefing') {
-      // The briefing walks Link out of the labyrinth; anything queued behind
-      // it would open over the overworld transition.
+      // The briefing walks the finder out of the labyrinth; anything queued
+      // behind it would open over the overworld transition. An ally still
+      // underground keeps playing.
       pendingStory = null;
       persistSave('level briefing');
       // NES EndGameMode12 → OW entrance after the Mode $12 ceremony.
-      void exitDungeonParty();
+      void exitDungeon();
       return;
     }
     drainPendingStory();
@@ -7720,7 +8181,7 @@ async function main() {
           }`
         : mode === 'cave'
           ? `Cave $${(caveView()?.cave?.caveId ?? 0).toString(16)}`
-          : `L${dungeon?.level} $${roomId.toString(16).padStart(2, '0')}  TF ${triforceCount(inv)}/8`;
+          : `L${displayedDungeonLevel(dungeon?.levelData) || dungeon?.level} $${roomId.toString(16).padStart(2, '0')}  TF ${triforceCount(inv)}/8`;
     // Cave keeps the OW radar on the overworld entrance screen.
     const mapRoomId = lookingRoomId();
     // A mark whose item is now in the bag retires itself.
@@ -7739,18 +8200,6 @@ async function main() {
       compact,
       playerIndex: focus.current?.index ?? 0,
     });
-    if (compact) {
-      sharedBar.update({
-        inv,
-        rupeesShown: rupeeRoll.shown,
-        mode,
-        roomId: mapRoomId,
-        dungeon,
-        mapMarks: currentMapMarks(),
-        dungeonMarks: currentDungeonMapMarks(),
-        frame: uiFrame,
-      });
-    }
   }
 
   function activeLinkTileGrid() {
@@ -7926,12 +8375,13 @@ async function main() {
       return;
     }
     // On the stepladder, feet sit on water `$F4` — that is intentional.
+    // Snap / re-place first so a leftover Y does not eject off a valid span.
+    const tileOpts = mode === 'overworld' ? overworldLinkTileOpts() : {};
     if (ladderAllowsStanding(ladderObj, link)) return;
     const grid = activeLinkTileGrid();
     if (!grid) return;
     const preferDir =
       (inv.shoveDir ? oppositeDir(inv.shoveDir) : 0) || oppositeDir(link.dir) || DIR.UP;
-    const tileOpts = mode === 'overworld' ? overworldLinkTileOpts() : {};
     const result = ejectLinkFromSolid(link, grid, {
       roomId: mode === 'overworld' ? CONTINUOUS_OW : null,
       tileOpts,
@@ -7951,7 +8401,9 @@ async function main() {
     const result = harmLink(inv, halfHearts);
     if (!result.applied) return;
     resetDropStreak(dropCounters);
-    endClockIfHere();
+    // Hurt clears InvClock only on the pickup screen — an ally taking a hit
+    // two rooms away used to drop the picker's freeze and invuln.
+    if (clockIsHere()) endClockFreeze();
     fx.playSfx('hurt');
     inv.shoveDir = oppositeDir(dir) || oppositeDir(link.dir) || DIR.DOWN;
     inv.shovePixels = 0x20;
@@ -7964,9 +8416,10 @@ async function main() {
    *
    * A potion in the shared bag is drunk for them, as the ROM does. If someone
    * else is still standing they come back: beside that ally when they share
-   * a place, or at their own dungeon door when they do not. The continue
-   * menu is only for when the whole party is down — and at one player that
-   * is the ROM's own flow.
+   * a place, at their own dungeon door when they died in a labyrinth the
+   * living left, or at the overworld start when they died on the map with
+   * nobody else out there. The continue menu is only for when the whole
+   * party is down — and at one player that is the ROM's own flow.
    */
   function beginDeath() {
     const dead = focus.current;
@@ -8006,6 +8459,7 @@ async function main() {
   /** Status after a co-op death: regroup, or the ROM dungeon continue. */
   function coopRespawnStatus(dead, ally) {
     if (shouldRestartInOwnDungeon(dead, ally)) return 'Continue — Level entrance';
+    if (shouldRestartAtOverworldStart(dead, ally)) return 'Continue — back at start';
     if (
       sameRespawnArea(dead, ally)
       && isCellarWorldId(ally?.world?.id)
@@ -8020,8 +8474,9 @@ async function main() {
   /**
    * After the co-op spin, stand next to whoever is still up — when you
    * already share a place. A dungeon death with the living elsewhere
-   * continues at that labyrinth's door. The fade and GAME OVER are for a
-   * wipe, not for one hero dropping.
+   * continues at that labyrinth's door; an overworld death with nobody
+   * else on the map continues at the start screen. The fade and GAME
+   * OVER are for a wipe, not for one hero dropping.
    */
   function finishCoopRespawn(dead) {
     dead.deathSeq = null;
@@ -8038,11 +8493,30 @@ async function main() {
     const held = focus.current;
     const status = coopRespawnStatus(dead, ally);
     const localDungeon = shouldRestartInOwnDungeon(dead, ally);
+    const owStart = shouldRestartAtOverworldStart(dead, ally);
     const cellarDump =
       sameRespawnArea(dead, ally)
       && isCellarWorldId(ally?.world?.id)
       && !isCellarWorldId(dead?.world?.id);
     focus.on(dead, () => {
+      if (owStart) {
+        standUpAfterDeath(dead);
+        const spawn = {
+          x: worldIndex.startX,
+          y: worldIndex.startY,
+          dir: worldIndex.startDir,
+        };
+        if (dead.link) {
+          dead.link.x = spawn.x;
+          dead.link.y = spawn.y;
+          dead.link.dir = spawn.dir;
+        }
+        roomId = worldIndex.startScreen;
+        applyPlayCamera();
+        void loadOverworldScreen(worldIndex.startScreen, spawn);
+        refreshHud();
+        return;
+      }
       if (localDungeon) {
         standUpAfterDeath(dead);
         const destId = labyrinthWorldIdFor(dead.world);
@@ -8064,6 +8538,13 @@ async function main() {
         movePlayerToWorld(dead, ally.world.id, { mode: ally.world.mode });
         respawnBeside(dead, ally);
         adoptOccupyingOwAnchor(dead);
+        ensureLinkNotInSolid();
+        if (ally !== dead && ally.world === dead.world) {
+          focus.on(ally, () => ensureLinkNotInSolid());
+        }
+        // After eject: a solid-slide can leave the lattice, and that is the
+        // pose a knockback has to snap off before a seam will take a stride.
+        snapWorldToWalkGrid(dead.world);
       } else if (cellarDump) {
         const destId = labyrinthForCellarAlly(ally);
         respawnBeside(dead, ally);
@@ -8078,6 +8559,11 @@ async function main() {
       } else if (sameRespawnArea(dead, ally)) {
         respawnBeside(dead, ally);
         adoptOccupyingOwAnchor(dead);
+        ensureLinkNotInSolid();
+        if (ally !== dead && ally.world === dead.world) {
+          focus.on(ally, () => ensureLinkNotInSolid());
+        }
+        snapWorldToWalkGrid(dead.world);
       } else {
         standUpAfterDeath(dead);
       }
@@ -8231,7 +8717,8 @@ async function main() {
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
     const bgSrc = /** @type {CanvasImageSource | null} */ (spr.texture.source.resource);
-    if (bgSrc) ctx.drawImage(bgSrc, 0, 0);
+    if (bgSrc) ctx.drawImage(bgSrc, 0, 0, canvas.width, canvas.height);
+    const { scaleX, scaleY } = owScreenNesScale(canvas.width, canvas.height);
     const positions = [
       [0, 0],
       [0, 8],
@@ -8245,24 +8732,26 @@ async function main() {
       const img = /** @type {CanvasImageSource | null} */ (sheet?.source?.resource);
       if (!img) continue;
       const [dx, dy] = positions[i];
-      const T = tilePx();
-      const dxPx = px(col * 16 + dx);
-      const dyPx = px(row * 16 + dy);
+      const srcT = tilePx();
+      const dxPx = Math.round((col * 16 + dx) * scaleX);
+      const dyPx = Math.round((row * 16 + dy) * scaleY);
+      const dw = Math.round(8 * scaleX);
+      const dh = Math.round(8 * scaleY);
       // common_misc is extracted as sprites (color 0 = transparent). As OW BG,
       // slot 0 is opaque black — e.g. bomb cave mouth $F3/$24/$F3/$24. Without
       // this underlay the rock shows through the top half and the mouth looks short.
       ctx.fillStyle = '#000000';
-      ctx.fillRect(dxPx, dyPx, T, T);
+      ctx.fillRect(dxPx, dyPx, dw, dh);
       ctx.drawImage(
         img,
         src.sx * scale(),
         src.sy * scale(),
-        T,
-        T,
+        srcT,
+        srcT,
         dxPx,
         dyPx,
-        T,
-        T,
+        dw,
+        dh,
       );
     }
     spr.texture = markScaled(Texture.from(canvas));
@@ -8310,7 +8799,8 @@ async function main() {
     ctx.imageSmoothingEnabled = false;
     const src = /** @type {CanvasImageSource | null} */ (spr.texture.source.resource);
     if (!src) return;
-    ctx.drawImage(src, 0, 0);
+    ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+    const { scaleX, scaleY } = owScreenNesScale(canvas.width, canvas.height);
     const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
     let changed = false;
     for (const job of jobs) {
@@ -8322,7 +8812,7 @@ async function main() {
           job.row,
           rowsRgb[job.from],
           rowsRgb[job.to],
-          { enhanced: false, nesPxScale: scale() },
+          { enhanced: false, scaleX, scaleY },
         )
       ) {
         changed = true;
@@ -8465,6 +8955,7 @@ async function main() {
           );
           if (clockFreezeActive(enemies)) {
             clockWorldId = clockWorldHere();
+            clockRoomId = occupyingRoomIdOf(focus.current);
           } else {
             endClockFreeze();
           }
@@ -8687,14 +9178,25 @@ async function main() {
       setStatus('Triforce complete — path opens');
     }
 
+    // Paid collector stays gone: the NES room-item flag (`takenItems`) and
+    // the clear latch from the first payment. Hint old men still persist.
+    const molPaid =
+      effect === SECRET.MONEY_OR_LIFE
+      && (dungeon.takenItems.has(id) || dungeon.clearedRooms.has(id));
+    if (molPaid && moneyOrLifePersonAlive(roomFoes)) {
+      dismissMoneyOrLifePerson(roomFoes);
+    }
+
     // Money-or-life / bomb-upgrade pay with this hero's feet, not an ally's.
-    if (heroHere && effect === SECRET.MONEY_OR_LIFE && !latched) {
+    if (heroHere && effect === SECRET.MONEY_OR_LIFE && !molPaid) {
       const paid = tryPayMoneyOrLife(inv, link.x, link.y);
       if (paid) {
         dismissMoneyOrLifePerson(roomFoes);
+        dungeon.takenItems.add(id);
         fx.playSfx(paid === 'rupees' ? 'rupee' : 'key');
-        setStatus(paid === 'rupees' ? 'Paid 50 rupees' : 'Paid a heart container');
         refreshHud();
+        persistSave();
+        setStatus(paid === 'rupees' ? 'Paid 50 rupees' : 'Paid a heart container');
       }
     }
 
@@ -8827,26 +9329,38 @@ async function main() {
       break;
     }
     if (picked == null) return;
-    const label = grantRoomItem(inv, picked, { level: dungeon.level });
+    const shown = dungeon.levelData?.levelNumber ?? dungeon.level;
+    const label = grantRoomItem(inv, picked, { level: shown });
     onGrantedItem(picked);
     refreshHud();
     refreshOpenMenus();
     fx.playSfx('item_taken');
-    if (picked === 0x1b && hasTriforce(inv, dungeon.level)) {
+    if (picked === 0x1b && hasTriforce(inv, shown)) {
       fx.playFanfare('triforce');
       holdingTriforceLift = true;
       startItemLift(0x1b);
       startTriforceCeremony(triforceCeremony, focus.current?.index ?? 0);
-      pendingBriefingLevel = dungeon.level;
+      pendingBriefingLevel = shown;
       setStatus(
-        dungeon.level >= 8
+        shown >= 8
           ? `Got ${label}! ${triforceCount(inv)}/8 — Level 9 awaits`
-          : `Got ${label}! Level ${dungeon.level} clear`,
+          : `Got ${label}! Level ${shown} clear`,
       );
     } else {
       setStatus(`Got ${label}!`);
       tellItemStory(picked);
     }
+  }
+
+  /**
+   * Allies in this place whose pose CheckLadder must not ignore.
+   * @returns {{ x: number, y: number, dir: number }[]}
+   */
+  function ladderPeers() {
+    const here = focus.current?.world;
+    return activePlayers(players)
+      .filter((p) => p !== focus.current && p.world === here)
+      .map((p) => p.link);
   }
 
   /**
@@ -8856,18 +9370,43 @@ async function main() {
    * @param {'overworld' | 'dungeon'} ladderMode
    * @param {object} baseTileOpts
    * @param {boolean} [inDoorway]
+   * @param {number} [occupyingRoomId]
    */
-  function prepareLadderTileOpts(tileGrid, inputMask, ladderMode, baseTileOpts, inDoorway = false) {
+  function prepareLadderTileOpts(tileGrid, inputMask, ladderMode, baseTileOpts, inDoorway = false, occupyingRoomId = roomId) {
+    // Place after the walk-grid snap so object `$5F` sits at dist $10, not a
+    // few pixels into water that look-ahead will still treat as solid. Do not
+    // snap from open sand into the river (remainder 4 rounds toward water).
+    if (
+      ladderMode === 'overworld'
+      && (link.gridOffset || 0) === 0
+      && !onWalkGrid(link.x, link.y)
+    ) {
+      const x0 = link.x;
+      const y0 = link.y;
+      const open = tileGrid && !isLinkStandingSolid(tileGrid, x0, y0, baseTileOpts);
+      snapLinkToWalkGrid(link);
+      if (
+        open
+        && isLinkStandingSolid(tileGrid, link.x, link.y, baseTileOpts)
+      ) {
+        link.x = x0;
+        link.y = y0;
+      }
+    }
     const inputDir = pickSingleDir(inputMask);
     ladderObj = tryPlaceLadder(link, {
       tileGrid,
       inv,
       mode: ladderMode,
-      roomId,
+      roomId: occupyingRoomId,
+      occupyingRoomId,
       inDoorway,
       inputDir,
       existing: ladderObj,
+      others: ladderPeers(),
       tileOpts: baseTileOpts,
+      collidingTile: baseTileOpts.collidingTile,
+      standingTile: baseTileOpts.standingTile,
     });
     return {
       ...baseTileOpts,
@@ -9026,9 +9565,7 @@ async function main() {
     // copy ever drifted, foes must still chase the hero standing here.
     if (link && !heroes.includes(link)) heroes.push(link);
     const heroPositions = heroes.map((h) => ({ x: h.x, y: h.y }));
-    if (shared && inv.clock && shouldClearClock(clockWorldId, clockWorldHere(), enemies)) {
-      endClockFreeze();
-    }
+    if (inv.clock) expireClockIfVacated();
     const clockActive = Boolean(inv.clock) && clockIsHere();
     const pondCeremonies = enemies.filter(
       (e) => e?.alive && e.objType === OBJ.POND_FAIRY && pondFairyOrbiting(e),
@@ -9105,6 +9642,7 @@ async function main() {
           link: drag ?? (aim.index < 0 ? null : heroes[aim.index]),
           enemies,
           rngByte: dropRng,
+          anchorRoomId: roomId,
           onArmosAwake,
           fluteJustUsed: flutePulse > 0,
           onDigdoggerSplit: (parent) => {
@@ -9163,9 +9701,10 @@ async function main() {
     const meHeld = linkHeldByWallmaster();
     // Halt for the whole slide (ObjState $40), not just contact frames.
     if (meHeld) inv.paralyzed = 2;
+    // Clock: keep Link topped up with invuln like NES InvClock while they
+    // still occupy the pickup screen — not the whole overworld.
+    if (clockActive && inv.invuln < 8) inv.invuln = 8;
     for (const e of enemies) {
-      // Clock: keep Link topped up with invuln like NES InvClock while active.
-      if (clockActive && inv.invuln < 8) inv.invuln = 8;
       if (!enemyCombatActive(e) || enemyIsHidden(e)) continue;
       // During this hero's slide, only the capturer may touch them.
       if (meHeld && !wallmasterHoldsPlayer(e, focus.current?.index ?? 0)) continue;
@@ -9358,7 +9897,6 @@ async function main() {
     tryPickupCurrentRoomItem();
 
     if (inv.invuln > 0) inv.invuln -= 1;
-    stepLinkStatus(inv);
     if (shared && flutePulse > 0) flutePulse -= 1;
     // Room clamp / shove / solid-eject fight the hand — leave position to the capturer.
     if (!linkHeldByWallmaster()) {
@@ -9649,6 +10187,17 @@ async function main() {
   }
 
   function tryUseB() {
+    if (canShowLetter(caveView()?.cave, inv)) {
+      showLetter(inv);
+      fx.playSfx('secret');
+      caveView()?.refreshWares(caveTaken, false, inv);
+      refreshHud();
+      refreshOpenMenus();
+      setStatus('You showed the letter — the wares appear');
+      openCaveDialogue(caveView()?.cave);
+      return;
+    }
+
     const slot = inv.selectedB;
 
     if (slot === B_ITEM.BOMB || (slot === B_ITEM.NONE && inv.bombs > 0)) {
@@ -9751,17 +10300,6 @@ async function main() {
     }
 
     if (slot === B_ITEM.POTION) {
-      if (canShowLetter(caveView()?.cave, inv)) {
-        showLetter(inv);
-        fx.playSfx('secret');
-        caveView()?.refreshWares(caveTaken, false, inv);
-        refreshHud();
-        refreshOpenMenus();
-        setStatus('You showed the letter — the wares appear');
-        // Switch from the locked refusal to the medicine pitch.
-        openCaveDialogue(caveView()?.cave);
-        return;
-      }
       const result = drinkPotion(inv);
       if (!result.ok) {
         setStatus(result.reason ?? 'No potion');
@@ -9849,7 +10387,7 @@ async function main() {
       return;
     }
 
-    setStatus('Select a B item (Enter inventory, X to cycle)');
+    setStatus('Select a B item (←→ in inventory, Select to cycle)');
   }
 
   /**
@@ -9857,22 +10395,31 @@ async function main() {
    * out of the anchor room's coordinate space.
    * @param {{ dir: number, nextRoomId: number, x: number, y: number } | null} raftApproach
    * @param {boolean} [mayOwnAnchor] false when this hero was already living
-   *   deep in a neighbour — they must not steal the anchor. The seam lip
-   *   still counts: a stride can land one pixel past the edge with
-   *   gridOffset set, and the next frame has to be allowed to finish the exit.
+   *   deep in a neighbour — they must not steal the anchor. A mid-stride
+   *   landing on the seam lip still counts (`mayOwnOwAnchor`); an idle
+   *   leftover on that lip must not, or both heroes glue to snapOwWalkY.
    * @returns {boolean} true when a cross (or a maze loop) was handled
    */
   function resolveOwRoomCross(raftApproach, mayOwnAnchor = true) {
     if (!mayOwnAnchor && !raftApproach) return false;
+    // An ally's leftover detectRoomCross must not yank the stream out from
+    // under a dock scroll — that left the rider halted on the pier (SFX
+    // already played) with Y in the wrong cell.
+    const rider = raftInWorld();
+    if (rider && !currentRaft().active && !raftApproach) return false;
     const cross = raftApproach ?? detectRoomCross(roomId, link.x, link.y);
     if (!cross) return false;
-    const maze = checkMaze(mazeState, roomId, cross.dir);
-    if (maze.playSecretTune) fx.playSfx('secret');
-    if (!maze.allowExit) {
-      mazeLoopSpawn(link, cross.dir);
-      dropRoomEnemies(roomId);
-      spawnOwRoomEnemies(roomId, cross.dir);
-      return true;
+    // Leftover raft plans against the occupying cell; the stream may still
+    // be the ally's Lost Woods. Maze-looping that screen ate the ride.
+    if (!raftApproach) {
+      const maze = checkMaze(mazeState, roomId, cross.dir);
+      if (maze.playSecretTune) fx.playSfx('secret');
+      if (!maze.allowExit) {
+        mazeLoopSpawn(link, cross.dir);
+        dropRoomEnemies(roomId);
+        spawnOwRoomEnemies(roomId, cross.dir);
+        return true;
+      }
     }
     // Do not soft-enter an unbound room: that nulls `screen` and the ticker
     // skips stepOverworld (black playfield). Raft south-from-island is the
@@ -9881,7 +10428,7 @@ async function main() {
       prefetchOwRoom(cross.nextRoomId);
       return false;
     }
-    const fromRoom = roomId & 0xff;
+    const fromOcc = occupyingRoom(roomId, link.x, link.y).roomId & 0xff;
     // A leftover hero on the island dock is several rooms from the stream
     // anchor (ally walked back to the sword cave). One-screen `rebaseEntities`
     // would leave everyone else in the wrong cell; the rider's pose is then
@@ -9894,9 +10441,14 @@ async function main() {
     if (!raftApproach) {
       snapRaftNorthEntry(link, cross.nextRoomId, cross.dir);
     }
+    const dropHome =
+      raftApproach
+      && fromOcc !== (cross.nextRoomId & 0xff)
+      && !roomOccupiedByOthers(fromOcc)
+        ? fromOcc
+        : null;
     softEnterOwRoom(cross.nextRoomId, cross.dir, {
-      // Raft approach already filtered dock foes; keep land leftovers otherwise.
-      dropHomeRoom: raftApproach ? fromRoom : null,
+      dropHomeRoom: dropHome,
     });
     applyPlayCamera();
     return true;
@@ -9913,25 +10465,31 @@ async function main() {
     // The ride is this hero's. An ally standing on the pier keeps walking.
     const ride = currentRaft();
     if (ride.active) {
+      const rideRoom = (ride.roomId || roomId) & 0xff;
       if (!owScreenBound()) {
-        prefetchOwRoom(roomId);
+        prefetchOwRoom(rideRoom);
       }
-      const r = stepRaftRide(link, ride, roomId);
+      const r = stepRaftRide(link, ride, rideRoom);
       if (r?.cross) {
         // Mid-ride seam: keep scrolling onto the northern shore.
         if (!owRoomReady(r.cross.nextRoomId)) {
           prefetchOwRoom(r.cross.nextRoomId);
           syncRaftSprite();
+          applyPlayCamera();
           return;
         }
         const fromRoom = roomId & 0xff;
-        rebaseEntities(r.cross.dir);
+        if ((fromRoom) !== (r.cross.nextRoomId & 0xff)) {
+          if ((fromRoom) === rideRoom) rebaseEntities(r.cross.dir);
+          else rebaseToRoom(r.cross.nextRoomId);
+        }
         link.x = r.cross.x;
         link.y = r.cross.y;
         link.dir = r.cross.dir;
         ride.crossed = true;
+        ride.roomId = r.cross.nextRoomId & 0xff;
         softEnterOwRoom(r.cross.nextRoomId, r.cross.dir, {
-          dropHomeRoom: fromRoom,
+          dropHomeRoom: fromRoom === rideRoom ? fromRoom : null,
         });
         applyPlayCamera();
         syncRaftSprite();
@@ -9942,6 +10500,7 @@ async function main() {
         setStatus('Docked');
       }
       // No stepCombat during dock scroll — Link is halted on the raft.
+      applyPlayCamera();
       syncRaftSprite();
       return;
     }
@@ -9958,11 +10517,14 @@ async function main() {
       return;
     }
 
-    const mayOwnAnchor = canClaimAnchorCross(link.x, link.y);
+    retryPendingOwRegroup();
 
     // Pond fairy first so ObjState $40 halt applies to this frame's movement.
     const fairyHalt = stepPondFairyFountain();
     const moveMask = fairyHalt ? 0 : inputMask;
+    // Idle leftover on the seam lip must not steal the stream — that rebase
+    // fight is "can walk left/right, not up/down, until a hit unsticks us".
+    const mayOwnAnchor = mayOwnOwAnchor(link.x, link.y, link.gridOffset, moveMask);
 
     if (inv.dead) return;
 
@@ -9984,7 +10546,7 @@ async function main() {
         CONTINUOUS_OW,
         owTileOpts,
       );
-      ladderObj = stepLadderObject(ladderObj, link);
+      ladderObj = stepLadderObject(ladderObj, link, ladderPeers());
       syncLadderSprite();
       // CheckPassiveTileObjects — wake Armos / Flying Ghini from $BC–$C3.
       const face = moveMask & 0x0f;
@@ -10017,8 +10579,9 @@ async function main() {
           lastWhirlwindLevel = level;
           const ty = TELEPORT_YS[level - 1] ?? 0x8d;
           const from = occupyingOwPack();
+          const packId = inv.quest === 2 ? q2CaveIdForLevel(level) : level;
           setStatus(`Whirlwind → Level ${level}`);
-          void enterLevel(level, {
+          void enterLevel(packId, {
             fromRoomId: from.roomId,
             fromAttrs: from.attrs ?? screen?.attrs ?? {},
             spawnOverride: { x: 0x78, y: ty, dir: DIR.UP },
@@ -10043,6 +10606,7 @@ async function main() {
     // (dock room at Y=$3D) when Link is on the south lip with the raft.
     const raftApproach = !fairyHalt
       ? planRaftNorthApproachFromAnchor(link, roomId, inv)
+        ?? planRaftDockRideFromAnchor(link, roomId, inv)
       : null;
     // Cull/release before spawn so a seam-edge latch drop cannot share a frame
     // with a fresh wave of the same ROM spawn points.
@@ -10059,6 +10623,11 @@ async function main() {
       inv.shoveDir = 0;
       fx.playSfx('secret');
       setStatus('Raft!');
+      if (ride.state === RAFT_STATE.UP) {
+        const north = neighborRoomId(roomId, DIR.UP);
+        if (north != null) prefetchOwRoom(north);
+      }
+      applyPlayCamera();
       syncRaftSprite();
       return;
     }
@@ -10191,10 +10760,26 @@ async function main() {
     // stuck on solid door tiles in a room they were already standing in.
     const door = uwHeroDoorContext();
     const { occId, occRoom, localLink } = door;
-    // LevelBlock floor-item bits 5–6: rumble while this cell is next to the
-    // boss. Re-request every frame; audio.js keeps one DMC slot in flight.
-    const roar = bossNoiseSfx(occRoom?.floorItem?.bossNoise);
-    if (roar) fx.playSfx(roar);
+    // CheckBossSoundEffectUW: rumble while occupying a cell whose floor-item
+    // bits 5–6 are set, unless the boss room is already all-killed ($C0).
+    // DriveSample retriggers every $A0 frames, not every PCM end.
+    if (firstInWorldThisFrame('bossNoise')) {
+      const bossRoomCleared = dungeonBossRoomCleared(dungeon);
+      let roarRoom = null;
+      if (!bossRoomCleared) {
+        const here = focus.current?.world;
+        for (const p of activePlayers(players)) {
+          if (p.world !== here) continue;
+          const pack = p === focus.current ? occRoom : dungeonPackAt(p);
+          if (bossNoiseSfxForVisit(pack)) {
+            roarRoom = pack;
+            break;
+          }
+        }
+      }
+      const roar = stepBossNoise(dungeon, roarRoom, { bossRoomCleared });
+      if (roar) fx.playSfx(roar, { background: true });
+    }
     const doorMode = door.mode;
     const inDoor = doorMode === 'corridor';
     const occGrid = uwOccupyingTileGrid(occId);
@@ -10259,7 +10844,11 @@ async function main() {
             UW_ROOM_BOUNDS,
             lipOpts,
           );
-          ladderObj = stepLadderObject(ladderObj, localLink);
+          ladderObj = stepLadderObject(
+            ladderObj,
+            localLink,
+            (occId & 0xff) === (roomId & 0xff) ? ladderPeers() : [],
+          );
         } else {
           ladderObj = null;
           stepLink(localLink, OPEN_UW_GRID, inputMask, undefined, NO_ROOM_BOUNDS);
@@ -10278,7 +10867,7 @@ async function main() {
         const inCellar = isCellarRoom(occRoom, level);
         const roomBounds = inCellar ? NO_ROOM_BOUNDS : UW_ROOM_BOUNDS;
         stepLink(localLink, occGrid, inputMask, undefined, roomBounds, uwOpts);
-        if (sameAnchor) ladderObj = stepLadderObject(ladderObj, link);
+        if (sameAnchor) ladderObj = stepLadderObject(ladderObj, link, ladderPeers());
         localLink.x = Math.max(left, Math.min(right, localLink.x));
         const minY = inCellar ? CELLAR_EXIT_MIN_Y : top;
         localLink.y = Math.max(minY, Math.min(bottom + 8, localLink.y));
@@ -10603,13 +11192,18 @@ async function main() {
   exposeDebugHandle();
 
   /**
-   * One animation frame, simulated as the player in focus.
-   *
-   * Everything in here reads the world context of whoever `focus.on()` loaded.
-   * At one player that is always player one and the swap is a no-op; the split
-   * into a per-player part and a shared part (enemies, streaming, rendering)
-   * comes next.
+   * NES decrements ObjTimer / long timers every frame unless MenuState or
+   * Paused (`@UpdateTimers` @ Z_07). The flashing-bubble sword countdown is
+   * one of those long timers — if it only ran inside stepCombat, a doorway
+   * load (`heroIsBusy`) or dialogue freeze left it stuck and the sword dead.
    */
+  function tickStatusTimers() {
+    for (const p of activePlayers(players)) {
+      if (playerIsInMenu(p)) continue;
+      if (p.inv) stepLinkStatus(p.inv);
+    }
+  }
+
   /**
    * One hero's physics step, in whatever place that hero is standing.
    *
@@ -10621,9 +11215,10 @@ async function main() {
     const mask = inv.paralyzed > 0 || inv.dead ? 0 : device.mask();
     if (mode === 'cave') {
       stepCave(mask);
-    } else if (mode === 'overworld' && (screen || currentRaft().active)) {
-      // Raft can outlive a brief unbound `screen` after a dock soft-enter;
-      // keep stepping so UpdateDock still lands.
+    } else if (mode === 'overworld') {
+      // Always enter: `bindOwScreenFromStream` may have cleared `screen` while
+      // the dest pack is in flight, and stepOverworld is what retries the bind
+      // (and keeps a raft ride alive across that gap).
       stepOverworld(mask);
     } else if (mode === 'dungeon') {
       stepDungeon(mask);
@@ -10632,12 +11227,10 @@ async function main() {
 
   /** One hero's sprites, positioned for the frame just simulated. */
   function drawHero() {
+    applyEnemyPaletteForMode();
     const attacking = isSwordActive(sword);
     const drawY = mode === 'overworld' ? link.y + 2 : link.y;
-    // InvRing patches SP0 tunic (`LinkColors`); detach before cache destroy.
-    if (frames.setRing(inv.ring ?? 0)) {
-      linkSprite.texture = Texture.EMPTY;
-    }
+    frames.setRing(inv.ring ?? 0);
     linkSprite.texture = itemLiftActive()
       ? frames.textureForLift()
       : frames.textureFor(link.dir, link.animFrame, {
@@ -10658,6 +11251,14 @@ async function main() {
     drawSwordBlade();
   }
 
+  /**
+   * One animation frame, simulated as the player in focus.
+   *
+   * Everything in here reads the world context of whoever `focus.on()` loaded.
+   * At one player that is always player one and the swap is a no-op; the split
+   * into a per-player part and a shared part (enemies, streaming, rendering)
+   * comes next.
+   */
   function tickFrame() {
     const now = performance.now();
     if (debugSteps > 0) {
@@ -10712,14 +11313,18 @@ async function main() {
     // Periodic autosave (~15s) while exploring.
     if (now - lastAutosave > 15000) persistSave();
 
+    syncPadAssignment();
+
     // Edge-detect buttons once per frame (not once per physics step), and
     // once per device: asking consumes the edge, so every player's buttons
     // are read here and read nowhere else.
     const pressed = inputs.map((device) => ({
       start: device.pressedStart(),
+      startKey: device.pressedStartKey(),
       a: device.pressedA(),
       b: device.pressedB(),
       select: device.pressedSelect(),
+      dirs: device.pressedDirs(),
     }));
     // Start on an empty seat sits that player down. Start+Select on a
     // seated one stands them up. The last player cannot leave this way.
@@ -10757,7 +11362,7 @@ async function main() {
             leavePlayer(occupant);
             leaveConsumed.add(occupant);
           }
-        } else if (press.start && !inputs[i].holdingSelect()) {
+        } else if (press.startKey && !inputs[i].holdingSelect()) {
           const joined = joinPlayer(i);
           if (joined) {
             joinConsumed.add(joined);
@@ -10845,19 +11450,49 @@ async function main() {
     }
     focus.to(players[0]);
 
-    // While a player's inventory is open they cycle their own B slot.
+    /**
+     * Walk this hero's B slot. Menu ←→ and Select (no menu) share this.
+     * @param {typeof players[number]} p
+     * @param {number} dir
+     */
+    function cycleHeroB(p, dir) {
+      focus.on(p, () => {
+        const prevB = inv.selectedB;
+        cycleBItem(inv, dir);
+        if (inv.selectedB !== prevB) fx.playSfx('rupee');
+        refreshHud();
+        const ui = menuUi(p);
+        if (ui.open) ui.refresh(inv, invView());
+      });
+    }
+
+    /** Heroes who already walked the B grid this frame (do not also take Select). */
+    const cycledB = new Set();
+
+    // NES UpdateSubmenuSelection: left/right walk the B grid while the
+    // submenu is open. Empty slots are skipped so the cursor lands on items.
     for (const p of activePlayers(players)) {
       const ui = menuUi(p);
       if (!ui.open || ui.phase !== 'open' || dialogueConsumed.has(p)) continue;
-      const press = pressed[p.index];
-      if (!press.b) continue;
-      focus.on(p, () => {
-        const prevB = inv.selectedB;
-        cycleBItem(inv);
-        if (inv.selectedB !== prevB) fx.playSfx('rupee');
-        refreshHud();
-        ui.refresh(inv, invView());
-      });
+      const dirs = pressed[p.index]?.dirs ?? 0;
+      const left = Boolean(dirs & DIR.LEFT);
+      const right = Boolean(dirs & DIR.RIGHT);
+      if (left === right) continue;
+      cycleHeroB(p, right ? 1 : -1);
+      cycledB.add(p);
+    }
+
+    // Select cycles the B slot in play so you do not have to open the menu.
+    // The continue question still owns it once someone is dead.
+    if (!deathUi.visible && !endingUi.visible) {
+      for (const p of activePlayers(players)) {
+        if (cycledB.has(p) || dialogueConsumed.has(p) || leaveConsumed.has(p)) continue;
+        const press = pressed[p.index];
+        if (!press?.select) continue;
+        if (inputs[p.index].holdingStart()) continue;
+        if (playerIsFrozenByDialogue(p)) continue;
+        cycleHeroB(p, 1);
+      }
     }
     focus.to(players[0]);
     // NES CurVScroll ±3px/frame — slide panel + scroll the playfield.
@@ -10869,15 +11504,18 @@ async function main() {
     }
 
     // Letter-show is the only B action allowed inside a cave (medicine shop).
+    // Dialogue must not swallow B — the NES nametable crawl is not a modal box.
     if (
       !inv.dead
       && !playerIsInMenu(players[0])
-      && !textBox.active
       && mode === 'cave'
       && bPressed
-      && canShowLetter(caveView()?.cave, inv)
     ) {
-      tryUseB();
+      if (canShowLetter(caveView()?.cave, inv)) {
+        tryUseB();
+      } else if (potionShopWaresHidden(caveView()?.cave, inv) && !textBox.active) {
+        setStatus('Bring the letter from the old man');
+      }
     }
 
     // Every hero swings their own sword and uses their own B item, unless
@@ -10915,9 +11553,9 @@ async function main() {
       }
 
       // The submenu freezes only its owner, the same as a private conversation.
-      // Story beats (`levelEntry`, `briefing`) still hold everyone. Cave Mode B
-      // lets you walk the shop while the text crawls. Solo is unchanged: the
-      // only player is the owner, so the world still stops for the goldens.
+      // Labyrinth-entry holds its readers. Cave Mode B lets you walk the
+      // shop while the text crawls. Solo is unchanged: the only player is
+      // the owner, so the world still stops for the goldens.
 
       // Keep an in-progress raft ride ticking even after death so Link is not
       // stranded mid-water with a frozen dock object. One hero down no longer
@@ -10931,11 +11569,8 @@ async function main() {
         // detected presses must only be seen by the first of them.
         stepDeathMode(deathInput);
         deathInput = NO_DEATH_INPUT;
-        continue;
-      }
-
-      // GameMode $12 halts the world until hearts finish filling.
-      if (triforceCeremonyActive(triforceCeremony)) {
+      } else if (triforceCeremonyActive(triforceCeremony)) {
+        // GameMode $12 halts the world until hearts finish filling.
         const finder =
           players.find((p) => p.active && p.index === (triforceCeremony.playerIndex ?? 0))
           ?? players[0];
@@ -10955,26 +11590,28 @@ async function main() {
             }
           }
         });
-        continue;
+      } else {
+        // Tune0 $40 is re-requested every frame; arbitration drops it when
+        // square 1 is busy, so a single call would usually be swallowed.
+        if (!inv.dead && (inv.halfHearts ?? 0) > 0 && (inv.halfHearts ?? 0) <= 2) {
+          fx.playSfx('low_health');
+        }
+
+        rallyFollowers();
+
+        stepCoopDeaths();
+
+        // Each hero walks their own world, on their own device. Work shared by
+        // everyone standing in one place — the foes, the collisions — is claimed
+        // by whoever gets there first this tick; see firstInWorldThisFrame.
+        for (const p of activePlayers(players)) {
+          if (playerIsFrozenByDialogue(p) || playerIsInMenu(p) || p.deathSeq) continue;
+          focus.on(p, () => stepHero(inputs[p.index]));
+        }
       }
-
-      // Tune0 $40 is re-requested every frame; arbitration drops it when
-      // square 1 is busy, so a single call would usually be swallowed.
-      if (!inv.dead && (inv.halfHearts ?? 0) > 0 && (inv.halfHearts ?? 0) <= 2) {
-        fx.playSfx('low_health');
-      }
-
-      rallyFollowers();
-
-      stepCoopDeaths();
-
-      // Each hero walks their own world, on their own device. Work shared by
-      // everyone standing in one place — the foes, the collisions — is claimed
-      // by whoever gets there first this tick; see firstInWorldThisFrame.
-      for (const p of activePlayers(players)) {
-        if (playerIsFrozenByDialogue(p) || playerIsInMenu(p) || p.deathSeq) continue;
-        focus.on(p, () => stepHero(inputs[p.index]));
-      }
+      // After (or instead of) hero physics so a skipped stepCombat — door
+      // load, dialogue, death — cannot freeze SwordBlockedLongTimer.
+      tickStatusTimers();
     }
 
     // The rest of the frame is the view's, not the last hero simulated.

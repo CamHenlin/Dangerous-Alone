@@ -9,6 +9,7 @@ import {
   hostPlayer,
   joiningPads,
   nextJoinIndex,
+  padsAreClones,
   seatForJoiningPad,
   snapToHost,
 } from './coopRoster.js';
@@ -123,6 +124,22 @@ test('the first plugged-in pad is the host; extras are join devices', () => {
   assert.equal(hostPadIndex(pads), 1);
   assert.deepEqual(joiningPads(pads, { padSlots: [null, 1, 2, 3], activeIndexes: [0] }), [2]);
   assert.deepEqual(joiningPads([{ id: 'only' }], { padSlots: [null, 1, 2, 3], activeIndexes: [0] }), []);
+});
+
+test('a pad cloned into later GamepadList slots is not three join devices', () => {
+  const buttons = Array.from({ length: 16 }, () => ({ pressed: false }));
+  buttons[9] = { pressed: true };
+  const clone = { id: 'USB Gamepad', buttons };
+  const pads = [clone, clone, clone, clone];
+  assert.equal(padsAreClones(clone, clone), true);
+  assert.equal(padsAreClones(clone, { id: 'USB Gamepad', buttons }), true);
+  assert.deepEqual(joiningPads(pads, { padSlots: [null, 1, 2, 3], activeIndexes: [0] }), []);
+  const extra = { id: 'Xbox', buttons: Array.from({ length: 16 }, () => ({ pressed: false })) };
+  extra.buttons[9] = { pressed: true };
+  assert.deepEqual(
+    joiningPads([clone, extra], { padSlots: [null, 1, 2, 3], activeIndexes: [0] }),
+    [1],
+  );
 });
 
 test('Start on a spare pad sits the next empty seat, and claims that pad', () => {

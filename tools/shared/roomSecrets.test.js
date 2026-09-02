@@ -137,7 +137,8 @@ test('roomAllDead ignores bubbles and traps (NES RoomAllDead)', () => {
 
 test('persons persist after room clear; tip rooms are not fight rooms', () => {
   assert.equal(persistsAfterRoomClear(0x4b), true);
-  assert.equal(persistsAfterRoomClear(0x51), true);
+  assert.equal(persistsAfterRoomClear(0x51), false, 'money-or-life is a one-shot tax');
+  assert.equal(persistsAfterRoomClear(0x4f), true, 'bomb-upgrade person still uses the taken flag');
   assert.equal(persistsAfterRoomClear(0x49), true);
   assert.equal(persistsAfterRoomClear(0x37), true); // Zelda
   assert.equal(persistsAfterRoomClear(0x07), false);

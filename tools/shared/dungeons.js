@@ -1,4 +1,5 @@
 import { parseOffset } from './ranges.js';
+import { copyBytes } from './bytes.js';
 import { applyQuest2LevelInfo } from './quest2LevelInfo.js';
 
 export const UW_SQUARES_W = 12;
@@ -18,21 +19,20 @@ const DOOR_NAMES = {
 };
 
 /**
- * @param {Buffer} prg
+ * @param {Uint8Array} prg
  * @param {object} schema
  */
 export function loadDungeonTables(prg, schema) {
   const o = schema.offsets;
-  const roomLayouts = Buffer.from(
-    prg.subarray(parseOffset(o.roomLayouts.prg), parseOffset(o.roomLayouts.prg) + o.roomLayouts.length),
-  );
+  const layoutStart = parseOffset(o.roomLayouts.prg);
+  const roomLayouts = copyBytes(prg, layoutStart, layoutStart + o.roomLayouts.length);
 
   const columnTables = o.columnHeaps.map((heap) => {
     const start = parseOffset(heap.prg);
     return {
       id: heap.id,
       start,
-      bytes: Buffer.from(prg.subarray(start, start + heap.length)),
+      bytes: copyBytes(prg, start, start + heap.length),
     };
   });
 
@@ -40,7 +40,7 @@ export function loadDungeonTables(prg, schema) {
 
   const levelBlocks = o.levelBlocks.map((block) => {
     const start = parseOffset(block.prg);
-    const bytes = Buffer.from(prg.subarray(start, start + block.length));
+    const bytes = copyBytes(prg, start, start + block.length);
     return {
       id: block.id,
       quest: block.quest,
@@ -58,7 +58,7 @@ export function loadDungeonTables(prg, schema) {
   const itemPos = fields.shortcutOrItemPosArray;
   const levelInfos = o.levelInfo.map((info) => {
     const start = parseOffset(info.prg);
-    const bytes = Buffer.from(prg.subarray(start, start + info.length));
+    const bytes = copyBytes(prg, start, start + info.length);
     const packed = itemPos
       ? [...bytes.subarray(itemPos.offset, itemPos.offset + itemPos.length)]
       : [];
@@ -466,4 +466,15 @@ export function finalizeLevelMeta(level) {
     }
   }
   return level;
+}
+
+/**
+ * LEVEL-n as the HUD, radar, and story see it. `level` is the dungeon pack
+ * / overworld cave id; Q2 writes a different `levelNumber` on several slots.
+ * @param {object | null | undefined} level
+ */
+export function displayedDungeonLevel(level) {
+  const pack = Number(level?.level ?? 0);
+  const shown = Number(level?.levelNumber);
+  return shown > 0 ? shown : pack;
 }

@@ -261,19 +261,24 @@ Same workflow on both platforms — Node 18+ and a Chromium/Firefox/Safari brows
 cd nes_zelda
 npm install
 
-# 2. Place your legally obtained ROM at ./zelda.nes
-# 3. Extract game data (once; regenerates assets/extracted/)
-npm run extract -- all
-
-# 4. Play
+# 2. Play — drop your legally obtained Zelda (USA) `.nes` ROM onto the window
 npm run dev
 # open http://localhost:5173/play.html
 ```
 
+The first visit shows a dropzone. The ROM is stored in the browser (`localStorage`)
+and all maps, tiles, and audio are extracted from it there. Clearing site data
+removes the ROM; drop it again to restore play. `play.html?resetRom=1` does the
+same without wiping save slots.
+
+**Optional (tools / Node tests):** keep a local `zelda.nes` at the repo root and
+run `npm run extract -- all` to dump JSON/PNGs under `assets/extracted/` (gitignored).
+The game itself does not need that folder.
+
 **File select:** ↑↓ slot · Enter continue/new · N rename · R register/overwrite · E erase · O options.  
 Progress autosaves to the browser (`localStorage` slots). Clearing site data erases saves.
 
-**Production preview** (after extract):
+**Production preview:**
 
 ```bash
 npm run build
@@ -281,7 +286,7 @@ npm run preview
 # http://localhost:4173/play.html
 ```
 
-CI runs `npm test` + `npm run build` with **no ROM** (engine only). Extracted Nintendo assets stay local / gitignored.
+CI runs `npm test` + `npm run build` with **no ROM**. Nintendo assets are never committed.
 
 ---
 

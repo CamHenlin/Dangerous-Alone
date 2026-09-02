@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PLAY_W, occupyingRoom } from './continuousCamera.js';
 import { OBJ, createEnemy, stepEnemy } from './enemies.js';
-import { chaseBoundsForCameras, enemyMotionBounds, fairyFlightBounds, FAIRY_SCREEN_BOUNDS_OW, shotMotionBounds } from './enemyBounds.js';
+import { chaseBoundsForCameras, connectedChaseBounds, enemyMotionBounds, fairyFlightBounds, FAIRY_SCREEN_BOUNDS_OW, shotMotionBounds } from './enemyBounds.js';
 import { DIR } from './collision.js';
 import { stepProjectile, createProjectile, PROJ } from './projectiles.js';
 import { chaseBoundsForCamera, uwEnemyBoundsForRoom } from './roomStream.js';
@@ -22,6 +22,47 @@ test('overworld foes still use the camera chase pad', () => {
   const cam = { camLocalX: 40, camLocalY: 10 };
   const b = enemyMotionBounds('overworld', { homeRoomId: 0x77 }, 0x77, cam);
   assert.deepEqual(b, chaseBoundsForCamera(40, 10));
+});
+
+test('adjacent split-screen cameras open the overworld seam', () => {
+  const p1 = { camLocalX: 0, camLocalY: 0 };
+  const p2 = { camLocalX: PLAY_W, camLocalY: 0 };
+  const e = { x: PLAY_W + 0x80, y: 0x8d, homeRoomId: 0x78 };
+  // Combat is stepped by whoever arrives first — usually the hero on this
+  // screen. Their pad stops ~24px past the left lip, so a foe here cannot
+  // walk onto the ally's leftover screen.
+  const alone = enemyMotionBounds('overworld', e, 0x77, p2);
+  const party = enemyMotionBounds('overworld', e, 0x77, p2, [p1, p2]);
+  const chase = { x: 0x40, y: 0x8d };
+  assert.ok(chase.x < alone.minX, 'precondition: the left hero is outside the right pad');
+  assert.ok(party.minX < alone.minX, 'the left camera must open the seam');
+  assert.ok(chase.x >= party.minX && chase.x < party.maxX, 'p2 is a valid chase inside the party pad');
+});
+
+test('overworld foes do not walk the forest between distant cameras', () => {
+  const p1 = { camLocalX: 0, camLocalY: 0 };
+  const far = { camLocalX: PLAY_W * 3, camLocalY: 0 };
+  const e = { x: 0x80, y: 0x8d };
+  const bounds = connectedChaseBounds([p1, far], e.x, e.y, p1);
+  assert.deepEqual(bounds, chaseBoundsForCamera(0, 0));
+});
+
+test('an octorok can walk the seam when both cameras look at it', () => {
+  const p1 = { camLocalX: 0, camLocalY: 0 };
+  const p2 = { camLocalX: PLAY_W, camLocalY: 0 };
+  const e = createEnemy({ objType: OBJ.RED_OCTOROK_FAST, x: PLAY_W + 0x20, y: 0x8d });
+  e.dir = DIR.LEFT;
+  e.viewActivated = true;
+  const alone = enemyMotionBounds('overworld', e, 0x77, p2);
+  const party = enemyMotionBounds('overworld', e, 0x77, p1, [p1, p2]);
+  const chase = { x: 0x40, y: 0x8d };
+  for (let i = 0; i < 400; i += 1) {
+    stepEnemy(e, party, null, { chase, link: chase, rngByte: () => 0 });
+  }
+  assert.ok(
+    e.x < alone.minX,
+    `stuck on the right camera lip at x=${e.x} (lip=${alone.minX})`,
+  );
 });
 
 test('a Goriya chasing through an east door stays in its home cell', () => {
@@ -79,6 +120,29 @@ test('a shot in the camera room keeps the solo chase pad', () => {
   assert.deepEqual(dungeon, chaseBoundsForCamera(0, 0));
   const ow = shotMotionBounds('overworld', 0x78, 0x8d, 0x77, cam);
   assert.deepEqual(ow, chaseBoundsForCamera(0, 0));
+});
+
+test('leftover dungeon shots cannot fly into the camera room', () => {
+  const cam = { camLocalX: 0, camLocalY: 0 };
+  const x = PLAY_W + 0xa0;
+  const y = 0x80;
+  const b = shotMotionBounds('dungeon', x, y, 0x5c, cam);
+  const camBox = chaseBoundsForCamera(0, 0);
+  assert.ok(b.minX > camBox.maxX - 32, 'must not open a corridor into the left room');
+  const p = createProjectile({
+    kind: PROJ.FIREBALL,
+    x,
+    y,
+    dir: DIR.LEFT,
+    speed: 3,
+    life: 200,
+  });
+  let crossed = false;
+  for (let i = 0; i < 80 && p.alive; i += 1) {
+    stepProjectile(p, b);
+    if (p.x < PLAY_W) crossed = true;
+  }
+  assert.equal(crossed, false, `fireball entered the left room at x=${p.x}`);
 });
 
 test('a leftover dungeon shot is not clipped to the anchor camera', () => {

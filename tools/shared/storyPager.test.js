@@ -19,15 +19,17 @@ test('labyrinth-entry is only for people standing in a labyrinth', () => {
   );
 });
 
-test('a briefing still reaches the overworld, but not a cave', () => {
+test('a briefing is private to the finder, not a party beat', () => {
   const party = [
     p(0, 'overworld', 'overworld'),
     p(1, 'dungeon:1', 'dungeon'),
     p(2, 'cave:16', 'cave'),
+    p(3, 'cellar:1:127', 'dungeon'),
   ];
   assert.deepEqual(
     storyReaders(party, 'briefing').map((r) => r.index),
-    [0, 1],
+    [],
+    'an ally in the same labyrinth must not be a briefing reader',
   );
 });
 

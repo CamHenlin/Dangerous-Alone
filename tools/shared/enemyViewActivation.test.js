@@ -42,6 +42,14 @@ test('rupee stash skips spawn cloud on reveal', () => {
   assert.equal(foes[0].spawnCloud, undefined);
 });
 
+test('peahat skips spawn cloud on reveal (InitPeahat)', () => {
+  const foes = [{ alive: true, viewActivated: false, objType: 0x1a, id: 1 }];
+  assert.equal(skipsSpawnCloud(foes[0]), true);
+  activateEnemiesInView(foes, () => true);
+  assert.equal(foes[0].viewActivated, true);
+  assert.equal(foes[0].spawnCloud, undefined);
+});
+
 test('off-screen tektites stay still until they enter view', () => {
   const tektites = [
     { alive: true, viewActivated: false, x: -40, y: 0xad },

@@ -105,15 +105,31 @@ export function ladderSeparation(ladder, link) {
   if (vertical) {
     if (link.x !== ladder.x) return { dist: 0xff, aligned: false };
     return {
-      dist: Math.abs(link.y + 3 - ladder.y) & 0xff,
+      dist: Math.min(0xff, Math.abs(link.y + 3 - ladder.y)),
       aligned: true,
     };
   }
   if ((link.y + 3) !== ladder.y) return { dist: 0xff, aligned: false };
   return {
-    dist: Math.abs(link.x - ladder.x) & 0xff,
+    dist: Math.min(0xff, Math.abs(link.x - ladder.x)),
     aligned: true,
   };
+}
+
+/**
+ * Pin the ladder to this hero's cross-axis. A walk-grid snap (or a second
+ * player a pixel off) used to leave a visible `$5F` that `ladderAllowsMove`
+ * would not honor — "the ladder comes out, then I hit a wall".
+ * @param {LadderObject} ladder
+ * @param {{ x: number, y: number }} link
+ */
+export function alignLadderToLink(ladder, link) {
+  const vertical = Boolean(ladder.dir & (DIR.UP | DIR.DOWN));
+  if (vertical) {
+    return link.x === ladder.x ? ladder : { ...ladder, x: link.x };
+  }
+  const y = link.y + 3;
+  return y === ladder.y ? ladder : { ...ladder, y };
 }
 
 /**
@@ -151,21 +167,101 @@ export function ladderAllowsMove(ladder, link, moveDir) {
 
 /**
  * After movement: advance state or put the ladder away (CheckLadder).
+ * `others` are allies in the same place — a friend standing off-axis must
+ * not stash the ladder the current hero is crossing.
  * @param {LadderObject | null} ladder
  * @param {{ x: number, y: number, dir: number }} link
+ * @param {readonly { x: number, y: number, dir: number }[]} [others]
  * @returns {LadderObject | null}
  */
-export function stepLadderObject(ladder, link) {
+export function stepLadderObject(ladder, link, others = []) {
   if (!ladder) return null;
-  const { dist, aligned } = ladderSeparation(ladder, link);
-  if (!aligned || dist > 0x10) return null;
-  if (dist < 0x10) {
+  const heroes = [link, ...others];
+  /** @type {{ dist: number, link: { dir: number } }[]} */
+  const users = [];
+  for (const h of heroes) {
+    const { dist, aligned } = ladderSeparation(ladder, h);
+    if (aligned && dist <= 0x10) users.push({ dist, link: h });
+  }
+  if (users.length === 0) return null;
+  if (users.some((u) => u.dist < 0x10)) {
     return { ...ladder, state: 2 };
   }
-  // dist === $10
-  if (link.dir !== ladder.dir) return null;
-  if (ladder.state === 1) return ladder; // still approaching
-  return null; // state 2: stepped fully off
+  // All at dist === $10: keep while anyone is still approaching.
+  if (users.some((u) => u.link.dir === ladder.dir && ladder.state === 1)) {
+    return ladder;
+  }
+  return null;
+}
+
+/**
+ * True when look-ahead is unwalkable water — a new `$5F` would actually help.
+ * Used to drop a covering-but-wrong-facing object at a T-junction; a
+ * perpendicular tap beside a straight 1-tile gap hits land and keeps it.
+ * @param {{ x: number, y: number }} link
+ * @param {number} dir
+ * @param {object} opts
+ */
+function lookAheadNeedsLadder(link, dir, opts) {
+  if (!dir) return false;
+  const hit = collidingTileAhead(link, dir, opts);
+  return !hit.walkable && isLadderWaterTile(hit.tile, opts.mode);
+}
+
+/**
+ * Look-ahead water probe. Continuous OW must use the multi-room sampler —
+ * `getLinkCollidingTile` on the streaming-anchor grid clamps leftover Y and
+ * can plant the stepladder in the ocean while the beach gap is the real tile.
+ * @param {{ x: number, y: number }} link
+ * @param {number} dir
+ * @param {object} opts
+ */
+function collidingTileAhead(link, dir, opts) {
+  if (typeof opts.collidingTile === 'function') {
+    return opts.collidingTile(link.x, link.y, dir);
+  }
+  if (typeof opts.tileOpts?.collidingTile === 'function') {
+    return opts.tileOpts.collidingTile(link.x, link.y, dir);
+  }
+  return getLinkCollidingTile(
+    opts.tileGrid ?? [],
+    link.x,
+    link.y,
+    dir,
+    opts.tileOpts ?? {},
+  );
+}
+
+/**
+ * Battery save / debug snapshot of the one-tile stepladder object.
+ * @param {LadderObject | null | undefined} ladder
+ * @returns {LadderObject | null}
+ */
+export function snapshotLadder(ladder) {
+  if (!ladder) return null;
+  return {
+    x: ladder.x,
+    y: ladder.y,
+    dir: ladder.dir,
+    state: ladder.state === 2 ? 2 : 1,
+  };
+}
+
+/**
+ * @param {unknown} saved
+ * @returns {LadderObject | null}
+ */
+export function hydrateLadder(saved) {
+  if (!saved || typeof saved !== 'object') return null;
+  const rec = /** @type {{ x?: unknown, y?: unknown, dir?: unknown, state?: unknown }} */ (saved);
+  const dir = Number(rec.dir) || 0;
+  if (!dir) return null;
+  return {
+    x: Number(rec.x) || 0,
+    y: Number(rec.y) || 0,
+    dir,
+    state: rec.state === 2 ? 2 : 1,
+  };
 }
 
 /**
@@ -176,36 +272,63 @@ export function stepLadderObject(ladder, link) {
  * @param {{ ladder?: number }} opts.inv
  * @param {'overworld' | 'dungeon'} opts.mode
  * @param {number} [opts.roomId]
+ * @param {number} [opts.occupyingRoomId] cell Link is standing in (not the stream)
  * @param {boolean} [opts.inDoorway]
  * @param {number} [opts.inputDir] direction held this frame
  * @param {LadderObject | null} [opts.existing]
- * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[] }} [opts.tileOpts]
+ * @param {readonly { x: number, y: number, dir: number }[]} [opts.others]
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], collidingTile?: Function, standingTile?: Function }} [opts.tileOpts]
+ * @param {(x: number, y: number, dir: number) => { tile: number, walkable: boolean }} [opts.collidingTile]
+ * @param {(x: number, y: number) => number} [opts.standingTile]
  * @returns {LadderObject | null}
  */
 export function tryPlaceLadder(link, opts) {
-  if (opts.existing) return opts.existing;
+  let existing = opts.existing ?? null;
+  if (existing) {
+    // Covering must be decided on the *unmoved* object. Aligning to this
+    // hero first stole a co-op partner's span (different Y) and a leftover
+    // `$5F` ocean ladder kept while standing in the `$17` river.
+    const othersOnSpan = (opts.others ?? []).some((h) => ladderAllowsStanding(existing, h));
+    const selfOnSpan = ladderAllowsStanding(existing, link);
+    if (selfOnSpan) {
+      existing = alignLadderToLink(existing, link);
+      const dir = opts.inputDir ?? 0;
+      const canUse = Boolean(dir) && ladderAllowsMove(existing, link, dir);
+      const needsNew =
+        Boolean(dir)
+        && dir !== existing.dir
+        && !canUse
+        && !othersOnSpan
+        && lookAheadNeedsLadder(link, dir, opts);
+      if (!needsNew) return existing;
+      existing = null;
+    } else if (othersOnSpan) {
+      return existing;
+    } else {
+      existing = null;
+    }
+  }
   if (!opts.inv?.ladder || opts.inDoorway) return null;
   if ((link.gridOffset ?? 0) !== 0) return null;
-  if (opts.mode === 'overworld' && !isOwLadderRoom(opts.roomId ?? 0)) return null;
+  const ladderRoomId = opts.occupyingRoomId ?? opts.roomId ?? 0;
+  if (opts.mode === 'overworld' && !isOwLadderRoom(ladderRoomId)) return null;
 
   // `main.js` places the ladder before `stepLink` adopts this frame's facing,
   // so probe with the held direction — not last frame's `link.dir`.
   const dir = opts.inputDir ?? 0;
   if (!dir) return null;
 
-  const hit = getLinkCollidingTile(
-    opts.tileGrid ?? [],
-    link.x,
-    link.y,
-    dir,
-    opts.tileOpts ?? {},
-  );
+  const hit = collidingTileAhead(link, dir, opts);
   if (!isLadderWaterTile(hit.tile, opts.mode)) return null;
 
   const off = ladderOffsetForDir(dir);
+  const x = link.x + off.x;
+  const y = link.y + off.y;
+  // NES object coords are 8-bit. Continuous leftover X/Y must not wrap —
+  // `& $FF` planted the stepladder in the ocean while Link stood on `$5F`.
   return {
-    x: (link.x + off.x) & 0xff,
-    y: (link.y + off.y) & 0xff,
+    x: opts.mode === 'overworld' ? x : x & 0xff,
+    y: opts.mode === 'overworld' ? y : y & 0xff,
     dir,
     state: 1,
   };

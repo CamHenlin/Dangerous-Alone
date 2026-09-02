@@ -1,6 +1,4 @@
-import crypto from 'node:crypto';
-
-/** Unsigned CRC-32 (IEEE), uppercase hex. */
+/** Unsigned CRC-32 (IEEE), uppercase hex. Browser-safe (no node:crypto). */
 export function crc32Hex(buffer) {
   let crc = 0xffffffff;
   for (let i = 0; i < buffer.length; i += 1) {
@@ -11,16 +9,4 @@ export function crc32Hex(buffer) {
     }
   }
   return ((crc ^ 0xffffffff) >>> 0).toString(16).toUpperCase().padStart(8, '0');
-}
-
-export function sha1Hex(buffer) {
-  return crypto.createHash('sha1').update(buffer).digest('hex');
-}
-
-export function sha256Hex(buffer) {
-  return crypto.createHash('sha256').update(buffer).digest('hex');
-}
-
-export function md5Hex(buffer) {
-  return crypto.createHash('md5').update(buffer).digest('hex');
 }

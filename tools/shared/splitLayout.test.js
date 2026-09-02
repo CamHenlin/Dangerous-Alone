@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { QUAD_H, QUAD_W, emptyQuadrants, frameSize, quadrantOrigin } from './splitLayout.js';
+import {
+  QUAD_GUTTER,
+  QUAD_H,
+  QUAD_W,
+  emptyQuadrants,
+  frameSize,
+  quadrantOrigin,
+} from './splitLayout.js';
 
 test('one player is the ROM frame', () => {
   assert.deepEqual(frameSize(1), { width: 256, height: 240, cols: 1, rows: 1 });
@@ -10,17 +17,32 @@ test('one player is the ROM frame', () => {
 test('two players open the same 2×2 as four, with empty join cells', () => {
   assert.deepEqual(frameSize(2), frameSize(4));
   assert.deepEqual(quadrantOrigin(0, 2), { x: 0, y: 0 });
-  assert.deepEqual(quadrantOrigin(1, 2), { x: QUAD_W, y: 0 });
-  assert.deepEqual(quadrantOrigin(2, 2), { x: 0, y: QUAD_H });
-  assert.deepEqual(quadrantOrigin(3, 2), { x: QUAD_W, y: QUAD_H });
+  assert.deepEqual(quadrantOrigin(1, 2), { x: QUAD_W + QUAD_GUTTER, y: 0 });
+  assert.deepEqual(quadrantOrigin(2, 2), { x: 0, y: QUAD_H + QUAD_GUTTER });
+  assert.deepEqual(quadrantOrigin(3, 2), {
+    x: QUAD_W + QUAD_GUTTER,
+    y: QUAD_H + QUAD_GUTTER,
+  });
 });
 
-test('four players fill a 2×2 with room for a shared bar', () => {
+test('four players fill a 2×2 of ROM frames', () => {
   const f = frameSize(4);
-  assert.equal(f.width, 512);
-  assert.equal(f.height, QUAD_H * 2 + 64);
-  assert.deepEqual(quadrantOrigin(2, 4), { x: 0, y: QUAD_H });
-  assert.deepEqual(quadrantOrigin(3, 4), { x: QUAD_W, y: QUAD_H });
+  assert.equal(f.width, QUAD_W * 2 + QUAD_GUTTER);
+  assert.equal(f.height, QUAD_H * 2 + QUAD_GUTTER);
+  assert.deepEqual(quadrantOrigin(2, 4), { x: 0, y: QUAD_H + QUAD_GUTTER });
+  assert.deepEqual(quadrantOrigin(3, 4), {
+    x: QUAD_W + QUAD_GUTTER,
+    y: QUAD_H + QUAD_GUTTER,
+  });
+});
+
+test('company leaves a 3px gutter between adjacent screens', () => {
+  const left = quadrantOrigin(0, 2);
+  const right = quadrantOrigin(1, 2);
+  const below = quadrantOrigin(2, 2);
+  assert.equal(right.x - (left.x + QUAD_W), QUAD_GUTTER);
+  assert.equal(below.y - (left.y + QUAD_H), QUAD_GUTTER);
+  assert.equal(QUAD_GUTTER, 3);
 });
 
 test('empty quadrants are join prompts in every co-op layout', () => {

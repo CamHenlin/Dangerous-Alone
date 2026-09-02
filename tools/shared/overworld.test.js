@@ -8,6 +8,7 @@ import {
   decodeColumnSquares,
   decodeScreen,
   loadOverworldTables,
+  owScreenNesScale,
   paletteRowForSquareWithBurnHint,
   recolorBurnTreeSquareRgba,
   squareToTiles,
@@ -28,7 +29,7 @@ function load() {
 
 test('overworld tables load on PRG1 ROM', { skip: !fs.existsSync(romPath) }, () => {
   const tables = load();
-  assert.equal(tables.roomLayouts.length, 1936);
+  assert.equal(tables.roomLayouts.length, 1984);
   assert.equal(tables.arrangement.length, 128);
   assert.equal(tables.startScreen, 0x77);
 });
@@ -137,4 +138,48 @@ test('recolorBurnTreeSquareRgba swaps only foliage and is idempotent', () => {
   assert.equal(rgba[6], 16);
   // Already orange — second pass is a no-op.
   assert.equal(recolorBurnTreeSquareRgba(rgba, 16, 0, 0, green, orange), false);
+});
+
+test('owScreenNesScale maps a 2×-wide backing store onto NES columns', () => {
+  assert.deepEqual(owScreenNesScale(256, 176), { scaleX: 1, scaleY: 1 });
+  assert.deepEqual(owScreenNesScale(512, 176), { scaleX: 2, scaleY: 1 });
+  assert.deepEqual(owScreenNesScale(512, 352), { scaleX: 2, scaleY: 2 });
+});
+
+test('recolorBurnTreeSquareRgba on a 2×-wide texture hits NES col 11, not col 5', () => {
+  const green = [
+    [0, 0, 0],
+    [0, 168, 0],
+    [252, 224, 168],
+    [0, 88, 248],
+  ];
+  const orange = [
+    [0, 0, 0],
+    [228, 92, 16],
+    [252, 224, 168],
+    [0, 88, 248],
+  ];
+  const width = 512;
+  const height = 176;
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const o = i * 4;
+    rgba[o] = 0;
+    rgba[o + 1] = 168;
+    rgba[o + 2] = 0;
+    rgba[o + 3] = 255;
+  }
+  const { scaleX, scaleY } = owScreenNesScale(width, height);
+  assert.equal(
+    recolorBurnTreeSquareRgba(rgba, width, 11, 7, green, orange, { scaleX, scaleY }),
+    true,
+  );
+  const at = (col, row) => {
+    const x = Math.round(col * 16 * scaleX);
+    const y = Math.round(row * 16 * scaleY);
+    const o = (y * width + x) * 4;
+    return [rgba[o], rgba[o + 1], rgba[o + 2]];
+  };
+  assert.deepEqual(at(11, 7), [228, 92, 16]);
+  assert.deepEqual(at(5, 7), [0, 168, 0]);
 });

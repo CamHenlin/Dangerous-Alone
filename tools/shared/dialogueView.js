@@ -3,8 +3,8 @@
  *
  * A closed box is never drawn — the first split-screen pass used
  * `!active || …` and painted an empty panel in every view, every frame.
- * Story beats (`levelEntry`, `briefing`) appear for everyone; a private
- * conversation appears only for the reader.
+ * Story beats (`levelEntry`) appear for their readers; a private
+ * conversation (including the post-shard briefing) appears only for the reader.
  *
  * @param {boolean} active the box has something to say
  * @param {{ story?: boolean, reader?: boolean }} [who]
@@ -29,7 +29,8 @@ export function dialogueAcceptsInput(active, { story = false, reader = false } =
 /**
  * Whether this hero is frozen while the box is up.
  *
- * Story beats hold everyone. A private conversation holds only its reader.
+ * Labyrinth-entry holds its readers. A private conversation (including the
+ * post-shard briefing) holds only its reader.
  * Cave speech is the NES exception: the nametable crawl runs while you walk.
  *
  * @param {boolean} active

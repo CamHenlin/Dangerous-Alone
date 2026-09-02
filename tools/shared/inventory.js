@@ -119,7 +119,7 @@ export function createInventory() {
     clock: 0,
     /** SwordBlocked — sticky 0/1 from red/blue bubbles. */
     swordBlocked: 0,
-    /** SwordBlockedLongTimer — frames remaining from flashing bubble (~$A0). */
+    /** SwordBlockedLongTimer — frames remaining from flashing bubble ($10×$0A). */
     swordBlockedTimer: 0,
     /** Like-Like / Wallmaster paralysis frames. */
     paralyzed: 0,
@@ -143,39 +143,72 @@ export function trySpendArrowShot(inv) {
 }
 
 /**
- * B items this bag can put on the slot, in cycle order.
- * @param {ReturnType<typeof createInventory>} inv
+ * NES submenu B-slot order — left-to-right, top row then bottom
+ * (UpdateSubmenuSelection / SubmenuItemXs).
  */
-export function ownedBItems(inv) {
-  const owned = [];
-  if (inv.bombs > 0 || inv.selectedB === B_ITEM.BOMB) owned.push(B_ITEM.BOMB);
-  if (inv.boomerang > 0 || inv.magicBoomerang > 0) owned.push(B_ITEM.BOOMERANG);
-  if (inv.food > 0 || inv.selectedB === B_ITEM.BAIT) owned.push(B_ITEM.BAIT);
-  if (inv.candle > 0) owned.push(B_ITEM.CANDLE);
-  // CheckMissingItem @ Z_07.asm:1054 — letter occupies the potion B slot when
-  // held and no potion has been bought yet (medicine-shop "show letter" path).
-  if (inv.potion > 0 || ((inv.letter ?? 0) === 1 && (inv.potion ?? 0) === 0)) {
-    owned.push(B_ITEM.POTION);
+export const B_SLOT_ORDER = Object.freeze([
+  B_ITEM.BOOMERANG,
+  B_ITEM.BOMB,
+  B_ITEM.BOW,
+  B_ITEM.CANDLE,
+  B_ITEM.FLUTE,
+  B_ITEM.BAIT,
+  B_ITEM.POTION,
+  B_ITEM.ROD,
+]);
+
+/**
+ * @param {ReturnType<typeof createInventory>} inv
+ * @param {string} id
+ */
+function ownsBItem(inv, id) {
+  switch (id) {
+    case B_ITEM.BOMB:
+      return inv.bombs > 0 || inv.selectedB === B_ITEM.BOMB;
+    case B_ITEM.BOOMERANG:
+      return inv.boomerang > 0 || inv.magicBoomerang > 0;
+    case B_ITEM.BAIT:
+      return inv.food > 0 || inv.selectedB === B_ITEM.BAIT;
+    case B_ITEM.CANDLE:
+      return inv.candle > 0;
+    case B_ITEM.POTION:
+      // CheckMissingItem @ Z_07.asm:1054 — letter occupies the potion B slot
+      // when held and no potion has been bought yet (medicine-shop "show letter").
+      return inv.potion > 0 || ((inv.letter ?? 0) === 1 && (inv.potion ?? 0) === 0);
+    case B_ITEM.FLUTE:
+      return inv.flute > 0;
+    case B_ITEM.ROD:
+      return inv.rod > 0;
+    case B_ITEM.BOW:
+      return inv.bow > 0 && inv.arrow > 0;
+    default:
+      return false;
   }
-  if (inv.flute > 0) owned.push(B_ITEM.FLUTE);
-  if (inv.rod > 0) owned.push(B_ITEM.ROD);
-  if (inv.bow > 0 && inv.arrow > 0) owned.push(B_ITEM.BOW);
-  if (inv.bombs > 0 && !owned.includes(B_ITEM.BOMB)) owned.unshift(B_ITEM.BOMB);
-  return [...new Set(owned)];
 }
 
 /**
- * Cycle B selection among owned items.
+ * B items this bag can put on the slot, in NES grid order.
  * @param {ReturnType<typeof createInventory>} inv
  */
-export function cycleBItem(inv) {
+export function ownedBItems(inv) {
+  return B_SLOT_ORDER.filter((id) => ownsBItem(inv, id));
+}
+
+/**
+ * Cycle B selection among owned items. Negative `dir` walks left on the NES grid.
+ * @param {ReturnType<typeof createInventory>} inv
+ * @param {number} [dir]
+ */
+export function cycleBItem(inv, dir = 1) {
   const uniq = ownedBItems(inv);
   if (uniq.length === 0) {
     inv.selectedB = B_ITEM.NONE;
     return inv.selectedB;
   }
-  const idx = Math.max(0, uniq.indexOf(inv.selectedB));
-  inv.selectedB = uniq[(idx + 1) % uniq.length];
+  const step = dir < 0 ? -1 : 1;
+  const idx = uniq.indexOf(inv.selectedB);
+  const from = idx < 0 ? (step > 0 ? -1 : 0) : idx;
+  inv.selectedB = uniq[(from + step + uniq.length) % uniq.length];
   return inv.selectedB;
 }
 
@@ -205,14 +238,24 @@ export function harmLink(inv, halfHeartsDamage) {
 }
 
 /**
+ * Flashing bubble (`$2B`) sets SwordBlockedLongTimer = `$10`. StunCycle wraps
+ * every `$0A` frames, so that is `$A0` game frames (`UpdateBubble` @ Z_04).
+ */
+export const FLASH_BUBBLE_BLOCK_FRAMES = 0xa0;
+
+/**
  * Tick sword-block / paralysis timers (call once per frame).
+ *
+ * The flashing-bubble countdown is independent of the sticky red-bubble flag.
+ * Expiry must not clear `swordBlocked`, and a garbage timer is clamped so the
+ * temporary block can never last more than one flash duration.
+ *
  * @param {ReturnType<typeof createInventory>} inv
  */
 export function stepLinkStatus(inv) {
-  if (inv.swordBlockedTimer > 0) {
-    inv.swordBlockedTimer -= 1;
-    if (inv.swordBlockedTimer <= 0) inv.swordBlocked = 0;
-  }
+  let t = inv.swordBlockedTimer | 0;
+  if (t > FLASH_BUBBLE_BLOCK_FRAMES) t = FLASH_BUBBLE_BLOCK_FRAMES;
+  inv.swordBlockedTimer = t > 0 ? t - 1 : 0;
   if (inv.paralyzed > 0) inv.paralyzed -= 1;
   if (inv.itemLiftTimer > 0) inv.itemLiftTimer -= 1;
 }
@@ -223,18 +266,21 @@ export function stepLinkStatus(inv) {
 export function canSwingSword(inv) {
   // Like-Like sets LinkParalyzed (blocks movement) but CheckMonsterCollisions
   // still runs — sword must work while captured (UpdateLikeLike).
-  return !inv.swordBlocked && inv.swordBlockedTimer <= 0;
+  // NES Link_HandleInput: SwordBlockedLongTimer ORA SwordBlocked.
+  return !(inv.swordBlocked | 0) && (inv.swordBlockedTimer | 0) <= 0;
 }
 
 /**
- * Bubble contact: `$2B` temp block (~$A0f); `$2C` clear; `$2D` sticky block.
+ * Bubble contact: `$2B` temp block (`SwordBlockedLongTimer`); `$2C` clear;
+ * `$2D` sticky `SwordBlocked` until a blue bubble (or fairy fill).
  * @param {ReturnType<typeof createInventory>} inv
  * @param {number} bubbleType
  */
 export function applyBubbleSwordBlock(inv, bubbleType) {
   if (bubbleType === 0x2b) {
-    inv.swordBlocked = 1;
-    inv.swordBlockedTimer = 0xa0;
+    // Flashing: long timer only. Do not arm the sticky flag — mixing the two
+    // turned a countdown into a permanent lock if the timer ever skipped.
+    inv.swordBlockedTimer = FLASH_BUBBLE_BLOCK_FRAMES;
     return;
   }
   if (bubbleType === 0x2c) {

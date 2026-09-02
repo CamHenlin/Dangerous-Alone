@@ -8,14 +8,16 @@
  *               its own once the thing it points at has been collected.
  *
  * Screens are looked up from the extracted overworld table rather than baked
- * in, so a re-extract keeps the marks honest. The quest's `ignoreSecret` flag
- * is what separates a real entrance from the same cave id on a screen the
- * current quest never opens (level 5 claims `$0B` and `$1B`; only `$0B` is
- * reachable in quest 1).
+ * in, so a re-extract keeps the marks honest. Quest 2 applies AttrsB cave
+ * remaps and LevelInfo `LEVEL_NUMBER` (cave 2 is LEVEL-3, cave 3 is LEVEL-2)
+ * so the pin sits on the hole the HUD will name. When two screens share a
+ * cave id, quest 2 prefers the Q2-only hole (`ignoreSecretQ1`).
  */
 
 import { stairsRoomsForCellar } from './dungeonCellar.js';
 import { hasTriforce, triforceCount } from './inventory.js';
+import { q2CaveIdForLevel } from './quest2LevelInfo.js';
+import { quest2CaveId, quest2IgnoreSecret } from './quest2OwPatch.js';
 
 export const MARK_KIND = Object.freeze({
   DUNGEON: 'dungeon',
@@ -62,7 +64,20 @@ function screenAttrs(screen) {
  */
 function openInQuest(screen, quest) {
   const attrs = screenAttrs(screen);
-  return quest === 2 ? !attrs.ignoreSecretQ2 : !attrs.ignoreSecretQ1;
+  if (quest === 2) {
+    const patched = quest2IgnoreSecret(screen.mapIndex ?? 0);
+    return !(patched ?? attrs.ignoreSecretQ2);
+  }
+  return !attrs.ignoreSecretQ1;
+}
+
+function caveIdOnScreen(screen, quest) {
+  const attrs = screenAttrs(screen);
+  if (quest === 2) {
+    const patched = quest2CaveId(screen.mapIndex ?? 0);
+    if (patched != null) return patched;
+  }
+  return attrs.caveId ?? 0;
 }
 
 /**
@@ -73,14 +88,22 @@ function openInQuest(screen, quest) {
  * @returns {number[]} screen ids, ascending
  */
 export function caveScreens(screens, caveId, quest = 1) {
-  /** @type {number[]} */
-  const out = [];
+  /** @type {object[]} */
+  const matches = [];
   for (const screen of screens ?? []) {
-    if ((screenAttrs(screen).caveId ?? 0) !== caveId) continue;
+    if (caveIdOnScreen(screen, quest) !== caveId) continue;
     if (!openInQuest(screen, quest)) continue;
-    out.push(screen.mapIndex);
+    matches.push(screen);
   }
-  return out.sort((a, b) => a - b);
+  // Same cave id can sit on a Q1 hole and a Q2-only hole. Quest 2 should pin
+  // the exclusive screen ($1B not the sealed $0B pond, $19 not $42).
+  const picked =
+    quest === 2 && matches.length > 1
+      ? matches.filter((s) => screenAttrs(s).ignoreSecretQ1)
+      : matches;
+  return (picked.length ? picked : matches)
+    .map((s) => s.mapIndex)
+    .sort((a, b) => a - b);
 }
 
 /**
@@ -93,7 +116,8 @@ export function levelEntranceScreens(screens, quest = 1) {
   /** @type {Map<number, number>} */
   const out = new Map();
   for (let level = 1; level <= 9; level += 1) {
-    const found = caveScreens(screens, level, quest);
+    const caveId = quest === 2 ? q2CaveIdForLevel(level) : level;
+    const found = caveScreens(screens, caveId, quest);
     if (found.length) out.set(level, found[0]);
   }
   return out;

@@ -173,4 +173,8 @@ canvas?.addEventListener('pointermove', (e) => {
 });
 
 syncKindUi();
-setStatus('Ready — load an OW screen or dungeon room');
+setStatus('Waiting for ROM…');
+import('./romGate.js')
+  .then(({ bootRomAssets }) => bootRomAssets({ onStatus: setStatus }))
+  .then(() => setStatus('Ready — load an OW screen or dungeon room'))
+  .catch((e) => setStatus(e.message || String(e)));

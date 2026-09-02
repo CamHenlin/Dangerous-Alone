@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DIR, UW_FIRST_UNWALKABLE } from './collision.js';
+import { DIR, OW_WALKABLE_REMAP, UW_FIRST_UNWALKABLE } from './collision.js';
 import {
   LADDER_TILE,
+  alignLadderToLink,
   dungeonTileOptsWithLadder,
+  hydrateLadder,
   isLadderWaterTile,
   ladderAllowsMove,
   ladderAllowsStanding,
   ladderOffsetForDir,
+  snapshotLadder,
   stepLadderObject,
   tryPlaceLadder,
 } from './ladder.js';
@@ -17,9 +20,12 @@ import {
   UW_ROOM_BOUNDS,
   createLinkState,
   isLinkStandingSolid,
+  onWalkGrid,
+  snapLinkToWalkGrid,
   stepLink,
 } from './linkMotion.js';
 import { buildDungeonPlayGrid, dungeonPlayOrigin } from './dungeonPlay.js';
+import { decodeScreen, loadOverworldTables, screenToTileGrid } from './overworld.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT } from './paths.js';
@@ -219,4 +225,185 @@ test('L5 $26: stepladder crosses the one-square moat on every side', () => {
       `${c.name}: expected far bank, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`,
     );
   }
+});
+
+test('snapshotLadder / hydrateLadder round-trip', () => {
+  assert.equal(hydrateLadder(null), null);
+  assert.equal(hydrateLadder({ x: 0x90, y: 0x93 }), null);
+  const snap = snapshotLadder({ x: 0xb0, y: 0x90, dir: DIR.LEFT, state: 2 });
+  assert.deepEqual(hydrateLadder(snap), { x: 0xb0, y: 0x90, dir: DIR.LEFT, state: 2 });
+});
+
+test('dry land can re-face an existing ladder', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x74));
+  for (let r = 0; r < 22; r += 1) {
+    for (let c = 10; c < 14; c += 1) grid[r][c] = LADDER_TILE;
+    for (let c = 18; c < 24; c += 1) grid[r][c] = LADDER_TILE;
+  }
+  // Island at cols 14–17 ($70–$8F). Existing ladder faces far east water,
+  // too far to step on — holding left must plant a new one on the west gap.
+  const link = { x: 0x70, y: 0x90, dir: DIR.LEFT, gridOffset: 0 };
+  const existing = { x: 0xa0, y: 0x93, dir: DIR.RIGHT, state: 2 };
+  const placed = tryPlaceLadder(link, {
+    tileGrid: grid,
+    inv: { ladder: 1 },
+    mode: 'dungeon',
+    inputDir: DIR.LEFT,
+    existing,
+    tileOpts: UW_TILE,
+  });
+  assert.ok(placed);
+  assert.equal(placed.dir, DIR.LEFT);
+});
+
+test('feet on water keep the existing ladder', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x74));
+  for (let r = 10; r < 14; r += 1) {
+    for (let c = 0; c < 32; c += 1) grid[r][c] = LADDER_TILE;
+  }
+  const link = { x: 0x90, y: 0x8d, dir: DIR.LEFT, gridOffset: 0 };
+  const existing = { x: 0x90, y: 0x90, dir: DIR.RIGHT, state: 2 };
+  const kept = tryPlaceLadder(link, {
+    tileGrid: grid,
+    inv: { ladder: 1 },
+    mode: 'dungeon',
+    inputDir: DIR.LEFT,
+    existing,
+    tileOpts: UW_TILE,
+  });
+  assert.equal(kept, existing);
+});
+
+function loadOwScreen(mapIndex) {
+  const romPath = join(ROOT, 'zelda.nes');
+  const schemaPath = join(ROOT, 'assets', 'schema', 'overworld.json');
+  if (!existsSync(romPath)) return null;
+  const prg = readFileSync(romPath).subarray(16);
+  const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+  const tables = loadOverworldTables(prg, schema);
+  const screen = decodeScreen(tables, mapIndex);
+  return screenToTileGrid(screen, tables);
+}
+
+test('$5F dock: a leftover ocean-side ladder still returns to the beach', () => {
+  const grid = loadOwScreen(0x5f);
+  if (!grid) return;
+  // Debug-kit / save restore can leave the ladder one tile into the ocean
+  // (state 2, dist < $10) while Link is still on the heart dock.
+  const link = createLinkState(0xc4, 0x8d, DIR.LEFT);
+  const owTile = { walkableRemap: [...OW_WALKABLE_REMAP] };
+  let ladder = { x: 0xd0, y: 0x90, dir: DIR.RIGHT, state: 2 };
+  for (let i = 0; i < 160; i += 1) {
+    const opts = { ...owTile, ladder, ladderMode: 'overworld' };
+    if ((link.gridOffset || 0) === 0) {
+      if (!onWalkGrid(link.x, link.y)) snapLinkToWalkGrid(link);
+      ladder = tryPlaceLadder(link, {
+        tileGrid: grid,
+        inv: { ladder: 1 },
+        mode: 'overworld',
+        roomId: 0x5f,
+        inputDir: DIR.LEFT,
+        existing: ladder,
+        tileOpts: owTile,
+      });
+      opts.ladder = ladder;
+    }
+    stepLink(link, grid, DIR.LEFT, LINK_QSPEED, null, opts);
+    if (ladder) ladder = stepLadderObject(ladder, link);
+    if (link.x <= 0x90 && link.gridOffset === 0) break;
+  }
+  assert.ok(
+    link.x <= 0x90,
+    `$5F dock should ladder west to the beach, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`,
+  );
+});
+
+test('alignLadderToLink fixes a post-snap Y so water is walkable', () => {
+  const link = { x: 0xc0, y: 0x8d, dir: DIR.LEFT };
+  const skewed = { x: 0xb0, y: 0x91, dir: DIR.LEFT, state: 1 };
+  assert.equal(ladderAllowsMove(skewed, link, DIR.LEFT), false);
+  const aligned = alignLadderToLink(skewed, link);
+  assert.equal(aligned.y, 0x90);
+  assert.equal(ladderAllowsMove(aligned, link, DIR.LEFT), true);
+});
+
+test('an off-axis ally does not stash the ladder', () => {
+  const ladder = { x: 0xb0, y: 0x90, dir: DIR.LEFT, state: 1 };
+  const crossing = { x: 0xc0, y: 0x8d, dir: DIR.LEFT };
+  const ally = { x: 0xc0, y: 0x85, dir: DIR.UP };
+  const kept = stepLadderObject(ladder, crossing, [ally]);
+  assert.ok(kept);
+  assert.equal(kept.dir, DIR.LEFT);
+  assert.equal(stepLadderObject(ladder, ally), null, 'ally alone would stash');
+});
+
+test('a far leftover ladder does not stay while feet are on water', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x74));
+  for (let r = 10; r < 14; r += 1) {
+    for (let c = 0; c < 32; c += 1) grid[r][c] = LADDER_TILE;
+  }
+  const link = { x: 0x90, y: 0x8d, dir: DIR.LEFT, gridOffset: 0 };
+  const leftover = { x: 0x20, y: 0x90, dir: DIR.RIGHT, state: 2 };
+  const placed = tryPlaceLadder(link, {
+    tileGrid: grid,
+    inv: { ladder: 1 },
+    mode: 'dungeon',
+    inputDir: DIR.LEFT,
+    existing: leftover,
+    tileOpts: UW_TILE,
+  });
+  assert.ok(placed);
+  assert.equal(placed.dir, DIR.LEFT);
+  assert.equal(placed.x, 0x80);
+});
+
+test('an ally on the span keeps the ladder off a second hero\'s axis', () => {
+  const grid = Array.from({ length: 22 }, () => Array(32).fill(0x74));
+  const ladder = { x: 0x60, y: 0x90, dir: DIR.LEFT, state: 2 };
+  const crossing = { x: 0x60, y: 0x8d, dir: DIR.LEFT, gridOffset: 0 };
+  const other = { x: 0xa0, y: 0x5d, dir: DIR.UP, gridOffset: 0 };
+  const kept = tryPlaceLadder(other, {
+    tileGrid: grid,
+    inv: { ladder: 1 },
+    mode: 'dungeon',
+    inputDir: DIR.UP,
+    existing: ladder,
+    others: [crossing],
+    tileOpts: UW_TILE,
+  });
+  assert.ok(kept);
+  assert.equal(kept.x, 0x60);
+  assert.equal(kept.y, 0x90);
+  assert.equal(kept.dir, DIR.LEFT);
+});
+
+test('$17 river: leftover ocean ladder still crosses west', () => {
+  const grid = loadOwScreen(0x17);
+  if (!grid) return;
+  const owTile = { walkableRemap: [...OW_WALKABLE_REMAP] };
+  const link = createLinkState(0x70, 0x8d, DIR.LEFT);
+  let ladder = { x: 0xd0, y: 0x90, dir: DIR.RIGHT, state: 2 };
+  for (let i = 0; i < 160; i += 1) {
+    const opts = { ...owTile, ladder, ladderMode: 'overworld' };
+    if ((link.gridOffset || 0) === 0) {
+      if (!onWalkGrid(link.x, link.y)) snapLinkToWalkGrid(link);
+      ladder = tryPlaceLadder(link, {
+        tileGrid: grid,
+        inv: { ladder: 1 },
+        mode: 'overworld',
+        roomId: 0x17,
+        inputDir: DIR.LEFT,
+        existing: ladder,
+        tileOpts: owTile,
+      });
+      opts.ladder = ladder;
+    }
+    stepLink(link, grid, DIR.LEFT, LINK_QSPEED, null, opts);
+    if (ladder) ladder = stepLadderObject(ladder, link);
+    if (link.x <= 0x50 && link.gridOffset === 0) break;
+  }
+  assert.ok(
+    link.x <= 0x50,
+    `$17 river should ladder west, stopped at $${link.x.toString(16)},$${link.y.toString(16)}`,
+  );
 });

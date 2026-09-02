@@ -2,6 +2,16 @@
  * Player options (scale, filter, keybinds) persisted in localStorage.
  */
 
+import {
+  DEFAULT_PAD_BINDS,
+  clonePadBinds,
+  isPadCode,
+  normalizePadBinds,
+  padCodeLabel,
+} from './padBinds.js';
+
+export { DEFAULT_PAD_BINDS } from './padBinds.js';
+
 export const OPTIONS_KEY = 'zelda_options';
 
 export const DEFAULT_BINDS = Object.freeze({
@@ -12,7 +22,7 @@ export const DEFAULT_BINDS = Object.freeze({
   a: Object.freeze(['KeyZ', 'Space']),
   b: Object.freeze(['KeyX', 'KeyC', 'KeyB']),
   start: Object.freeze(['Enter', 'NumpadEnter', 'Escape', 'ShiftLeft', 'ShiftRight']),
-  /** NES Select — only the continue question reads it. */
+  /** NES Select — cycle B in play; continue menu still reads it. */
   select: Object.freeze(['Tab', 'Backquote']),
 });
 
@@ -145,6 +155,16 @@ export function bindsForPlayer(opts, index) {
   return opts?.playerBinds?.[i] ?? DEFAULT_PLAYER_BINDS[i] ?? DEFAULT_BINDS;
 }
 
+/**
+ * The pad sources one seat reads. Defaults are the Standard Gamepad slots.
+ * @param {object} opts
+ * @param {number} index
+ */
+export function padBindsForPlayer(opts, index) {
+  const i = Math.max(0, index | 0);
+  return opts?.playerPadBinds?.[i] ?? DEFAULT_PAD_BINDS;
+}
+
 export const DEFAULT_OPTIONS = Object.freeze({
   /** @type {number | 'auto'} 1–6 or auto-fit */
   scale: 'auto',
@@ -172,6 +192,7 @@ export function normalizeOptions(raw) {
     graphics: DEFAULT_OPTIONS.graphics,
     binds: cloneBinds(),
     playerBinds: DEFAULT_PLAYER_BINDS.map((def) => cloneBinds(def)),
+    playerPadBinds: DEFAULT_PLAYER_BINDS.map(() => clonePadBinds()),
     padSlots: [...DEFAULT_PAD_SLOTS],
   };
   if (!raw || typeof raw !== 'object') return base;
@@ -198,6 +219,9 @@ export function normalizeOptions(raw) {
     base.binds = cloneBinds(base.playerBinds[0]);
   }
   base.padSlots = normalizePadSlots(o.padSlots);
+  base.playerPadBinds = DEFAULT_PLAYER_BINDS.map((_, i) =>
+    normalizePadBinds(Array.isArray(o.playerPadBinds) ? o.playerPadBinds[i] : null),
+  );
   return base;
 }
 
@@ -229,6 +253,7 @@ export function saveOptions(opts, storage = globalThis.localStorage) {
  * @param {string} code
  */
 export function codeLabel(code) {
+  if (isPadCode(code)) return padCodeLabel(code);
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
   if (code === 'ArrowUp') return '↑';

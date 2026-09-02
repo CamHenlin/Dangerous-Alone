@@ -79,22 +79,29 @@ export function createItemSprites(sheetTexture, opts = {}) {
   /** @type {{ rowsRgb?: number[][][] } | null | undefined} */
   let activePaletteSet = opts.paletteSet ?? null;
 
-  function clearCache() {
-    for (const tex of cache.values()) {
-      tex.destroy(true);
-    }
-    cache.clear();
+  function palTag() {
+    return activePaletteSet?.id ?? '_';
+  }
+
+  function texAt(key) {
+    return cache.get(`${palTag()}:${key}`);
+  }
+
+  function rememberTex(key, tex) {
+    cache.set(`${palTag()}:${key}`, tex);
+    return tex;
   }
 
   /**
+   * Swap LevelInfo palette set (OW vs dungeon). Cache keys include the set
+   * id, so HUD / cave / overworld items keep their textures while a friend
+   * is in a labyrinth.
    * @param {{ rowsRgb?: number[][][] } | null} paletteSet
    */
   function setPaletteSet(paletteSet) {
-    // Same set → keep live textures (HUD / cave sprites still reference them).
     if (paletteSet === activePaletteSet) return;
     activePaletteSet = paletteSet;
     spriteRows = spritePaletteRowsFromSet(paletteSet);
-    clearCache();
   }
 
   function tileXY(tileIndex) {
@@ -176,7 +183,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
       drawOpts.rotate90Ccw ? 1 : 0,
       `p${spritePal}`,
     ].join(':');
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
 
     const { canvas: src, ctx: sctx } = createTileCanvas(8, 16);
@@ -206,7 +213,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     blitCanvas(ctx, src, -4, -8, 8, 16);
 
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -269,7 +276,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     const flipV = Boolean(drawOpts.flipV);
     const gap = 8;
     const key = `wideM:${top}:${gap}:fv${flipV ? 1 : 0}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
 
     const { canvas, ctx } = createTileCanvas(gap + 8, 16);
@@ -292,7 +299,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     blit(gap, true);
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -309,7 +316,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     const flipH = Boolean(drawOpts.flipH);
     const gap = 8;
     const key = `wideF:${left}:${right}:${gap}:fh${flipH ? 1 : 0}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
 
     const { canvas, ctx } = createTileCanvas(gap + 8, 16);
@@ -333,7 +340,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
     }
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 
@@ -402,7 +409,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
       return { texture: sprite8x16(top, { spritePal }), ...layout };
     }
     const key = `wide:${top}:${layout.gap}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (!tex) {
       const { canvas, ctx } = createTileCanvas(layout.gap + 8, 16);
       const fromMisc = top >= MISC_BASE;
@@ -430,7 +437,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
       blit(layout.gap, true);
       applySpritePalette(canvas, spritePal);
       tex = textureFromCanvas(canvas);
-      cache.set(key, tex);
+      rememberTex(key, tex);
     }
     return { texture: tex, ...layout };
   }
@@ -444,14 +451,14 @@ export function createItemSprites(sheetTexture, opts = {}) {
     const top = tileIndex & 0xff;
     const fromMisc = top >= MISC_BASE;
     const key = `8x8:${top}:p${spritePal}`;
-    let tex = cache.get(key);
+    let tex = texAt(key);
     if (tex) return tex;
     const { canvas, ctx } = createTileCanvas(TILE, TILE);
     if (fromMisc) drawMiscTile(ctx, top, 0, 0);
     else drawSheetTile(ctx, top, 0, 0);
     applySpritePalette(canvas, spritePal);
     tex = textureFromCanvas(canvas);
-    cache.set(key, tex);
+    rememberTex(key, tex);
     return tex;
   }
 

@@ -9,7 +9,8 @@ import {
 } from '../shared/nes2bpp.js';
 import { GREY_PREVIEW, nesColor, rgbaFromNesIndices } from '../shared/nesPalette.js';
 import { encodePngRgba } from '../shared/png.js';
-import { crc32Hex, sha256Hex } from '../shared/hash.js';
+import { crc32Hex } from '../shared/hash.js';
+import { sha256Hex } from '../shared/hashNode.js';
 import { DEFAULT_ROM_PATH, EXTRACTED_DIR, ROOT } from '../shared/paths.js';
 
 export const PATTERN_BLOCKS_PATH = path.join(ROOT, 'assets', 'schema', 'pattern_blocks.json');

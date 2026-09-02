@@ -394,6 +394,22 @@ export const L9_NORTH_LIP_SPOTS = Object.freeze([
 ]);
 
 /**
+ * Quest 2 HUD LEVEL-2 is dungeon pack 3 (start `$79`). `$69` is the room
+ * north of the entrance; diamonds sit on the south-door column.
+ */
+export const Q2_L2_PACK = 3;
+export const Q2_L2_START = 0x79;
+export const Q2_L2_NORTH = 0x69;
+export const Q2_L2_FAR_NORTH = 0x59;
+export const Q2_L2_SOUTH_DOOR_SPOTS = Object.freeze([
+  { x: 0x78, y: 0xb8 },
+  { x: 0x70, y: 0xb8 },
+  { x: 0x80, y: 0xb8 },
+  { x: 0x78, y: 0xbd },
+  { x: 0x78, y: 0xc0 },
+]);
+
+/**
  * Stay inside the entry doorway band so DoorwayDir / the corridor clamp stay
  * live. North `$5E–$67` is still `nearDoorway` (depth max `$68`); walking
  * deeper onto L9 `$23` water would need the stepladder.
@@ -652,6 +668,118 @@ export async function runL9WaterRoomArrival(game, index) {
 }
 
 /**
+ * Walk `$79 → $69` through the south door, bump the diamond row, then Left
+ * and Right without posing. Screenshot freeze: leftover could not leave the
+ * door column to reach the key.
+ *
+ * @param {Awaited<ReturnType<import('./gameDriver.js').openGame>>} game
+ * @param {number} index
+ */
+export async function runQ2L2SouthDoorArrival(game, index) {
+  await pose(game, index, 0x78, 0x4d, DIR.UP, Q2_L2_START);
+  await quietWorld(game);
+  await walkIntoRoom(game, index, KEYS[index].up, Q2_L2_NORTH, 420);
+  await quietWorld(game);
+  await walkUntilStopped(game, index, KEYS[index].up);
+  const afterUp = localPose(await hero(game, index));
+  assert.equal(
+    afterUp.room,
+    Q2_L2_NORTH,
+    `Q2 L2 $69 up-walk left $${Q2_L2_NORTH.toString(16)} `
+      + `(now $${(afterUp.room ?? 0).toString(16)} at ${afterUp.x},${afterUp.y})`,
+  );
+  const left = await stopFromHere(game, index, 'left');
+  const right = await stopFromHere(game, index, 'right');
+  return {
+    name: 'Q2 L2 $69 south door',
+    dest: Q2_L2_NORTH,
+    afterUp,
+    probes: [left, right],
+  };
+}
+
+/**
+ * The screenshot freeze: after the `$79 → $69` south-door land, walk onto
+ * the unique-floor lip (`y<=$C4`) then Left. Do not remap Left to Up.
+ *
+ * @param {Awaited<ReturnType<import('./gameDriver.js').openGame>>} game
+ * @param {number} index
+ */
+export async function runQ2L2SouthDoorImmediateStrafe(game, index) {
+  await pose(game, index, 0x78, 0x4d, DIR.UP, Q2_L2_START);
+  await quietWorld(game);
+  await walkIntoRoom(game, index, KEYS[index].up, Q2_L2_NORTH, 420);
+  await quietWorld(game);
+  await game.hold(KEYS[index].up);
+  for (let i = 0; i < 80; i += 1) {
+    const here = localPose(await hero(game, index));
+    if (here.room === Q2_L2_NORTH && here.y <= 0xc4) break;
+    await game.step(1);
+  }
+  await game.release(KEYS[index].up);
+  await game.step(2);
+  const arrived = localPose(await hero(game, index));
+  assert.equal(
+    arrived.room,
+    Q2_L2_NORTH,
+    `Q2 L2 $69 south-door land left $${Q2_L2_NORTH.toString(16)} `
+      + `(now $${(arrived.room ?? 0).toString(16)} at ${arrived.x},${arrived.y})`,
+  );
+  assert.ok(
+    arrived.y <= 0xc4,
+    `Q2 L2 $69 never reached the south lip (y=$${arrived.y.toString(16)})`,
+  );
+  const left = await stopFromHere(game, index, 'left');
+  assert.ok(
+    left.end.y >= 0xbd,
+    `Q2 L2 $69 Left walked north into the diamonds `
+      + `(${left.start.x},${left.start.y} → ${left.end.x},${left.end.y})`,
+  );
+  assert.ok(
+    left.end.x < 0x70,
+    `Q2 L2 $69 Left froze in the south door `
+      + `(${left.start.x},${left.start.y} → ${left.end.x},${left.end.y} `
+      + `room $${(left.end.room ?? 0).toString(16)})`,
+  );
+  return { arrived, left };
+}
+
+/**
+ * Walk `$79 → $69 → $59`. Occupancy used to flip to `$59` in the south door
+ * hole before `$69`'s north seam was tested, so the world never rebased and
+ * `$59` stayed fogged (black void with only the south doorway).
+ *
+ * @param {Awaited<ReturnType<import('./gameDriver.js').openGame>>} game
+ * @param {number} index
+ */
+export async function runQ2L2WalkNorthTo59(game, index) {
+  await pose(game, index, 0x78, 0x4d, DIR.UP, Q2_L2_START);
+  await quietWorld(game);
+  await walkIntoRoom(game, index, KEYS[index].up, Q2_L2_NORTH, 420);
+  await quietWorld(game);
+  // Diamonds block the south-door column; the bug is the $69 north seam.
+  await pose(game, index, 0x78, 0x4d, DIR.UP, Q2_L2_NORTH);
+  await walkIntoRoom(game, index, KEYS[index].up, Q2_L2_FAR_NORTH, 420);
+  await quietWorld(game);
+  const arrived = localPose(await hero(game, index));
+  assert.equal(
+    arrived.room,
+    Q2_L2_FAR_NORTH,
+    `Q2 L2 $59 occupancy became $${Q2_L2_FAR_NORTH.toString(16)} `
+      + `(now $${(arrived.room ?? 0).toString(16)} at ${arrived.x},${arrived.y})`,
+  );
+  assert.equal(
+    arrived.worldRoomId,
+    Q2_L2_FAR_NORTH,
+    `Q2 L2 $59 world never rebased `
+      + `(occupying $${(arrived.room ?? 0).toString(16)} `
+      + `world $${(arrived.worldRoomId ?? 0).toString(16)} `
+      + `at ${arrived.x},${arrived.y})`,
+  );
+  return arrived;
+}
+
+/**
  * @param {{ name?: string, dest: number, afterShove: object, probes: Awaited<ReturnType<typeof stopFromHere>>[] }} expected
  * @param {{ name?: string, dest: number, afterShove: object, probes: Awaited<ReturnType<typeof stopFromHere>>[] }} actual
  * @param {string} label
@@ -702,4 +830,97 @@ export function assertDoorLipTourMatch(expected, actual, label) {
     const name = expected[i].name ?? `leg ${i}`;
     assertArrivalProbesMatch(expected[i], actual[i], `${label} ${name}`);
   }
+}
+
+/** Q1 L4 winding water/lava path (layout 23). Q2 L4 slot `$2c` is the same maze. */
+export const L4_LAVA_MAZE = 0x31;
+/** Q1 L4 symmetrical water maze (layout 22). */
+export const L4_WATER_MAZE = 0x01;
+
+const UW_WALKABLE = 0x78;
+
+/**
+ * Tile under Link and 8px to the right (the 16px sprite). `stairsProbe`
+ * already samples those offsets on the occupying dungeon grid.
+ * @param {Awaited<ReturnType<import('./gameDriver.js').openGame>>} game
+ */
+export async function uwSpriteTiles(game) {
+  return game.page.evaluate(() => {
+    const p = window.zeldaDebug.stairsProbe();
+    if (!p) return null;
+    return {
+      x: p.link.x,
+      y: p.link.y,
+      go: p.link.gridOffset,
+      left: p.samples?.['0,0'] ?? null,
+      right: p.samples?.['8,0'] ?? null,
+      room: p.roomId,
+    };
+  });
+}
+
+/**
+ * @param {number} tile
+ */
+function uwTileWalkable(tile) {
+  return tile != null && (tile & 0xff) < UW_WALKABLE;
+}
+
+/**
+ * Walk a lava/water maze the way the screenshot was produced: hold each
+ * direction and the diagonals, reversing often. Underworld paths are 16px;
+ * the right 8px must stay on the trail — not in `$F4`. Play loads `?debug=1`
+ * (stepladder in the bag), which used to disable that extra foot.
+ *
+ * @param {Awaited<ReturnType<import('./gameDriver.js').openGame>>} game
+ * @param {number} index
+ * @param {number} roomId
+ * @param {string} label
+ */
+export async function runUwLavaPathTour(game, index, roomId, label) {
+  const k = KEYS[index];
+  const legs = [
+    [k.up],
+    [k.down],
+    [k.left],
+    [k.right],
+    [k.up, k.left],
+    [k.up, k.right],
+    [k.down, k.left],
+    [k.down, k.right],
+    [k.up],
+    [k.left],
+    [k.down],
+    [k.right],
+    [k.down, k.right],
+    [k.up, k.left],
+    [k.down],
+    [k.up, k.right],
+  ];
+  await pose(game, index, 0x78, 0x8d, DIR.DOWN, roomId);
+  // `?debug=1` grants the stepladder. CheckLadder then treats every 16px
+  // lava gap as a moat and the extra foot would hang into `$F4`. This tour
+  // is about staying on the trail, not crossing it.
+  await game.page.evaluate(() => window.zeldaDebug.patchInv({ ladder: 0 }));
+  await game.step(2);
+  /** @type {string[]} */
+  const slips = [];
+  for (const keys of legs) {
+    await game.hold(...keys);
+    for (let i = 0; i < 28; i += 1) {
+      await game.step(1);
+      const foot = await uwSpriteTiles(game);
+      if (!foot || !uwTileWalkable(foot.left)) continue;
+      if (!uwTileWalkable(foot.right)) {
+        slips.push(
+          `${label} $${foot.x.toString(16)},$${foot.y.toString(16)} `
+            + `go=${foot.go} left=$${(foot.left ?? 0).toString(16)} `
+            + `right=$${(foot.right ?? 0).toString(16)}`,
+        );
+      }
+    }
+    await game.release(...keys);
+    await game.step(2);
+  }
+  assert.equal(slips.length, 0, slips.slice(0, 8).join('\n'));
 }

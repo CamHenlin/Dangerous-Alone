@@ -2,14 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   assertZeldaShape,
-  loadInesFile,
+  parseInes,
   prgIdentity,
   prgOffsetToBank,
   splitPrgBanks,
   INES_HEADER_SIZE,
 } from '../shared/ines.js';
-import { loadRangeSchema, sliceRange } from '../shared/ranges.js';
-import { crc32Hex, sha256Hex } from '../shared/hash.js';
+import { normalizeRange, sliceRange } from '../shared/ranges.js';
+import { crc32Hex } from '../shared/hash.js';
+import { md5Hex, sha1Hex, sha256Hex } from '../shared/hashNode.js';
+import { bytesToHex } from '../shared/bytes.js';
 import {
   BANKS_DIR,
   DEFAULT_ROM_PATH,
@@ -30,6 +32,41 @@ function hex(n) {
 /**
  * @param {string} romPath
  */
+export function loadInesFile(romPath) {
+  if (!fs.existsSync(romPath)) {
+    throw new Error(`ROM not found: ${romPath}`);
+  }
+  return parseInes(fs.readFileSync(romPath));
+}
+
+/**
+ * @param {string} schemaPath
+ */
+export function loadRangeSchema(schemaPath) {
+  const raw = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  const ranges = (raw.ranges ?? []).map(normalizeRange);
+  return {
+    revisionTarget: raw.revision_target ?? null,
+    offsetUnit: raw.offset_unit ?? 'prg_relative',
+    ranges,
+  };
+}
+
+/**
+ * @param {Uint8Array} prg
+ */
+function prgIdentityFull(prg) {
+  return {
+    ...prgIdentity(prg),
+    md5: md5Hex(prg),
+    sha1: sha1Hex(prg),
+    sha256: sha256Hex(prg),
+  };
+}
+
+/**
+ * @param {string} romPath
+ */
 export function loadValidatedRom(romPath = DEFAULT_ROM_PATH) {
   const rom = loadInesFile(romPath);
   assertZeldaShape(rom);
@@ -43,10 +80,10 @@ export function loadValidatedRom(romPath = DEFAULT_ROM_PATH) {
  */
 export function cmdInfo({ romPath = DEFAULT_ROM_PATH, json = false } = {}) {
   const rom = loadValidatedRom(romPath);
-  const identity = prgIdentity(rom.prg);
+  const identity = prgIdentityFull(rom.prg);
   const info = {
     romPath,
-    headerHex: rom.header.toString('hex'),
+    headerHex: bytesToHex(rom.header),
     prgBanks: rom.prgBanks,
     chrBanks: rom.chrBanks,
     mapper: rom.mapper,
@@ -184,7 +221,7 @@ export function cmdRomMap({
 } = {}) {
   const rom = loadValidatedRom(romPath);
   const schema = loadRangeSchema(schemaPath);
-  const identity = prgIdentity(rom.prg);
+  const identity = prgIdentityFull(rom.prg);
 
   const romMap = {
     generatedAt: new Date().toISOString(),

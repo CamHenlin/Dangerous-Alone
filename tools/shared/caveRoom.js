@@ -215,10 +215,30 @@ export function nearCaveNpc(link) {
 }
 
 /**
+ * Interact key when Link is on the dweller and there is no ware to stand on
+ * (locked medicine shop) or the letter gift is easy to walk past.
+ * @param {{ kind?: string } | null} cave
+ * @param {{ letter?: number } | null} inv
+ * @param {{ x: number, y: number }} link
+ * @param {boolean} waresHidden
+ * @returns {string | null}
+ */
+export function caveNpcInteractKey(cave, inv, link, waresHidden) {
+  if (!nearCaveNpc(link)) return null;
+  if (waresHidden) return 'npc:potion';
+  if (cave?.kind === 'letter' && (inv?.letter ?? 0) < 1) return 'npc:letter';
+  return null;
+}
+
+/**
  * Bottom-of-cave control hint for the Mode-B interior.
  * @param {string} kind CaveKind
+ * @param {{ waresHidden?: boolean, hasLetter?: boolean }} [opts]
  */
-export function caveHintLine(kind) {
+export function caveHintLine(kind, opts = {}) {
+  if (kind === 'potion' && opts.waresHidden) {
+    return opts.hasLetter ? 'PRESS B OR WALK UP TO SHOW LETTER' : 'SOUTH TO LEAVE';
+  }
   switch (kind) {
     case 'road':
       return 'WALK TO STAIRS  SOUTH TO LEAVE';

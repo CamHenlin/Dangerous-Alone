@@ -23,7 +23,6 @@ import {
   tryAddMonsterToRoom,
 } from './spawn.js';
 import { BOOMERANG_STUN_FRAMES, boomerangHits } from './boomerang.js';
-import { enemyChasesBait } from './bait.js';
 import {
   BOSS,
   PATRA_CHILD,
@@ -107,10 +106,15 @@ import {
 import {
   DIRECTIONS8,
   FLYER_STATE,
-  KEESE_FLYING_MAX_SPEED_FRAC,
+  boundFlyer,
+  flyerDecideForType,
+  flyerDelayTimer,
+  flyerInitMaxSpeed,
+  flyerInitSpeed,
   flyerSpeedThresholdTransition,
-  keeseInitFlyerSpeed,
   moveFlyer,
+  turnRandomlyDir8,
+  turnTowardsPlayer8,
 } from './flyerMove.js';
 import {
   GEL_SHOVE_QSPEED,
@@ -375,6 +379,9 @@ export function createEnemy(spawn) {
   const hp = hpForType(objType);
   const keese =
     objType === OBJ.BLUE_KEESE || objType === OBJ.RED_KEESE || objType === OBJ.BLACK_KEESE;
+  const peahat = objType === OBJ.PEAHAT;
+  const flyingGhini = objType === OBJ.FLYING_GHINI;
+  const flyer = keese || peahat || flyingGhini;
   const qFrac = qSpeedFracForType(objType);
   const boss = isBossType(objType);
   const leever = isLeever(objType);
@@ -403,9 +410,11 @@ export function createEnemy(spawn) {
       spawn.dir
       ?? (keese
         ? DIRECTIONS8[(x + y) & 7]
-        : objType === OBJ.PEAHAT
+        : peahat
           ? DIR.UP
-          : DIR.LEFT),
+          : flyingGhini
+            ? DIR.DOWN
+            : DIR.LEFT),
     invuln: 0,
     alive: true,
     anim: 0,
@@ -413,7 +422,7 @@ export function createEnemy(spawn) {
       ? 30 + ((spawn.x ?? 0) & 0x3f)
       : objType === OBJ.ARMOS
         ? 0x30
-        : keese
+        : flyer
           ? 0
           : isZolOrGelType(objType)
             ? pickZolGelEdgeDelay(objType, spawn.x ?? 0)
@@ -435,12 +444,8 @@ export function createEnemy(spawn) {
     feedTimer: 0,
     leeverPhase: leever ? LEEVER_PHASE.BURIED : undefined,
     slotIndex: spawn.slotIndex,
-    // Flyer: 0..4 active, 5 = resting (weapon-vulnerable for peahat) / keese delay.
-    flyerState: keese
-      ? FLYER_STATE.SPEED_UP
-      : objType === OBJ.PEAHAT || objType === OBJ.FLYING_GHINI
-        ? 2
-        : undefined,
+    // Flyer: 0 speed-up … 5 delay (peahat weapon-vulnerable rest).
+    flyerState: flyer ? FLYER_STATE.SPEED_UP : undefined,
     armosStatue: objType === OBJ.ARMOS,
     /** Armos fade-in frames after wake (weapons ignored). */
     armosFade: objType === OBJ.ARMOS ? 0x30 : 0,
@@ -475,12 +480,12 @@ export function createEnemy(spawn) {
       objType === OBJ.BLUE_TEKTITE || objType === OBJ.RED_TEKTITE || objType === OBJ.BOULDER
         ? 0
         : undefined,
-    flyerTurns: keese ? 6 : undefined,
+    flyerTurns: flyer ? 0 : undefined,
     // NES Flyer_ObjSpeed (not whole px/frame) — see flyerMove.js.
-    flyerSpeed: keese ? keeseInitFlyerSpeed(objType) : undefined,
-    flyerSpeedFrac: keese ? 0 : undefined,
-    flyingMaxSpeedFrac: keese ? KEESE_FLYING_MAX_SPEED_FRAC : undefined,
-    flyerDistTraveled: keese ? 0 : undefined,
+    flyerSpeed: flyer ? flyerInitSpeed(objType) : undefined,
+    flyerSpeedFrac: flyer ? 0 : undefined,
+    flyingMaxSpeedFrac: flyer ? flyerInitMaxSpeed(objType) : undefined,
+    flyerDistTraveled: flyer ? 0 : undefined,
   };
   if (
     isBossType(objType)
@@ -645,9 +650,10 @@ export function enemyRect(e) {
 }
 
 /**
- * Clamp + reverse at a box edge. Used by flyers / hoppers (Wizzrobe, Pols Voice,
- * Keese). Walkers use BoundByRoom + Walker_GetNextAltDir instead — reversing
- * here is what pinned Darknuts in the north-west corner.
+ * Clamp + reverse at a box edge. Used by hoppers (Wizzrobe, Pols Voice).
+ * NES flyers use BoundFlyer / reverseDir8 instead. Walkers use BoundByRoom +
+ * Walker_GetNextAltDir — reversing here is what pinned Darknuts in the
+ * north-west corner.
  */
 function bounce(e, minX, maxX, minY, maxY) {
   if (e.x < minX) {
@@ -1464,13 +1470,14 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
   // Underworld persons stay put (money-or-life / old men).
   if (e.npc) return;
 
-  if (t === OBJ.PEAHAT || t === OBJ.FLYING_GHINI) {
-    stepFlyer(e, bounds, chase);
-    return;
-  }
-
-  if (t === OBJ.BLUE_KEESE || t === OBJ.RED_KEESE || t === OBJ.BLACK_KEESE) {
-    stepKeese(e, bounds, chase && enemyChasesBait(t) ? chase : chase);
+  if (
+    t === OBJ.PEAHAT
+    || t === OBJ.FLYING_GHINI
+    || t === OBJ.BLUE_KEESE
+    || t === OBJ.RED_KEESE
+    || t === OBJ.BLACK_KEESE
+  ) {
+    stepFlyerAi(e, bounds, chase, opts);
     return;
   }
 
@@ -1478,6 +1485,7 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
     const spawn = stepBoulderSet(e, opts.enemies ?? [], {
       chase,
       rngByte: opts.rngByte,
+      anchorRoomId: opts.anchorRoomId,
     });
     if (spawn && opts.enemies) {
       // UpdateBoulderSet uses FindEmptyMonsterSlot — no slot, no rockfall.
@@ -1496,7 +1504,7 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
   }
 
   if (t === OBJ.BLUE_TEKTITE || t === OBJ.RED_TEKTITE || t === OBJ.BOULDER) {
-    stepTektite(e, bounds, chase);
+    stepTektite(e, bounds, chase, { anchorRoomId: opts.anchorRoomId });
     return;
   }
 
@@ -1570,30 +1578,31 @@ export function stepEnemy(e, bounds, tileGrid = null, opts = {}) {
 }
 
 /**
- * ControlKeeseFlight + MoveFlyer (Z_04).
- * Speed uses Flyer_ObjSpeed fractions (max $C0 → 0.75 px/f), not whole pixels.
+ * ControlPeahatFlight / ControlKeeseFlight / ControlFlyingGhiniFlight + MoveFlyer.
+ * Speed uses Flyer_ObjSpeed fractions (peahat max $A0, keese $C0), 8-way.
+ *
+ * @param {Enemy} e
+ * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
+ * @param {{ x: number, y: number } | null | undefined} chase
+ * @param {{ rngByte?: () => number }} [opts]
  */
-function stepKeese(e, bounds, chase) {
+function stepFlyerAi(e, bounds, chase, opts = {}) {
   if (e.flyerState == null) e.flyerState = FLYER_STATE.SPEED_UP;
-  if (e.flyerSpeed == null) e.flyerSpeed = keeseInitFlyerSpeed(e.objType);
+  if (e.flyerSpeed == null) e.flyerSpeed = flyerInitSpeed(e.objType);
   if (e.flyerSpeedFrac == null) e.flyerSpeedFrac = 0;
-  if (e.flyingMaxSpeedFrac == null) e.flyingMaxSpeedFrac = KEESE_FLYING_MAX_SPEED_FRAC;
+  if (e.flyingMaxSpeedFrac == null) e.flyingMaxSpeedFrac = flyerInitMaxSpeed(e.objType);
 
+  const rnd = enemyRandomByte(e, opts);
   const st = e.flyerState;
   if (st === FLYER_STATE.SPEED_UP) {
     e.flyerSpeed = (e.flyerSpeed + 1) & 0xff;
     const next = flyerSpeedThresholdTransition(e.flyerSpeed, e.flyingMaxSpeedFrac);
     if (next) {
       e.flyerState = next.state;
-      if (next.state === FLYER_STATE.DELAY) {
-        e.timer = 0x40 | ((e.anim + e.id) & 0x3f);
-      }
+      if (next.state === FLYER_STATE.DELAY) e.timer = flyerDelayTimer(rnd());
     }
   } else if (st === FLYER_STATE.DECIDE) {
-    // Flyer_KeeseDecideState: ≥$A0 chase, ≥$20 wander, else slow.
-    const r = (e.anim + e.id * 13) & 0xff;
-    e.flyerState =
-      r >= 0xa0 ? FLYER_STATE.CHASE : r >= 0x20 ? FLYER_STATE.WANDER : FLYER_STATE.SLOW_DOWN;
+    e.flyerState = flyerDecideForType(e.objType, rnd());
     e.flyerTurns = 6;
   } else if (st === FLYER_STATE.DELAY) {
     if (e.timer <= 0) e.flyerState = FLYER_STATE.SPEED_UP;
@@ -1602,9 +1611,7 @@ function stepKeese(e, bounds, chase) {
     const next = flyerSpeedThresholdTransition(e.flyerSpeed, e.flyingMaxSpeedFrac);
     if (next) {
       e.flyerState = next.state;
-      if (next.state === FLYER_STATE.DELAY) {
-        e.timer = 0x40 | ((e.anim + e.id) & 0x3f);
-      }
+      if (next.state === FLYER_STATE.DELAY) e.timer = flyerDelayTimer(rnd());
     }
   } else if (e.timer <= 0) {
     // Flyer_Chase / Flyer_Wander: $10 delay between turns, then back to Decide.
@@ -1613,35 +1620,16 @@ function stepKeese(e, bounds, chase) {
       e.flyerState = FLYER_STATE.DECIDE;
     } else {
       e.timer = 0x10;
-      if (st === FLYER_STATE.CHASE && chase) faceTowardChase(e, chase);
-      else e.dir = DIRECTIONS8[(e.anim + e.flyerTurns) & 7];
+      if (st === FLYER_STATE.CHASE && chase) {
+        e.dir = turnTowardsPlayer8(e.dir, e.x, e.y, chase.x, chase.y);
+      } else {
+        e.dir = turnRandomlyDir8(e.dir, rnd());
+      }
     }
   }
 
   // MoveFlyer runs every frame (incl. delay — whole speed is 0 then).
-  if (moveFlyer(e)) {
-    bounce(e, bounds.minX, bounds.maxX, bounds.minY, bounds.maxY);
-  }
-}
-
-/** Peahat / Flying Ghini simplified flyer: states 0–4 move, 5 rest (hurt window). */
-function stepFlyer(e, bounds, chase) {
-  if (e.timer <= 0) {
-    e.flyerState = ((e.flyerState ?? 0) + 1) % 6;
-    e.timer =
-      e.flyerState === 5
-        ? 40 + (e.anim & 0x1f)
-        : e.flyerState <= 1
-          ? 16
-          : 24 + (e.anim & 0x0f);
-    if (e.flyerState !== 5) {
-      if (chase && (e.flyerState === 2 || e.flyerState === 3)) faceTowardChase(e, chase);
-      else e.dir = DIRS[e.anim & 3];
-    }
-  }
-  if (e.flyerState === 5) return; // resting
-  const spd = e.flyerState <= 1 ? 1 : e.qSpeed;
-  moveAndCollide(e, spd, bounds, null);
+  if (moveFlyer(e)) boundFlyer(e, bounds);
 }
 
 /**

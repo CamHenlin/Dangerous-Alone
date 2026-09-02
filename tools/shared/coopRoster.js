@@ -97,6 +97,27 @@ export function hostPadIndex(pads) {
 }
 
 /**
+ * Same physical pad reported in two GamepadList slots: identical id and
+ * held buttons. Two real pads of the same model differ as soon as one
+ * person presses Start.
+ *
+ * @param {{ id?: string, buttons?: ArrayLike<{ pressed?: boolean } | null | undefined> } | null | undefined} a
+ * @param {{ id?: string, buttons?: ArrayLike<{ pressed?: boolean } | null | undefined> } | null | undefined} b
+ */
+export function padsAreClones(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if ((a.id ?? '') !== (b.id ?? '')) return false;
+  const left = a.buttons ?? [];
+  const right = b.buttons ?? [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (Boolean(left[i]?.pressed) !== Boolean(right[i]?.pressed)) return false;
+  }
+  return true;
+}
+
+/**
  * Pads whose Start should sit someone down.
  *
  * An active seat's own pad is never a join. Player one's leftover-pads
@@ -121,6 +142,8 @@ export function joiningPads(pads, { padSlots = [], activeIndexes = [0] } = {}) {
   const out = [];
   for (let i = 0; i < (pads?.length ?? 0); i += 1) {
     if (!pads[i] || owned.has(i)) continue;
+    if ([...owned].some((j) => padsAreClones(pads[i], pads[j]))) continue;
+    if (out.some((j) => padsAreClones(pads[i], pads[j]))) continue;
     out.push(i);
   }
   return out;

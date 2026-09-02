@@ -1,5 +1,5 @@
-import fs from 'node:fs';
-import { crc32Hex, md5Hex, sha1Hex, sha256Hex } from './hash.js';
+import { crc32Hex } from './hash.js';
+import { bytesToAscii, copyBytes } from './bytes.js';
 
 export const INES_HEADER_SIZE = 16;
 export const PRG_BANK_SIZE = 16 * 1024;
@@ -14,9 +14,9 @@ export const ZELDA_EXPECTATIONS = {
 
 /**
  * @typedef {object} InesRom
- * @property {Buffer} header
- * @property {Buffer} prg
- * @property {Buffer} chr
+ * @property {Uint8Array} header
+ * @property {Uint8Array} prg
+ * @property {Uint8Array} chr
  * @property {number} prgBanks
  * @property {number} chrBanks
  * @property {number} mapper
@@ -27,23 +27,24 @@ export const ZELDA_EXPECTATIONS = {
 
 /**
  * Parse an iNES (.nes) file buffer into header + PRG/CHR slices.
- * @param {Buffer} file
+ * @param {Uint8Array|ArrayBuffer} file
  * @returns {InesRom}
  */
 export function parseInes(file) {
-  if (file.length < INES_HEADER_SIZE) {
-    throw new Error(`File too small for iNES header (${file.length} bytes)`);
+  const bytes = file instanceof Uint8Array ? file : new Uint8Array(file);
+  if (bytes.length < INES_HEADER_SIZE) {
+    throw new Error(`File too small for iNES header (${bytes.length} bytes)`);
   }
 
-  const magic = file.subarray(0, 4).toString('ascii');
+  const magic = bytesToAscii(bytes.subarray(0, 4));
   if (magic !== 'NES\u001a') {
     throw new Error(`Not an iNES ROM (magic=${JSON.stringify(magic)})`);
   }
 
-  const prgBanks = file[4];
-  const chrBanks = file[5];
-  const flags6 = file[6];
-  const flags7 = file[7];
+  const prgBanks = bytes[4];
+  const chrBanks = bytes[5];
+  const flags6 = bytes[6];
+  const flags7 = bytes[7];
 
   const trainer = Boolean(flags6 & 0x04);
   const battery = Boolean(flags6 & 0x02);
@@ -64,19 +65,19 @@ export function parseInes(file) {
   const chrSize = chrBanks * 8 * 1024;
   const end = offset + prgSize + chrSize;
 
-  if (file.length < end) {
+  if (bytes.length < end) {
     throw new Error(
-      `ROM truncated: need ${end} bytes for header/trainer/PRG/CHR, have ${file.length}`,
+      `ROM truncated: need ${end} bytes for header/trainer/PRG/CHR, have ${bytes.length}`,
     );
   }
 
-  const prg = file.subarray(offset, offset + prgSize);
-  const chr = file.subarray(offset + prgSize, end);
+  const prg = copyBytes(bytes, offset, offset + prgSize);
+  const chr = copyBytes(bytes, offset + prgSize, end);
 
   return {
-    header: Buffer.from(file.subarray(0, INES_HEADER_SIZE)),
-    prg: Buffer.from(prg),
-    chr: Buffer.from(chr),
+    header: copyBytes(bytes, 0, INES_HEADER_SIZE),
+    prg,
+    chr,
     prgBanks,
     chrBanks,
     mapper,
@@ -84,17 +85,6 @@ export function parseInes(file) {
     trainer,
     mirroring,
   };
-}
-
-/**
- * Load and parse a .nes path.
- * @param {string} romPath
- */
-export function loadInesFile(romPath) {
-  if (!fs.existsSync(romPath)) {
-    throw new Error(`ROM not found: ${romPath}`);
-  }
-  return parseInes(fs.readFileSync(romPath));
 }
 
 /**
@@ -123,8 +113,8 @@ export function assertZeldaShape(rom, expect = ZELDA_EXPECTATIONS) {
 
 /**
  * Split PRG into fixed 16 KiB banks.
- * @param {Buffer} prg
- * @returns {Buffer[]}
+ * @param {Uint8Array} prg
+ * @returns {Uint8Array[]}
  */
 export function splitPrgBanks(prg) {
   if (prg.length % PRG_BANK_SIZE !== 0) {
@@ -132,22 +122,20 @@ export function splitPrgBanks(prg) {
   }
   const banks = [];
   for (let i = 0; i < prg.length; i += PRG_BANK_SIZE) {
-    banks.push(Buffer.from(prg.subarray(i, i + PRG_BANK_SIZE)));
+    banks.push(copyBytes(prg, i, i + PRG_BANK_SIZE));
   }
   return banks;
 }
 
 /**
  * Identity hashes for the PRG image (header excluded).
- * @param {Buffer} prg
+ * CRC-32 is available everywhere; MD5/SHA live on the Node CLI.
+ * @param {Uint8Array} prg
  */
 export function prgIdentity(prg) {
   return {
     size: prg.length,
     crc32: crc32Hex(prg),
-    md5: md5Hex(prg),
-    sha1: sha1Hex(prg),
-    sha256: sha256Hex(prg),
   };
 }
 
@@ -157,7 +145,7 @@ export function prgIdentity(prg) {
  */
 export function prgOffsetToBank(prgOffset) {
   if (!Number.isInteger(prgOffset) || prgOffset < 0) {
-    throw new Error(`Invalid PRG offset: ${prgOffset}`);
+    throw new Error(`Invalid offset: ${prgOffset}`);
   }
   const bank = Math.floor(prgOffset / PRG_BANK_SIZE);
   const offsetInBank = prgOffset % PRG_BANK_SIZE;

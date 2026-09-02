@@ -52,17 +52,19 @@ export function potionShopWaresHidden(cave, inv) {
 }
 
 /**
- * True when B would be read as "show the letter" (`Z_01.asm:329`): the letter
- * must be held-but-unused *and* occupying the B slot, which on NES only happens
- * when there is no potion to displace it.
+ * True when the medicine shop will accept the letter.
+ *
+ * NES `UpdateCavePerson` @ `Z_01.asm:329` also required `SelectedItemSlot`
+ * `$0F` (the letter occupying B). Cave B cannot use any other item, so holding
+ * the unused letter is enough — walking up to the old woman or pressing B
+ * both count as showing it.
  * @param {{ kind?: string } | null} cave
- * @param {{ letter?: number, potion?: number, selectedB?: string }} inv
+ * @param {{ letter?: number, potion?: number }} inv
  */
 export function canShowLetter(cave, inv) {
   if (!isPotionShop(cave)) return false;
   if ((inv?.letter ?? 0) !== LETTER.HELD) return false;
-  if ((inv?.potion ?? 0) > 0) return false;
-  return inv?.selectedB === B_ITEM.POTION;
+  return (inv?.potion ?? 0) <= 0;
 }
 
 /**

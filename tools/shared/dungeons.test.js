@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import {
   buildLevel,
   decodeUwColumn,
+  displayedDungeonLevel,
   loadDungeonTables,
   discoverConnectedRooms,
   roomsFromDrawnMap,
@@ -158,4 +159,10 @@ test('column decode yields 7 squares', { skip: !fs.existsSync(romPath) }, () => 
   const tables = load();
   const squares = decodeUwColumn(tables.columnTables[0].bytes, 0);
   assert.equal(squares.length, 7);
+});
+
+test('displayedDungeonLevel prefers LevelInfo number over pack id', () => {
+  assert.equal(displayedDungeonLevel({ level: 3, levelNumber: 2 }), 2);
+  assert.equal(displayedDungeonLevel({ level: 2 }), 2);
+  assert.equal(displayedDungeonLevel(null), 0);
 });

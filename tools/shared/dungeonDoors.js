@@ -1,4 +1,4 @@
-import { DIR, HUD_HEIGHT, UW_BOUNDS } from './collision.js';
+import { DIR, HUD_HEIGHT, LINK_HOTSPOT_Y, UW_BOUNDS } from './collision.js';
 import { bombHits } from './bomb.js';
 import { PLAY_H, PLAY_W } from './continuousCamera.js';
 import { SCREEN_EDGE } from './world.js';
@@ -348,7 +348,10 @@ export function inUwDoorCavity(link, side) {
   if (side === 'east') return link.x >= 0xe0;
   // Walk-grid north lip `$5D` is 1px into BoundByRoom (`Y<$5E`) — still floor.
   if (side === 'north') return link.y < 0x5d;
-  if (side === 'south') return link.y > UW_BOUNDS.bottom;
+  // South unique-floor row 17 is pixels `$C8–$CF`. Hotspot is ObjY+$0B, so
+  // ObjY `$BD–$C4` still samples that floor — BoundByRoom `$BD` is not the
+  // hole. X-clamping there stole Left/Right on the door-adjacent floor.
+  if (side === 'south') return link.y >= 0xd0 - LINK_HOTSPOT_Y;
   return false;
 }
 

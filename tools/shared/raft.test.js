@@ -5,8 +5,10 @@ import { PLAY_H, localInRoom } from './continuousCamera.js';
 import { TRANSITION_SPAWN } from './world.js';
 import {
   RAFT_ALIGN_PX,
+  RAFT_STATE,
   createRaftRide,
   isRaftDockRoom,
+  planRaftDockRideFromAnchor,
   planRaftNorthApproach,
   planRaftNorthApproachFromAnchor,
   raftDockX,
@@ -266,4 +268,59 @@ test('leftover island dock still plans the southbound raft against the occupying
   assert.ok(plan);
   assert.deepEqual(plan, expected);
   assert.equal(plan.nextRoomId, 0x55);
+});
+
+test('leftover on the $55 dock itself still plans a rebase so UpdateDock can fire', () => {
+  // Player two on `$55`'s pier while player one holds the stream on `$77`
+  // (submenu, or just still standing at the start). North-approach planning
+  // returns null because they already occupy the dock room, and
+  // tryStartRaftRide(anchor) never sees `$55`. Death regroup adopted their
+  // cell and the ride started — that rebase belongs on the dock trigger.
+  const local = { x: 0x80, y: 0x7d, dir: DIR.UP };
+  const leftover = localInRoom(0x55, 0x77, local.x, local.y);
+  assert.equal(
+    planRaftNorthApproachFromAnchor(
+      { ...local, x: leftover.x, y: leftover.y },
+      0x77,
+      { raft: 1 },
+    ),
+    null,
+    'already on the dock room — north-approach does not apply',
+  );
+  assert.equal(
+    tryStartRaftRide(
+      { ...local, x: leftover.x, y: leftover.y },
+      0x77,
+      { raft: 1 },
+      createRaftRide(),
+    ),
+    false,
+    'anchor-local leftover coords are not a `$77` dock',
+  );
+  const plan = planRaftDockRideFromAnchor(
+    { ...local, x: leftover.x, y: leftover.y },
+    0x77,
+    { raft: 1 },
+  );
+  assert.ok(plan);
+  assert.equal(plan.nextRoomId, 0x55);
+  assert.equal(plan.x, 0x80);
+  assert.equal(plan.y, 0x7d);
+  assert.equal(plan.dir, DIR.UP);
+  const ride = createRaftRide();
+  const link = { x: plan.x, y: plan.y, dir: plan.dir, gridOffset: 0, posFrac: 0, moving: false };
+  assert.equal(tryStartRaftRide(link, plan.nextRoomId, { raft: 1 }, ride), true);
+  assert.equal(ride.state, RAFT_STATE.UP);
+});
+
+test('dock occupancy plan is idle when the stream is already the dock room', () => {
+  const link = { x: 0x80, y: 0x7d, dir: DIR.UP };
+  assert.equal(planRaftDockRideFromAnchor(link, 0x55, { raft: 1 }), null);
+  assert.equal(planRaftDockRideFromAnchor(link, 0x77, { raft: 0 }), null);
+  const sand = localInRoom(0x55, 0x77, 0x80, 0x85);
+  assert.equal(
+    planRaftDockRideFromAnchor({ x: sand.x, y: sand.y, dir: DIR.UP }, 0x77, { raft: 1 }),
+    null,
+    'landing Y=$85 must not re-board',
+  );
 });

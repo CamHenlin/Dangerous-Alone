@@ -3,7 +3,7 @@
  */
 
 import { DIR } from './collision.js';
-import { BOULDER, BOULDER_DESTROY_Y, pointBoulderDownward } from './boulder.js';
+import { BOULDER, boulderScrapY, pointBoulderDownward } from './boulder.js';
 
 /** Destination Y deltas indexed by NES dir bit (approx JumperYOffsets). */
 const JUMP_DY = Object.freeze({
@@ -21,8 +21,9 @@ const JUMP_DY = Object.freeze({
  * @param {import('./enemies.js').Enemy} e
  * @param {{ minX: number, maxX: number, minY: number, maxY: number }} bounds
  * @param {{ x: number, y: number } | null | undefined} chase
+ * @param {{ anchorRoomId?: number | null }} [opts]
  */
-export function stepTektite(e, bounds, chase) {
+export function stepTektite(e, bounds, chase, opts = {}) {
   const isBoulder = e.objType === BOULDER;
   // State 0 = ground; 1 = airborne.
   const state = e.jumperState ?? 0;
@@ -73,8 +74,9 @@ export function stepTektite(e, bounds, chase) {
     e.jumperVy = Math.abs(e.jumperVy ?? 1);
   }
 
-  // Boulder scrap zone — DestroyMonster when Y >= $F0.
-  if (isBoulder && e.y >= BOULDER_DESTROY_Y) {
+  // Boulder scrap zone — DestroyMonster when Y >= $F0 of the home cell.
+  const scrapY = boulderScrapY(e.homeRoomId, opts.anchorRoomId);
+  if (isBoulder && e.y >= scrapY) {
     e.alive = false;
     e.hp = 0;
     return;

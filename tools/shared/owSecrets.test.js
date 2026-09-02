@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { DIR, HUD_HEIGHT } from './collision.js';
+import { PLAY_W, occupyingRoom } from './continuousCamera.js';
+import { createOwFlame } from './candle.js';
 import {
   CONTINUOUS_OW,
   LINK_QSPEED,
@@ -29,6 +31,7 @@ import {
   owShortcutStairsPos,
   revealSecretTiles,
   secretAction,
+  secretWorldRect,
   tryPushGraveSecret,
   tryRevealSecrets,
 } from './owSecrets.js';
@@ -325,4 +328,42 @@ test('every Q1 push secret paints stairs at ShortcutOrItemXY', {
     }
   }
   assert.ok(rooms >= 4, 'Q1 has several bracelet-rock / grave rooms');
+});
+
+test('candle flame beside $47 burn tree opens it', () => {
+  const tileGrid = Array.from({ length: 22 }, () => Array(32).fill(0xc4));
+  const secrets = [{ row: 7, col: 11, marker: 0xe7, action: 'burn' }];
+  const rect = secretWorldRect(secrets[0]);
+  const flame = createOwFlame(rect.x - 16, rect.y, DIR.RIGHT);
+  const opened = tryRevealSecrets(
+    secrets,
+    new Set(),
+    0x47,
+    'burn',
+    flame.x,
+    flame.y,
+    tileGrid,
+  );
+  assert.equal(opened.length, 1);
+  assert.equal(tileGrid[14][22], 0x70);
+});
+
+test('burn reveal uses occupying-room local, not the stream anchor', () => {
+  const tileGrid = Array.from({ length: 22 }, () => Array(32).fill(0xc4));
+  const secrets = [{ row: 7, col: 11, marker: 0xe7, action: 'burn' }];
+  // Anchor $46: leftover $47's burn tree is one screen to the east.
+  const flame = { x: PLAY_W + 11 * 16, y: HUD_HEIGHT + 7 * 16 };
+  const occ = occupyingRoom(0x46, flame.x, flame.y);
+  assert.equal(occ.roomId, 0x47);
+  assert.equal(
+    tryRevealSecrets(secrets, new Set(), occ.roomId, 'burn', occ.x, occ.y, tileGrid)
+      .length,
+    1,
+  );
+  // Same flame against the anchor room id / raw coords misses $47's square.
+  assert.equal(
+    tryRevealSecrets(secrets, new Set(), 0x46, 'burn', flame.x, flame.y, tileGrid)
+      .length,
+    0,
+  );
 });

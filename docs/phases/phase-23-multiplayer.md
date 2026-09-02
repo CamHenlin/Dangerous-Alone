@@ -179,26 +179,26 @@ sim stays single with four cameras drawing it.
   player cannot leave this way. Their quadrant goes away and the canvas
   shrinks.
 - [x] Joining works at one player too: H (player two's Start) on a solo
-  session splits the screen to 512×544. Dropping back to one player puts
+  session splits the screen to the 2×2 frame. Dropping back to one player puts
   the ROM frame back on the stage.
 
 ### Split screen
 
 - [x] Make `INTERNAL_W` / `INTERNAL_H` depend on the player count instead of
   being constants. One player is 256×240. Two or more is the 2×2 frame
-  (512×544) with join prompts in empty cells. Solo still never pays for the
+  (515×483 with gutters) with join prompts in empty cells. Solo still never pays for the
   larger canvas. `tools/shared/splitLayout.js` is the arithmetic.
 - [x] Lay the multiplayer frame out as a 2×2 grid of 256×240 quadrants filling
-  y 0–480, with a 512×64 shared status bar beneath at y 480–544. Each quadrant
+  y 0–483 (3px gutter between cells). Each quadrant
   keeps the ROM's own split: a 64px bar on top, a 256×176 playfield below. The
   playfield is the same size a solo player gets, so nobody sees more or less
   world than they do today. Two players use that same grid (two join prompts)
   rather than a 2-up special case.
-- [x] The per-player bar carries that player's number, hearts and A/B item
-  boxes — today's HUD with the minimap and counters removed (`compact`). The
-  shared bar carries what is read once rather than four times: minimap, rupees,
-  keys and bombs. Its full 512px width is what makes room for a four-digit
-  rupee counter (`formatPartyCount`).
+- [x] The per-player bar is today's HUD plus that player's number (`compact`).
+  Minimap, rupees, keys and bombs stay on each quadrant — a friend in a
+  labyrinth would lose their map if one strip tried to show every place at
+  once. `formatPartyCount` still owns the 3-glyph party purse (4p 1020
+  saturates at 999).
 - [x] Rehome everything else authored against the 256×240 frame — title, name
   entry, attract/demo, inventory submenu, death and continue UI, ending and
   credits. At one player every one of them is pixel-identical to today.
@@ -260,8 +260,8 @@ sim stays single with four cameras drawing it.
   the player who touched it; a heart container raises the max for all
   players and fills the finder (`shareHeartContainer`).
 - [x] Consumable caps scale with the active player count: 255 rupees and the
-  bomb bag each become ×N (`applyPartyCaps`). In company the HUD is compact
-  and the shared strip prints four glyphs. Bomb-bag upgrades grow `bombBag`
+  bomb bag each become ×N (`applyPartyCaps`). In company the HUD prints a
+  seat number and keeps the NES 3-glyph purse. Bomb-bag upgrades grow `bombBag`
   and re-multiply. Leaving does not confiscate the pile: the rupee ceiling
   ratchets down as rupees are spent (`ratchetRupeeCap`) until it meets the
   new party floor; bombs keep the excess and stop adding more.
@@ -460,20 +460,23 @@ sim stays single with four cameras drawing it.
 
 - [x] The inventory submenu shows the shared bag, and any player may open it.
   Opening it freezes only the owner; the others keep walking. Whoever opened
-  it drives it (Start to close, B to cycle their own slot). Only that player's
+  it drives it (Start to close, ←→ to cycle their own slot). Only that player's
   quadrant shows the panel; the others keep a normal play picture. Opening it
   while someone else is reading is still blocked for the reader — their
   buttons belong to the box — and allowed for everyone else. Solo still
   freezes the world, so the goldens do not move.
 - [x] Dialogue is per-player and shown only in that player's quadrant. A text
   box freezes only its own reader; the others keep walking. `toldStory` stays
-  shared. Private kinds (`debug`, `item`, `person`, `cave`) hide the box in
-  every view but the reader's; `levelEntry` and `briefing` still hold the
-  whole party and draw in every quadrant, which is the next item.
-- [x] Post-dungeon briefings and labyrinth-entry beats are the exception: they
-  are the story, so they open in every active player's quadrant at once and each
-  player pages their own copy (`storyPager`). The world stays frozen until
-  the last reader closes their copy. Ordinary NPC and item dialogue stays
+  shared. Private kinds (`debug`, `item`, `person`, `cave`, `briefing`) hide
+  the box in every view but the reader's; `levelEntry` still holds the party
+  that is underground and draws in those quadrants, which is the next item.
+- [x] Labyrinth-entry beats are the exception: they are the story for whoever
+  is in a labyrinth, so they open in those quadrants at once and each reader
+  pages their own copy (`storyPager`). An ally still on the beach keeps
+  walking. The world stays frozen for the readers until the last one closes
+  their copy. The post-shard briefing is private to the finder — an ally in
+  another room of the same labyrinth keeps walking, and only the finder is
+  walked out when they close it. Ordinary NPC and item dialogue stays
   private. Solo still uses the one shared box, so the goldens do not move.
 - [x] A player at zero hearts dies alone. A shared potion is drunk for them
   first (`tryAutoRevive`). If someone else is standing they spin in their
@@ -522,10 +525,10 @@ four different modes at once, and a death with the others still alive.
   container across the party.
 - `tools/shared/coopCombat.js` — a bomb hurts its owner and no one else.
 - `tools/shared/partySave.js` — per-hero hearts and poses on a v2 save.
-- `tools/shared/sharedBar.js` — 512×64 strip and a four-digit rupee field.
+- `tools/shared/sharedBar.js` — party-sized status counts (`formatPartyCount`).
 - `presentCinematic()` — ending and continue drop to one 256×240 picture.
 - `tools/shared/storyPager.js` — each player pages their own copy of a
-  briefing or labyrinth-entry beat.
+  labyrinth-entry beat.
 - Runtime join/leave in `main.js` (`KeyH` sits player two down from a solo
   session; a spare controller's Start does the same; `KeyH`+`KeyY` stands
   them up). The canvas grows and shrinks. A `#joinHint` names the next seat.
@@ -545,7 +548,7 @@ four different modes at once, and a death with the others still alive.
 | `createInventory` | `tools/shared/inventory.js:61` |
 | `createSwordState` | `tools/shared/sword.js:52` |
 | Counter clamped to 255, 3 glyphs | `tools/shared/statusBarText.js:14` |
-| Party counter, 4 glyphs | `tools/shared/sharedBar.js` |
+| Party counter, 3–4 glyphs | `tools/shared/sharedBar.js` |
 | `SAVE_VERSION` = 2 (v1 still loads), `PERSISTED_INV_KEYS` | `tools/shared/save.js` |
 | Single camera offset on `playField` | `applyPlayCamera()` in `main.js` |
 | One-camera cull and spawn latch | `tools/shared/roomStream.js` (done — takes `cameras`) |
@@ -684,6 +687,8 @@ multi-camera aware rather than being widened to "never cull".
 | 2026-08-13 | The life potion is auto-drunk from the shared bag on any player's death | It is the ROM's behaviour, and a shared bag means a shared safety net |
 | 2026-08-13 | `clock` is shared, not per-player | It freezes enemies, and the enemies are global; a per-player clock has nothing to act on |
 | 2026-08-13 | Briefings play to everyone, ordinary dialogue to one | Phase 22 made the briefing the spine of the story; three players missing the plot because someone else grabbed the shard is not a trade worth making |
+| 2026-08-26 | Briefings play only to people in a labyrinth, same as entry speech | "THE SHARD IS WARM IN YOUR HAND" on an ally still fighting Octoroks is first-person for the wrong hero; the plot is for whoever was there |
+| 2026-08-27 | Triforce briefing is private to the finder | An ally in another room of the same labyrinth was still reading the shard text and freezing for a pickup they did not make |
 | 2026-08-19 | Links are numbered, not recoloured | `recolor.js` would make four Links readable at a glance, but it is a departure from the ROM palette; the player-number tags are enough |
 | 2026-08-19 | Company always uses the 2×2 (512×544), including two players | A 2-up strip made two players a different game than three; empty cells as join prompts are the clearer read |
 | 2026-08-19 | A leaving player's rupee share ratchets down as rupees are spent | Dropping the ceiling to 255 under a 400-rupee pile would look like a confiscation; `rupeeCap = max(partyFloor, held)` until spending walks it down |

@@ -14,6 +14,11 @@
  */
 
 import { EMPTY_TRACE, foldTrace, probeDigest, probeViolations } from './probeHash.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ROOT } from '../shared/paths.js';
+
+const ROM_PATH = join(ROOT, 'zelda.nes');
 
 /** Long enough for a cold Vite transform of the whole play bundle. */
 const BOOT_TIMEOUT_MS = 120000;
@@ -31,6 +36,13 @@ export async function openGame(browser, { url, query = '' }) {
   /** @type {string[]} */
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  if (existsSync(ROM_PATH)) {
+    const b64 = readFileSync(ROM_PATH).toString('base64');
+    await page.addInitScript((payload) => {
+      localStorage.setItem('zelda_rom_v1', payload);
+    }, JSON.stringify({ v: 1, b64 }));
+  }
 
   const suffix = query ? `&${query}` : '';
   await page.goto(`${url}play.html?debug=1&pause=1${suffix}`, {

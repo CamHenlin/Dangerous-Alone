@@ -473,6 +473,97 @@ export function isLinkStandingSolid(tileGrid, x, y, tileOpts = {}) {
 }
 
 /**
+ * True when Link's 16px sprite would sit on a solid.
+ *
+ * NES GetCollidableTileStill samples only ObjX (the left 8px). That is enough
+ * on the overworld, where cave mouths and 16px stair wells must stay
+ * approachable from the neighbouring column. Underworld water/lava paths are
+ * themselves 16px: the right 8px is a second foot. Mid-cell reverses skip
+ * look-ahead, so the left sample can stay on the path while the sprite
+ * finishes a cell with that foot in `$F4` — Link looks half off the trail.
+ *
+ * @param {number[][]} tileGrid
+ * @param {number} x
+ * @param {number} y
+ * @param {{ firstUnwalkable?: number, walkableRemap?: readonly number[], ladder?: object, ladderMode?: string }} [tileOpts]
+ */
+export function isLinkSpriteBlocked(tileGrid, x, y, tileOpts = {}) {
+  if (isLinkStandingSolid(tileGrid, x, y, tileOpts)) return true;
+  const { firstUnwalkable } = resolveTileOpts(tileOpts);
+  if (firstUnwalkable !== UW_FIRST_UNWALKABLE) return false;
+  return isLinkStandingSolid(tileGrid, x + 8, y, tileOpts);
+}
+
+/**
+ * True while CheckLadder is actually carrying the left foot on water.
+ * A ladder object sitting one tile ahead is not enough: debug-kit / L4
+ * inventory places that object whenever vertical look-ahead sees `$F4`,
+ * which is every jog on a 16px lava path. Skipping the extra foot then
+ * lets the sprite finish half in the lava (the L4 `$31` screenshot).
+ *
+ * @param {number[][] | null} tileGrid
+ * @param {number} x
+ * @param {number} y
+ * @param {{ ladder?: object, ladderMode?: string, standingTile?: function }} tileOpts
+ */
+function ladderCarriesLeftFoot(tileGrid, x, y, tileOpts) {
+  if (!tileOpts.ladder || !tileOpts.ladderMode) return false;
+  if (!ladderAllowsStanding(tileOpts.ladder, { x, y })) return false;
+  const tile =
+    typeof tileOpts.standingTile === 'function'
+      ? tileOpts.standingTile(x, y)
+      : standingTile(tileGrid, x, y);
+  return isLadderWaterTile(tile, tileOpts.ladderMode);
+}
+
+/**
+ * Lava/water under the right 8px of the 16px sprite. Statues, door jambs,
+ * and west-lip solids stay on the NES left-foot still-sample.
+ *
+ * @param {number[][] | null} tileGrid
+ * @param {number} x
+ * @param {number} y
+ * @param {{ standingTile?: function, ladderMode?: string }} tileOpts
+ */
+function extraFootOnLava(tileGrid, x, y, tileOpts) {
+  const tile =
+    typeof tileOpts.standingTile === 'function'
+      ? tileOpts.standingTile(x + 8, y)
+      : standingTile(tileGrid, x + 8, y);
+  return isLadderWaterTile(tile, tileOpts.ladderMode || 'dungeon');
+}
+
+/**
+ * Whether this pixel would plant Link in a solid, for the axis he is moving.
+ *
+ * The NES still-sample is the left 8px, which is enough for statue columns
+ * and west-door approaches. Underworld water/lava paths are themselves 16px,
+ * so any axis that would park the right 8px in `$F4` is refused — that is
+ * the half-off-trail screenshot. Skip that extra foot while the stepladder
+ * is under either 8px on water (crossing a moat); a ladder placed ahead
+ * does not waive lava beside a 16px trail.
+ *
+ * @param {number[][]} tileGrid
+ * @param {number} x
+ * @param {number} y
+ * @param {number} dir
+ * @param {{ firstUnwalkable?: number, ladder?: object }} [tileOpts]
+ */
+function pixelEmbedsLink(tileGrid, x, y, dir, tileOpts = {}) {
+  void dir;
+  if (isLinkStandingSolid(tileGrid, x, y, tileOpts)) return true;
+  const { firstUnwalkable } = resolveTileOpts(tileOpts);
+  if (firstUnwalkable !== UW_FIRST_UNWALKABLE) return false;
+  if (!tileGrid && typeof tileOpts.standingTile !== 'function') return false;
+  if (ladderCarriesLeftFoot(tileGrid, x, y, tileOpts)) return false;
+  if (!extraFootOnLava(tileGrid, x, y, tileOpts)) return false;
+  if (tileOpts.ladder && ladderAllowsStanding(tileOpts.ladder, { x: x + 8, y })) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * If Link is embedded in a solid tile, slide him to the nearest walkable pixel.
  * Prefers `preferDir` (typically opposite knockback), then a Chebyshev ring search.
  *
@@ -710,10 +801,12 @@ function applyQuarterStep(link, dir, qSpeed, roomId, tileGrid = null, tileOpts =
 
   // Reject pixels that plant Link's feet in a solid (thin walls / bad look-ahead).
   // Use standing tile — not look-ahead — so cave-mouth approaches stay free.
+  // Vertical UW also refuses the right 8px so a mid-cell reverse cannot
+  // finish on lava with only the left foot still on the path.
   if (
     tileGrid
     && (link.x !== x0 || link.y !== y0)
-    && isLinkStandingSolid(tileGrid, link.x, link.y, tileOpts)
+    && pixelEmbedsLink(tileGrid, link.x, link.y, dir, tileOpts)
   ) {
     link.x = x0;
     link.y = y0;
@@ -829,7 +922,7 @@ export function stepLink(
     // NOT use look-ahead `canLinkMove` here: approaching a UW face from one
     // cell away makes look-ahead solid mid-cell and would snap Link back a
     // full 8px early. Only rewind when the immediate next pixel is unusable.
-    const stuckOnSolid = isLinkStandingSolid(tileGrid, link.x, link.y, tileOpts);
+    const stuckOnSolid = pixelEmbedsLink(tileGrid, link.x, link.y, moveDir, tileOpts);
     let nextX = link.x;
     let nextY = link.y;
     if (moveDir & DIR.UP) nextY -= 1;
@@ -838,7 +931,7 @@ export function stepLink(
     else if (moveDir & DIR.RIGHT) nextX += 1;
     const nextPixelBlocked =
       pixelHitsRoomBound(nextX, nextY, moveDir, roomId, anchorFromOpts(tileOpts))
-      || isLinkStandingSolid(tileGrid, nextX, nextY, tileOpts);
+      || pixelEmbedsLink(tileGrid, nextX, nextY, moveDir, tileOpts);
     if (stuckOnSolid || nextPixelBlocked) {
       snapToGridCellStart(link);
       link.animCounter = LINK_ANIM_PERIOD;

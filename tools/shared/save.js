@@ -15,6 +15,7 @@ import {
   oppositeSide,
 } from './dungeonDoors.js';
 import { createInventory, triforceCount } from './inventory.js';
+import { snapshotLadder } from './ladder.js';
 
 export const SAVE_VERSION = 2;
 /** Files written before the party snapshot. Still loadable. */
@@ -295,6 +296,7 @@ export function serializeGameState(state) {
       x: Number(state.x ?? 0x40),
       y: Number(state.y ?? 0x8d),
       dir: Number(state.dir ?? 1),
+      ladder: snapshotLadder(state.ladder),
       caveReturn: state.caveReturn
         ? {
             roomId: Number(state.caveReturn.roomId),

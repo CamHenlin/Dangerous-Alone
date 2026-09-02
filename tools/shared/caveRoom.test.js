@@ -11,6 +11,7 @@ import {
   CAVE_ROAD_Y,
   caveDwellerDraw,
   caveHintLine,
+  caveNpcInteractKey,
   caveWareSlots,
   checkCaveExit,
   clearCaveTransitState,
@@ -162,6 +163,12 @@ test('caveHintLine depends on cave kind', () => {
   assert.match(caveHintLine('moblin'), /RUPEE/);
   assert.equal(caveHintLine('door'), 'SOUTH TO LEAVE');
   assert.equal(caveHintLine('clue'), 'SOUTH TO LEAVE');
+  assert.equal(caveHintLine('potion'), 'WALK TO ITEM  SOUTH TO LEAVE');
+  assert.equal(caveHintLine('potion', { waresHidden: true }), 'SOUTH TO LEAVE');
+  assert.match(
+    caveHintLine('potion', { waresHidden: true, hasLetter: true }),
+    /LETTER/,
+  );
 });
 
 test('caveWareSlots hides moblin gift after looting', () => {
@@ -187,4 +194,30 @@ test('nearCaveNpc matches the dweller, not a south approach dead-zone', () => {
   assert.equal(nearCaveNpc({ x: CAVE_DWELLER_X, y: CAVE_DWELLER_Y + 23 }), true);
   assert.equal(nearCaveNpc({ x: CAVE_DWELLER_X - 16, y: CAVE_DWELLER_Y }), false);
   assert.equal(nearCaveNpc({ x: 0x20, y: CAVE_DWELLER_Y }), false);
+});
+
+test('caveNpcInteractKey fires on the locked medicine shop and uncollected letter', () => {
+  const atNpc = { x: CAVE_DWELLER_X, y: CAVE_DWELLER_Y };
+  const away = { x: 0x20, y: CAVE_DWELLER_Y };
+  assert.equal(
+    caveNpcInteractKey({ kind: 'potion' }, { letter: 1 }, atNpc, true),
+    'npc:potion',
+  );
+  assert.equal(
+    caveNpcInteractKey({ kind: 'potion' }, { letter: 1 }, away, true),
+    null,
+  );
+  assert.equal(
+    caveNpcInteractKey({ kind: 'potion' }, { letter: 1 }, atNpc, false),
+    null,
+    'open shop uses ware touch, not the dweller',
+  );
+  assert.equal(
+    caveNpcInteractKey({ kind: 'letter' }, { letter: 0 }, atNpc, false),
+    'npc:letter',
+  );
+  assert.equal(
+    caveNpcInteractKey({ kind: 'letter' }, { letter: 1 }, atNpc, false),
+    null,
+  );
 });

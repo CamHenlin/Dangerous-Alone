@@ -144,12 +144,16 @@ export function countsTowardRoomClear(e) {
 
 /**
  * Obj types that still spawn after a room is in `clearedRooms`
- * (old men / traps — not kill-counted foes).
+ * (hint old men / traps — not kill-counted foes).
+ *
+ * Money-or-life `$51` is a one-shot tax: paying latches the room clear
+ * (and the NES room-item flag). Hint givers stay; the collector does not.
  * @param {number} objType
  */
 export function persistsAfterRoomClear(objType) {
   const t = objType ?? 0;
   if (t === 0x37) return true; // Zelda — NPC, not a clear-counting foe
+  if (t === 0x51) return false; // money-or-life — one payment
   if (t >= 0x4b && t <= 0x52) return true; // UW persons
   if (t === 0x49 || t === 0x4a) return true; // traps
   return false;
