@@ -6,7 +6,7 @@
 ## How this list was built
 
 Five parallel subsystem audits compared `tools/shared/`, `game/src/`, and `tools/extract/` against the
-ca65 disassembly in `reference/zelda1-disassembly/src/`, cross-checked with `docs/context/walkthrough.txt`.
+ca65 disassembly in `reference/zelda1-disassembly/src/`, cross-checked with a local `docs/context/walkthrough.txt` (gitignored).
 
 Every item below cites the ROM label that defines the expected behavior. Items are **verified against the
 disassembly**, not against community lore — see [Rejected findings](#rejected-findings-verified-not-bugs)

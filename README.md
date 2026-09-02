@@ -163,7 +163,7 @@ nes_zelda/
 ├── docs/
 │   ├── rom-notes.md          ← verified offsets, hashes, revision
 │   ├── behavior-oracle.md    ← cross-phase fidelity checklist
-│   ├── context/              ← manual + walkthrough (later playability)
+│   ├── context/              ← local-only manual + walkthrough (gitignored)
 │   └── phases/               ← per-phase checklists + working notes
 │       ├── README.md         ← phase index + status table
 │       ├── phase-00-….md

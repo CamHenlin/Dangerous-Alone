@@ -45,5 +45,5 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 |-----|---------|
 | [../rom-notes.md](../rom-notes.md) | Verified offsets, hashes, revision notes |
 | [../behavior-oracle.md](../behavior-oracle.md) | Cross-phase “must match original” checklist |
-| [../context/](../context/README.md) | Manual + walkthrough for later playability checks |
+| [../context/](../context/README.md) | Local-only manual + walkthrough (gitignored) for playability checks |
 | [../../story/](../../story/README.md) | Every word the game says — NPCs, item pickups, labyrinth entries, the ending. Edit here, no re-extract (Phases 19, 22) |

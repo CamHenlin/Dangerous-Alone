@@ -72,4 +72,4 @@ npm run dev                   # http://localhost:5173/dungeon.html
 
 - [Data Crystal — Dungeon Data](https://datacrystal.tcrf.net/wiki/The_Legend_of_Zelda/Dungeon_Data)
 - aldonunez `Z_05.asm`: `LayoutUWFloor`, `WriteSquareUW`, submenu map mask
-- [`docs/context/walkthrough.txt`](../context/walkthrough.txt) — Level 1 path for door/item checks
+- Local `docs/context/walkthrough.txt` (gitignored) — Level 1 path for door/item checks

@@ -96,4 +96,4 @@ Bosses without CHR frame tables draw as colored rectangles.
 
 - [`docs/behavior-oracle.md`](../behavior-oracle.md)
 - aldonunez `Z_04`/`Z_05`/`Z_07` bosses, dock, ladder, CheckSubroom
-- [`docs/context/walkthrough.txt`](../context/walkthrough.txt)
+- Local `docs/context/walkthrough.txt` (gitignored)

@@ -25,7 +25,7 @@ We know exactly which revision we’re targeting and the ROM is ignored by git.
   - PRG CRC32 `EAF7ED72`, SHA-1 `BE2F5DC8C5BA8EC1A344A71F9FB204750AF24FE7` (matches published NES-ZL-1).
   - aldonunez build verification expects PRG0 (`3FE272FB`). Fine as a logic/reference checkout; do not assume byte-identical tables without checking our dump.
 - Installed **Mesen 2.1.1** (macOS Apple Silicon) to `/Applications/Mesen.app`. SDL2 installed via Homebrew (Mesen macOS requirement).
-- Manual + walkthrough kept as later-phase playability context under [`docs/context/`](../context/README.md) (not runtime assets).
+- Manual + walkthrough kept as later-phase playability context under [`docs/context/`](../context/README.md) (gitignored; not runtime assets).
 
 ### How to use the reference emulator
 
