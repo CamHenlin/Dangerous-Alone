@@ -57,7 +57,7 @@ import {
   solvePlayCamera,
   worldToLocal,
 } from '@shared/continuousCamera.js';
-import { canvasCssScale, visibleAvail } from '@shared/displayScale.js';
+import { canvasCssScale, canvasFitPad, visibleAvail } from '@shared/displayScale.js';
 import { QUAD_H, QUAD_W, emptyQuadrants, frameSize, quadrantOrigin } from '@shared/splitLayout.js';
 import {
   getLinkCollidingTileMulti,
@@ -586,6 +586,7 @@ import { createAudio } from './audio.js';
 import { createTitleUi } from './titleUi.js';
 import { createOptionsUi } from './optionsUi.js';
 import { createDebugUi } from './debugUi.js';
+import { createImmersiveUi } from './immersiveUi.js';
 import {
   applyOneHitKill,
   createDebugCheats,
@@ -705,7 +706,7 @@ async function main() {
   }
 
   function resizeCanvas() {
-    const pad = 32;
+    const pad = canvasFitPad(document.getElementById('app')?.classList.contains('immersive'));
     // Visible box, not clientHeight: a co-op canvas can stretch the stage
     // past the window, and sizing 256×240 from that leftover height clips
     // the ending.
@@ -3345,6 +3346,7 @@ async function main() {
     getOptions: () => options,
     setOptions,
     onClose: () => {},
+    toggleFullscreen: () => immersiveUi.toggle(),
   });
   document.getElementById('btn-options')?.addEventListener('click', () => {
     debugUi.close();
@@ -3432,6 +3434,17 @@ async function main() {
   document.getElementById('btn-debug')?.addEventListener('click', () => {
     optionsUi.close();
     debugUi.open();
+  });
+  const immersiveUi = createImmersiveUi({
+    root: document.getElementById('app'),
+    onChange(on) {
+      if (on) {
+        optionsUi.close();
+        debugUi.close();
+      }
+      resizeCanvas();
+      app.render();
+    },
   });
   refreshHelpKeys();
   let sword = createSwordState();
@@ -4498,14 +4511,54 @@ async function main() {
   }
 
   /**
+   * Streaming-anchor room id for `world`. The live `roomId` is only current
+   * for the focused place — a leftover OW sweep that resumes during a
+   * dungeon present would otherwise layout/prune against the labyrinth cell.
+   * @param {object | null | undefined} world
+   */
+  function worldAnchorRoomId(world) {
+    if (!world) return roomId & 0xff;
+    if (world === focus.current?.world) return roomId & 0xff;
+    return (world.roomId ?? roomId) & 0xff;
+  }
+
+  /**
+   * Point every camera in `world` at its hero without moving the playfield.
+   * Neighbor sweeps used `applyPlayCamera()`, which writes the focused
+   * hero's camera and `playField` — after a yield that is often the ally
+   * underground, so leftover peeks never entered `keep` and were pruned.
+   * @param {object | null | undefined} world
+   */
+  function syncWorldCameras(world) {
+    if (!world || (world.mode !== 'overworld' && world.mode !== 'dungeon')) return;
+    const anchor = worldAnchorRoomId(world);
+    const pinned =
+      world.mode === 'dungeon'
+      && Boolean(world.dungeon?.levelData)
+      && isCellarRoomId(anchor, world.dungeon.levelData);
+    for (const p of activePlayers(players)) {
+      if (p.world !== world) continue;
+      const solution = solvePlayCamera({
+        mode: world.mode,
+        roomId: anchor,
+        linkX: p.link.x,
+        linkY: p.link.y,
+        pinned,
+      });
+      if (solution.tracks) adoptCameraSolution(p.cam, solution);
+    }
+  }
+
+  /**
    * Rooms other cameras in *this* labyrinth are still standing in. Each
    * dungeon world has its own stream, so leftover cells in L1 must not keep
    * L4's `$73` loaded.
+   * @param {object | null | undefined} [world]
    */
-  function occupiedUnderworldRoomIds() {
+  function occupiedUnderworldRoomIds(world = focus.current?.world) {
     /** @type {number[]} */
     const ids = [];
-    const here = focus.current?.world;
+    const here = world;
     for (const p of activePlayers(players)) {
       if (p.world !== here) continue;
       const id = String(p.world?.id ?? '');
@@ -4514,20 +4567,23 @@ async function main() {
       if (p.uwOccRoomId != null) ids.push(p.uwOccRoomId & 0xff);
       // Feet, not only the latch: a leftover pose two rooms away must stream
       // its grid before the first walk, or they clip through OPEN_UW_GRID.
-      const anchor = p.world === focus.current?.world ? roomId : (p.world?.roomId ?? roomId);
+      const anchor = worldAnchorRoomId(here);
       ids.push(occupyingRoom(anchor, p.link.x, p.link.y).roomId & 0xff);
     }
     return ids;
   }
 
-  /** Overworld cells leftover heroes are still standing in. */
-  function occupiedOverworldRoomIds() {
+  /**
+   * Overworld cells leftover heroes are still standing in.
+   * @param {object | null | undefined} [world]
+   */
+  function occupiedOverworldRoomIds(world = focus.current?.world) {
     /** @type {number[]} */
     const ids = [];
-    const here = focus.current?.world;
+    const here = world;
     for (const p of activePlayers(players)) {
       if (p.world !== here || p.world?.mode !== 'overworld') continue;
-      const anchor = p.world === here ? roomId : (p.world?.roomId ?? roomId);
+      const anchor = worldAnchorRoomId(here);
       ids.push(occupyingRoom(anchor, p.link.x, p.link.y).roomId & 0xff);
       // A leftover dock ride must not lose `$55` / `$45` to pruneTo while
       // an ally's camera is still looking at the forest.
@@ -5199,6 +5255,7 @@ async function main() {
    */
   function refreshVisibleStream() {
     const world = focus.current?.world;
+    syncWorldCameras(world);
     const cams = camerasForWorld(world);
     if (mode === 'overworld') {
       if (streamMissingVisibleRooms(owStream, cams)) {
@@ -5207,7 +5264,23 @@ async function main() {
       return;
     }
     if (mode === 'dungeon') {
-      if (streamMissingVisibleRooms(uwStream, cams, { cols: 16, rows: 8 })) {
+      const raw = roomsForCameras(cams, { margin: 1, cols: 16, rows: 8 });
+      const ids = dungeon?.levelData
+        ? streamableUwRooms(raw, roomId, dungeon.levelData)
+        : raw;
+      const revealed = [
+        roomId,
+        ...(dungeon?.visitedRooms ?? []),
+        ...occupiedUnderworldRoomIds(world),
+      ];
+      if (
+        streamMissingVisibleRooms(uwStream, cams, {
+          cols: 16,
+          rows: 8,
+          ids,
+          unfoggedIds: revealed,
+        })
+      ) {
         void ensureUwNeighbors({ restart: false });
       }
     }
@@ -5747,6 +5820,10 @@ async function main() {
     const bound = bindOwScreenFromStream(roomId);
     applyRoomState();
     if (bound) spawnOwRoomEnemies(roomId, dir);
+    // Point this hero's camera at the new cell before the neighbor sweep
+    // reads it — otherwise the in-flight fetch still keeps the old 3×3
+    // and pruneTo drops the peek the continuous camera just opened.
+    applyPlayCamera();
     const me = focus.current;
     void ensureOwNeighbors({ restart: false })
       .then(() => {
@@ -6010,27 +6087,33 @@ async function main() {
       let loaded = 0;
       try {
         while (!stream.load.stale(gen)) {
-          applyPlayCamera();
-          const ids = roomsForCameras(camerasForWorld(me?.world), { margin: 1 });
+          // Do not use applyPlayCamera() here: after a yield the focus is
+          // often the ally in a labyrinth, which would move playField and
+          // layout these overworld rooms against that cell's id.
+          resumeAs(me);
+          if (me?.world?.mode !== 'overworld') return;
+          const here = me.world;
+          const anchor = worldAnchorRoomId(here);
+          syncWorldCameras(here);
+          const ids = roomsForCameras(camerasForWorld(here), { margin: 1 });
           const keep = [
-            ...new Set([...ids, ...occupiedOverworldRoomIds()].map((id) => id & 0xff)),
+            ...new Set([...ids, ...occupiedOverworldRoomIds(here)].map((id) => id & 0xff)),
           ];
           const missing = sortRoomsNearestFirst(
             keep.filter((id) => !owRoomReady(id)),
-            roomId,
+            anchor,
           );
           if (missing.length === 0) {
             stream.pruneTo(keep);
-            stream.layout(roomId);
-            resumeAs(me);
+            stream.layout(anchor);
             if (mode === 'overworld') {
-              bg = stream.get(roomId)?.sprite ?? bg;
+              bg = stream.get(anchor)?.sprite ?? bg;
             }
             return;
           }
           await ensureOwRoom(missing[0]);
           resumeAs(me);
-          stream.layout(roomId);
+          stream.layout(worldAnchorRoomId(me?.world ?? here));
           loaded += 1;
           if (stream.load.stale(gen)) return;
           if (yieldBetween && loaded > 1) await yieldToPaint();
@@ -6203,44 +6286,60 @@ async function main() {
       const yieldBetween = !heroIsBusy();
       let loaded = 0;
       try {
-        while (!stream.load.stale(gen) && dungeon) {
-          applyPlayCamera();
+        while (!stream.load.stale(gen)) {
+          resumeAs(me);
+          if (me?.world?.mode !== 'dungeon') return;
+          const here = me.world;
+          const dungeonState = here.dungeon;
+          if (!dungeonState?.levelData) return;
+          const anchor = worldAnchorRoomId(here);
+          syncWorldCameras(here);
           // Cellars sit on the map grid but are stairs-only — never stream them as
           // neighbors, and never stream map-adjacent top-down rooms while inside one.
+          // Empty grid cells ($32 beside L1 $33) are not rooms; fetching them
+          // blocked visited peeks from ever loading.
           const ids = streamableUwRooms(
-            roomsForCameras(camerasForWorld(me?.world), { margin: 1, cols: 16, rows: 8 }),
-            roomId,
-            dungeon.levelData,
+            roomsForCameras(camerasForWorld(here), { margin: 1, cols: 16, rows: 8 }),
+            anchor,
+            dungeonState.levelData,
           );
-          const occupied = occupiedUnderworldRoomIds();
-          const keep = [...new Set([...ids, ...occupied].map((id) => id & 0xff))];
-          const fog = foggedRooms(ids, dungeon.visitedRooms, roomId, occupied);
+          const occupied = occupiedUnderworldRoomIds(here);
+          const keep = [
+            ...new Set(
+              streamableUwRooms(
+                [...ids, ...occupied],
+                anchor,
+                dungeonState.levelData,
+              ).map((id) => id & 0xff),
+            ),
+          ];
+          const fog = foggedRooms(keep, dungeonState.visitedRooms, anchor, occupied);
           const missing = sortRoomsNearestFirst(
             keep.filter((id) => !uwRoomStreamReady(id, fog.has(id))),
-            roomId,
+            anchor,
           );
           if (missing.length === 0) {
             stream.pruneTo(keep);
             uwDoorFrames.pruneTo(keep);
             for (const id of keep) {
-              const fogged = fog.has(id) && id !== roomId;
+              const fogged = fog.has(id) && id !== anchor;
               stream.setFog(id, fogged);
               const frame = uwDoorFrames.get(id);
               if (frame?.sprite) frame.sprite.visible = !fogged;
               if (frame?.fog) frame.fog.visible = false;
               syncUwBombCracks(stream.get(id), uwRooms.pack(id), fogged);
             }
-            stream.layout(roomId);
-            uwDoorFrames.layout(roomId);
+            stream.layout(anchor);
+            uwDoorFrames.layout(anchor);
             syncShutterOverlays();
-            roomSprite = stream.get(roomId)?.sprite ?? roomSprite;
+            roomSprite = stream.get(anchor)?.sprite ?? roomSprite;
             return;
           }
           const id = missing[0];
           await ensureUwRoom(id, fog.has(id));
           resumeAs(me);
-          stream.layout(roomId);
-          uwDoorFrames.layout(roomId);
+          stream.layout(worldAnchorRoomId(me?.world ?? here));
+          uwDoorFrames.layout(worldAnchorRoomId(me?.world ?? here));
           loaded += 1;
           if (stream.load.stale(gen)) return;
           if (yieldBetween && loaded > 1) await yieldToPaint();

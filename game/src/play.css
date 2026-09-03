@@ -78,6 +78,38 @@
   color: var(--accent, #6bcf7f);
 }
 
+/* Game-only view: toolbar and help go away so the canvas can fill the window. */
+#app.play-app.immersive {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+#app.play-app.immersive .toolbar,
+#app.play-app.immersive .play-help {
+  display: none;
+}
+
+#app.play-app.immersive #stage.play-stage {
+  padding: 0;
+}
+
+#app.play-app.immersive #stage.play-stage canvas {
+  box-shadow: none;
+}
+
+.immersive-exit {
+  position: fixed;
+  top: 0.65rem;
+  right: 0.75rem;
+  z-index: 35;
+  opacity: 0.45;
+  background: rgba(10, 12, 16, 0.8);
+}
+
+.immersive-exit:hover,
+.immersive-exit:focus {
+  opacity: 1;
+}
+
 .options-panel {
   position: fixed;
   inset: 0;

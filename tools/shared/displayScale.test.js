@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { canvasCssScale, fitScale, integerScale, visibleAvail } from './displayScale.js';
+import { canvasCssScale, canvasFitPad, fitScale, integerScale, visibleAvail } from './displayScale.js';
 import { frameSize } from './splitLayout.js';
 
 test('solo 256×240 integer-scales 4× on 1080p', () => {
@@ -84,4 +84,9 @@ test('fixed 1–6× still ignore the window', () => {
     }),
     6,
   );
+});
+
+test('immersive mode uses the full stage; chrome keeps a 32px gutter', () => {
+  assert.equal(canvasFitPad(false), 32);
+  assert.equal(canvasFitPad(true), 0);
 });

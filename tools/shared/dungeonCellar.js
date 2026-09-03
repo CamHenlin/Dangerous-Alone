@@ -190,7 +190,9 @@ export function isCellarRoomId(roomId, level) {
 /**
  * Rooms the continuous UW camera may stream. Cellars live on the map grid but
  * are entered only via stairs — never show them as map-adjacent neighbors, and
- * when inside a cellar never stream its top-down neighbors.
+ * when inside a cellar never stream its top-down neighbors. Empty map cells
+ * (no room record) are also dropped: fetching them as "missing" stalled the
+ * neighbour sweep so visited peeks never painted.
  *
  * @param {number[]} candidateRoomIds
  * @param {number} currentRoomId
@@ -200,9 +202,12 @@ export function isCellarRoomId(roomId, level) {
 export function streamableUwRooms(candidateRoomIds, currentRoomId, level) {
   const current = currentRoomId & 0xff;
   if (isCellarRoomId(current, level)) return [current];
+  const onMap = new Set((level?.rooms ?? []).map((r) => r.roomId & 0xff));
   return candidateRoomIds.filter((id) => {
     const rid = id & 0xff;
-    return rid === current || !isCellarRoomId(rid, level);
+    if (rid !== current && isCellarRoomId(rid, level)) return false;
+    if (rid === current) return true;
+    return onMap.has(rid);
   });
 }
 

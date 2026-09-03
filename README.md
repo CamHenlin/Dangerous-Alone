@@ -1,6 +1,6 @@
 # Dangerous Alone
 
-## Split-screen engine for NES Zelda with other enhancements.
+## Split-screen multiplayer engine for NES Zelda with other enhancements.
 
 ![Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join](example.png)
 
@@ -61,6 +61,23 @@ npm run dev
 **In play:** Arrows/WASD move · Z/Space sword · X/C B-item · Tab cycle item · Enter inventory · H / spare Start joins a second player · F5/F9 practice · M mute · ,/. volume.
 
 Progress autosaves to this browser. Options cover scale, fullscreen, and per-player keyboard/gamepad binds.
+
+---
+
+
+
+## Bugs
+
+There are certainly a few bugs and rough edges, but the game is 100% playable as is and don't massively impact the experience.
+
+Notable bugs include:
+
+- There are small collision errors at times, usually making link not fully align to paths. This is mostly a visual bug and doesn't impact gameplay.
+- There can sometimes be triggering errors with things in the environment, such as Stalfos. Usually leaving the screen and coming back fixes it.
+- Some enemies don't behave as they are supposed to. For example, Dodongos eat bombs much more easily than they should.
+
+If you notice others, feel free to report them as github issues. Please include screenshots and a detailed description of the bug. 
+
 
 ---
 

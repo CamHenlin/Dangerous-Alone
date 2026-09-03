@@ -76,6 +76,19 @@ test('streamableUwRooms isolates the current cellar', () => {
   assert.deepEqual(streamableUwRooms([0x49, 0x4a, 0x5a], 0x4a, level), [0x4a]);
 });
 
+test('streamableUwRooms drops empty map cells that are not rooms', () => {
+  // L1 $33's camera 3×3 includes $32 / $34, which are not rooms. Fetching
+  // them as missing used to stall the sweep so visited $43 never painted.
+  const level = {
+    cellarRooms: [0x7f],
+    rooms: [{ roomId: 0x33 }, { roomId: 0x43 }, { roomId: 0x23 }, { roomId: 0x7f }],
+  };
+  assert.deepEqual(
+    streamableUwRooms([0x23, 0x32, 0x33, 0x34, 0x43], 0x33, level),
+    [0x23, 0x33, 0x43],
+  );
+});
+
 test('stairs detection uses floor tiles $70–$73 with NES alignment', () => {
   const floor = Array.from({ length: 14 }, () => Array(24).fill(0x24));
   // Screen Y $9D → floor row ((0x9D - 96) / 8) = 7 with floor origin Y=$60.

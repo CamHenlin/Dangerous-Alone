@@ -165,6 +165,27 @@ export function padBindsForPlayer(opts, index) {
   return opts?.playerPadBinds?.[i] ?? DEFAULT_PAD_BINDS;
 }
 
+/**
+ * Restore one seat's keyboard and pad maps. Other seats stay as they are, and
+ * the pad claim dropdown is left alone — that is which device, not the map.
+ * @param {object} opts
+ * @param {number} index
+ */
+export function resetPlayerControls(opts, index) {
+  const i = Math.max(0, Math.min(DEFAULT_PLAYER_BINDS.length - 1, index | 0));
+  const playerBinds = DEFAULT_PLAYER_BINDS.map((def, n) =>
+    cloneBinds(opts?.playerBinds?.[n] ?? def),
+  );
+  const playerPadBinds = DEFAULT_PLAYER_BINDS.map((_, n) =>
+    clonePadBinds(opts?.playerPadBinds?.[n] ?? DEFAULT_PAD_BINDS),
+  );
+  playerBinds[i] = cloneBinds(DEFAULT_PLAYER_BINDS[i]);
+  playerPadBinds[i] = clonePadBinds();
+  const patch = { ...opts, playerBinds, playerPadBinds };
+  if (i === 0) patch.binds = cloneBinds(playerBinds[0]);
+  return patch;
+}
+
 export const DEFAULT_OPTIONS = Object.freeze({
   /** @type {number | 'auto'} 1–6 or auto-fit */
   scale: 'auto',

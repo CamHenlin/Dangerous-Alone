@@ -7,6 +7,18 @@
  * NES frame.
  */
 
+/** Extra pixels around the canvas when the play chrome is visible. */
+export const STAGE_FIT_PAD = 32;
+
+/**
+ * How much of the stage to leave empty when fitting the canvas.
+ * Immersive (game-only) mode uses the full box.
+ * @param {boolean} immersive
+ */
+export function canvasFitPad(immersive) {
+  return immersive ? 0 : STAGE_FIT_PAD;
+}
+
 /** Integer fit: the largest whole multiple that still fits. */
 export function integerScale(availW, availH, internalW, internalH) {
   const sx = Math.floor(availW / internalW);

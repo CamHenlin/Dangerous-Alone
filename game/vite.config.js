@@ -24,6 +24,21 @@ function noJekyllPlugin() {
 }
 
 /**
+ * The public Pages build is play-only. Strip the Tiles / Overworld / Dungeons /
+ * Editor links from the toolbar; `npm run dev` keeps them.
+ * @returns {import('vite').Plugin}
+ */
+function publicPlayNavPlugin() {
+  return {
+    name: 'public-play-nav',
+    transformIndexHtml(html, ctx) {
+      if (ctx.server) return html;
+      return html.replace(/\n\s*<a class="nav dev-nav"[^>]*>[^<]*<\/a>/g, '');
+    },
+  };
+}
+
+/**
  * Serve assets/overrides/* over extracted assets (editor playtest without re-extract).
  * @returns {import('vite').Plugin}
  */
@@ -64,7 +79,7 @@ export default defineConfig({
   // and at the site root. Cartridge art is never copied into dist.
   base: './',
   publicDir: false,
-  plugins: [overridesPlugin(), noJekyllPlugin()],
+  plugins: [overridesPlugin(), noJekyllPlugin(), publicPlayNavPlugin()],
   resolve: {
     alias: {
       '@shared': path.join(repoRoot, 'tools', 'shared'),
@@ -81,13 +96,11 @@ export default defineConfig({
     outDir: path.join(repoRoot, 'dist'),
     emptyOutDir: true,
     rollupOptions: {
+      // Play-only artifact for GitHub Pages. Tile / map / dungeon / editor
+      // viewers stay available under `npm run dev`.
       input: {
         main: path.join(root, 'index.html'),
         play: path.join(root, 'play.html'),
-        tiles: path.join(root, 'tiles.html'),
-        map: path.join(root, 'map.html'),
-        dungeon: path.join(root, 'dungeon.html'),
-        editor: path.join(root, 'editor.html'),
       },
     },
   },

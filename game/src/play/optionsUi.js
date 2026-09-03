@@ -1,4 +1,11 @@
-import { bindsForPlayer, codeLabel, padBindsForPlayer, padsForPlayer, saveOptions } from '@shared/options.js';
+import {
+  bindsForPlayer,
+  codeLabel,
+  padBindsForPlayer,
+  padsForPlayer,
+  resetPlayerControls,
+  saveOptions,
+} from '@shared/options.js';
 import { activePadSources, formatGamepadSlots, formatPadProbe, hidDpadCodesFromDirs, isPadCode, newPadSource } from '@shared/padBinds.js';
 import {
   grantHidDpad,
@@ -25,6 +32,7 @@ const ACTIONS = [
  * @param {() => object} api.getOptions
  * @param {(opts: object) => void} api.setOptions
  * @param {() => void} [api.onClose]
+ * @param {() => void} [api.toggleFullscreen]
  */
 export function createOptionsUi(api) {
   const el = document.getElementById('options-panel');
@@ -222,17 +230,10 @@ export function createOptionsUi(api) {
     render();
   });
 
-  el.querySelector('#opt-fullscreen')?.addEventListener('click', async () => {
-    // Fullscreen requires a user gesture and is not restored on load.
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch {
-      /* denied */
-    }
+  el.querySelector('#opt-fullscreen')?.addEventListener('click', () => {
+    el.hidden = true;
+    api.onClose?.();
+    api.toggleFullscreen?.();
   });
 
   el.querySelector('#opt-hid-dpad')?.addEventListener('click', async () => {
@@ -259,6 +260,13 @@ export function createOptionsUi(api) {
     stopLoop();
     el.hidden = true;
     api.onClose?.();
+  });
+
+  el.querySelector('#opt-reset-binds')?.addEventListener('click', () => {
+    rebindAction = null;
+    rebindBaseline = null;
+    api.setOptions(saveOptions(resetPlayerControls(api.getOptions(), selectedPlayer)));
+    render();
   });
 
   el.querySelector('#opt-binds')?.addEventListener('click', (e) => {

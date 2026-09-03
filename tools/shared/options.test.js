@@ -14,6 +14,7 @@ import {
   normalizeOptions,
   padBindsForPlayer,
   padsForPlayer,
+  resetPlayerControls,
   saveOptions,
 } from './options.js';
 import { padBtn } from './padBinds.js';
@@ -126,4 +127,26 @@ test('per-seat pad remaps survive a round-trip', () => {
 test('codeLabel names pad sources the same way as keys', () => {
   assert.equal(codeLabel('PadBtn:14'), 'Pad ←');
   assert.equal(codeLabel('KeyJ'), 'J');
+});
+
+test('resetPlayerControls restores one seat and leaves the others', () => {
+  const messed = normalizeOptions({
+    playerBinds: [
+      { ...DEFAULT_BINDS, a: ['KeyQ'] },
+      { ...DEFAULT_BINDS_P2, start: ['KeyU'] },
+    ],
+    playerPadBinds: [{ ...DEFAULT_PAD_BINDS, left: [padBtn(6)] }, DEFAULT_PAD_BINDS],
+    padSlots: [0, 2, 1, 3],
+  });
+  const afterP2 = resetPlayerControls(messed, 1);
+  assert.deepEqual(afterP2.playerBinds[1].start, [...DEFAULT_BINDS_P2.start]);
+  assert.deepEqual(afterP2.playerBinds[0].a, ['KeyQ']);
+  assert.deepEqual(afterP2.playerPadBinds[0].left, [padBtn(6)]);
+  assert.deepEqual(afterP2.padSlots, [0, 2, 1, 3], 'pad claim is which device, not the map');
+
+  const afterP1 = resetPlayerControls(afterP2, 0);
+  assert.deepEqual(afterP1.playerBinds[0].a, [...DEFAULT_BINDS.a]);
+  assert.deepEqual(afterP1.binds.a, [...DEFAULT_BINDS.a]);
+  assert.deepEqual(afterP1.playerPadBinds[0].left, [...DEFAULT_PAD_BINDS.left]);
+  assert.deepEqual(afterP1.playerBinds[1].start, [...DEFAULT_BINDS_P2.start]);
 });

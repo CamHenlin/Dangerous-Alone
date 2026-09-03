@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DIR, HUD_HEIGHT } from './collision.js';
-import { PLAY_W } from './continuousCamera.js';
+import { PLAY_H, PLAY_W } from './continuousCamera.js';
 import {
   chaseBoundsForCamera,
   claimLivingSpawnPoints,
@@ -24,11 +24,54 @@ import {
 
 test('streamMissingVisibleRooms is true when a neighbour is not drawn', () => {
   const have = new Set([0x00]);
-  const stream = { get: (id) => (have.has(id & 0xff) ? {} : null) };
+  const stream = { get: (id) => (have.has(id & 0xff) ? { sprite: {} } : null) };
   const cam = [{ worldCamX: 0, worldCamY: 0 }];
   assert.equal(streamMissingVisibleRooms(stream, cam, { margin: 1 }), true);
   for (const id of [0x00, 0x01, 0x10, 0x11]) have.add(id);
   assert.equal(streamMissingVisibleRooms(stream, cam, { margin: 1 }), false);
+});
+
+test('streamMissingVisibleRooms treats an empty container as missing', () => {
+  // A view root with no sprite still peeks black — leftover OW after a
+  // seam used to count that as "drawn" and skip the refill.
+  const stream = { get: (id) => ((id & 0xff) === 0x00 ? { sprite: {} } : { sprite: null }) };
+  const cam = [{ worldCamX: 0, worldCamY: 0 }];
+  assert.equal(streamMissingVisibleRooms(stream, cam, { margin: 1 }), true);
+});
+
+test('streamMissingVisibleRooms can ignore empty map cells', () => {
+  const have = new Set([0x33, 0x43]);
+  const stream = { get: (id) => (have.has(id & 0xff) ? { sprite: {} } : null) };
+  const cam = [{ worldCamX: 3 * PLAY_W, worldCamY: 3 * PLAY_H }];
+  assert.equal(streamMissingVisibleRooms(stream, cam, { cols: 16, rows: 8 }), true);
+  assert.equal(
+    streamMissingVisibleRooms(stream, cam, { ids: [0x33, 0x43] }),
+    false,
+  );
+});
+
+test('streamMissingVisibleRooms treats fogged revealed rooms as missing', () => {
+  const stream = {
+    get: (id) => ({
+      sprite: {},
+      fog: { visible: (id & 0xff) === 0x43 },
+    }),
+  };
+  const cam = [{ worldCamX: 0, worldCamY: 0 }];
+  assert.equal(
+    streamMissingVisibleRooms(stream, cam, {
+      ids: [0x33, 0x43],
+      unfoggedIds: [0x33, 0x43],
+    }),
+    true,
+  );
+  assert.equal(
+    streamMissingVisibleRooms(stream, cam, {
+      ids: [0x33, 0x43, 0x23],
+      unfoggedIds: [0x33],
+    }),
+    false,
+  );
 });
 
 test('tagEnemyHomeRoom', () => {

@@ -16,7 +16,7 @@ import { after, before, describe, test } from 'node:test';
 import { chromium } from 'playwright';
 import { openGame } from './gameDriver.js';
 import { startGameServer } from './gameServer.js';
-import { walkIntoRoom } from './collisionHarness.js';
+import { START_LIP, walkIntoRoom } from './collisionHarness.js';
 import { KEYS, hero, ignoreHits, netDelta, pose, sawWalkCycle, traceHold, waitUntilAlive } from './movementHarness.js';
 
 /** Shop cave `$1d`. */
@@ -200,6 +200,100 @@ describe('coop play', { concurrency: false }, () => {
     assert.ok(
       (dying.owStreamRooms ?? []).includes(0x78),
       'the death-spin dropped the overworld tiles under player one',
+    );
+    await game.close();
+  });
+
+  test('leftover overworld peeks stay drawn after walking into a new screen', async () => {
+    // Screenshot: player one on the overworld while player two is in a
+    // labyrinth — advancing a screen left a black strip where the next
+    // neighbour should be. The neighbor sweep resumed during the dungeon
+    // present, laid out/pruned against that cell, and skipped the seam refill.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(10);
+    await ignoreHits(game);
+    await game.enterLevel(1, 1);
+    await game.dismissDialogue();
+    await game.step(5);
+    assert.equal((await hero(game, 1)).world, 'dungeon:1');
+    assert.equal((await hero(game, 0)).world, 'overworld');
+
+    await pose(
+      game,
+      0,
+      START_LIP.up.x,
+      START_LIP.up.y,
+      START_LIP.up.dir,
+      0x77,
+    );
+    await game.step(4);
+    await walkIntoRoom(game, 0, KEYS[0].up, 0x67);
+    await game.page.evaluate(async () => {
+      const tick = () => new Promise((r) => setTimeout(r, 0));
+      let quiet = 0;
+      for (let spins = 0; quiet < 10 && spins < 4000; spins += 1) {
+        quiet = window.zeldaDebug.pendingLoads() > 0 ? 0 : quiet + 1;
+        await tick();
+      }
+    });
+    await game.step(8);
+
+    const st = await game.state();
+    assert.equal(st.heroes[0].world, 'overworld');
+    assert.equal(st.heroes[0].linkRoom, 0x67);
+    assert.equal(st.heroes[1].world, 'dungeon:1');
+    const rooms = st.owStreamRooms ?? [];
+    const hex = rooms.map((id) => `$${id.toString(16)}`);
+    assert.ok(rooms.includes(0x67), `new screen $67 missing, got ${JSON.stringify(hex)}`);
+    assert.ok(
+      rooms.includes(0x77),
+      `south peek of $67 was black, got ${JSON.stringify(hex)}`,
+    );
+    assert.ok(
+      rooms.includes(0x57),
+      `north neighbour of $67 missing, got ${JSON.stringify(hex)}`,
+    );
+    await game.close();
+  });
+
+  test('visited dungeon neighbour peeks stay drawn while an ally is on the overworld', async () => {
+    // Screenshot: player two in L1 $33, south peek black even though $43 is
+    // already on the map. The neighbour sweep treated empty cells $32 / $34
+    // as missing forever and never painted the visited room.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(10);
+    await ignoreHits(game);
+    await game.enterLevel(1, 1);
+    await game.dismissDialogue();
+    await game.step(5);
+    assert.equal((await hero(game, 1)).world, 'dungeon:1');
+    assert.equal((await hero(game, 0)).world, 'overworld');
+
+    await game.goRoom(0x43, 0x08, 1);
+    await game.goRoom(0x33, 0x08, 1);
+    await game.page.evaluate(async () => {
+      const tick = () => new Promise((r) => setTimeout(r, 0));
+      let quiet = 0;
+      for (let spins = 0; quiet < 10 && spins < 4000; spins += 1) {
+        quiet = window.zeldaDebug.pendingLoads() > 0 ? 0 : quiet + 1;
+        await tick();
+      }
+    });
+    await game.step(8);
+
+    const st = await game.state();
+    assert.equal(st.heroes[1].linkRoom, 0x33);
+    const rooms = st.uwStreamRooms ?? [];
+    const fog = st.uwFoggedRooms ?? [];
+    const hex = rooms.map((id) => `$${id.toString(16)}`);
+    assert.ok(rooms.includes(0x33), `current $33 missing, got ${JSON.stringify(hex)}`);
+    assert.ok(
+      rooms.includes(0x43),
+      `visited south peek $43 was black, got ${JSON.stringify(hex)}`,
+    );
+    assert.ok(
+      !fog.includes(0x43),
+      `visited $43 stayed fogged, fog=${JSON.stringify(fog.map((id) => `$${id.toString(16)}`))}`,
     );
     await game.close();
   });

@@ -252,8 +252,8 @@ CI runs `npm test` + `npm run build` with **no ROM**. Nintendo assets are never 
 Keep **Settings → Pages → Source: GitHub Actions**. Do not add GitHub’s
 “Deploy static content” starter workflow (`static.yml`) — that uploads the repo
 root instead of `dist/` and 404s. The play client is the site root (`/` redirects
-to `play.html`). Tile viewer is `tiles.html`. Nothing Nintendo-owned is in the
-Pages artifact.
+to `play.html`). Tool pages (tiles, map, dungeon, editor) stay on `npm run dev`
+and are not in the Pages artifact. Nothing Nintendo-owned is in the artifact.
 
 ---
 

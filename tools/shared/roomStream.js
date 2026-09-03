@@ -24,12 +24,28 @@ export { foggedRooms, roomsForCamera, roomFullyOffCamera, roomFullyOffAllCameras
  *
  * @param {{ get?: (id: number) => unknown } | null | undefined} stream
  * @param {Iterable<{ worldCamX?: number, worldCamY?: number }>} cameras
- * @param {{ cols?: number, rows?: number, margin?: number }} [opts]
+ * @param {{
+ *   cols?: number,
+ *   rows?: number,
+ *   margin?: number,
+ *   ids?: Iterable<number>,
+ *   unfoggedIds?: Iterable<number>,
+ * }} [opts]
  */
 export function streamMissingVisibleRooms(stream, cameras, opts = {}) {
   if (!stream?.get) return false;
-  for (const id of roomsForCameras(cameras, { margin: 1, ...opts })) {
-    if (!stream.get(id)) return true;
+  const ids = opts.ids ?? roomsForCameras(cameras, { margin: 1, ...opts });
+  const unfogged = opts.unfoggedIds
+    ? new Set([...opts.unfoggedIds].map((id) => id & 0xff))
+    : null;
+  for (const id of ids) {
+    const rid = id & 0xff;
+    const entry = stream.get(rid);
+    // Empty containers (no art, no fog) still paint as a black peek. Fogged
+    // unvisited UW rooms are drawn on purpose.
+    if (!entry || (!entry.sprite && !entry.fog)) return true;
+    // A revealed (visited / occupied) room still showing fog is a missed refill.
+    if (unfogged?.has(rid) && (!entry.sprite || entry.fog?.visible)) return true;
   }
   return false;
 }
