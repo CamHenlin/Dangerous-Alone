@@ -217,8 +217,8 @@ npm run dev                  # Vite: play, map, dungeon, tiles, editor
 
 | Page | URL |
 |------|-----|
-| Play (file select) | http://localhost:5173/play.html |
-| Tile sheets | http://localhost:5173/ |
+| Play (file select) | http://localhost:5173/play.html (also `/`) |
+| Tile sheets | http://localhost:5173/tiles.html |
 | Overworld map | http://localhost:5173/map.html |
 | Dungeon viewer | http://localhost:5173/dungeon.html |
 | Level editor | http://localhost:5173/editor.html |
@@ -248,9 +248,12 @@ npm run preview              # http://localhost:4173/play.html
 
 CI runs `npm test` + `npm run build` with **no ROM**. Nintendo assets are never committed.
 
-**GitHub Pages:** a push to `main` or `master` builds `dist/` and deploys it. In the
-repo: **Settings → Pages → Source: GitHub Actions** (once). The play client is
-`…/play.html` (site root is the tile viewer). Nothing Nintendo-owned is in the Pages artifact.
+**GitHub Pages:** a push to `main` or `master` builds `dist/` and deploys it.
+Keep **Settings → Pages → Source: GitHub Actions**. Do not add GitHub’s
+“Deploy static content” starter workflow (`static.yml`) — that uploads the repo
+root instead of `dist/` and 404s. The play client is the site root (`/` redirects
+to `play.html`). Tile viewer is `tiles.html`. Nothing Nintendo-owned is in the
+Pages artifact.
 
 ---
 

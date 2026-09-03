@@ -43,9 +43,10 @@ In spirit this is to NES *Zelda* what [Ship of Harkinian](https://www.shipofhark
 You need a **legally obtained** *The Legend of Zelda* USA NES dump (iNES `.nes`).
 Nothing is uploaded; the file stays in your browser.
 
-**On the web (GitHub Pages):** open `play.html` on the published site, drop the ROM,
-and wait for extract. Clearing site data removes the ROM (saves live in the same
-browser storage). `play.html?resetRom=1` forgets the dump without wiping save slots.
+**On the web:** [camhenlin.github.io/Dangerous-Alone](https://camhenlin.github.io/Dangerous-Alone/)
+(or `play.html` on that site). Drop the ROM and wait for extract. Clearing site
+data removes the ROM (saves live in the same browser storage).
+`play.html?resetRom=1` forgets the dump without wiping save slots.
 
 **On your machine:**
 

@@ -6,7 +6,7 @@
   "description": "Dangerous Alone: split-screen engine for NES Zelda with other enhancements. Bring a legally obtained ROM; no Nintendo assets included.",
   "scripts": {
     "extract": "node tools/extract/cli.js",
-    "test": "node --test tools/**/*.test.js",
+    "test": "node tools/test/run.js",
     "test:browser": "node --test tools/browser/*.browsertest.js",
     "dev": "vite --config game/vite.config.js",
     "build": "vite build --config game/vite.config.js",

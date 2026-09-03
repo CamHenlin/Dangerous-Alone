@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dangerous Alone — Tiles</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <h1>Tile viewer</h1>
+        <a class="nav" href="play.html">Play</a>
+        <a class="nav" href="map.html">Overworld</a>
+        <a class="nav" href="dungeon.html">Dungeons</a>
+        <a class="nav" href="editor.html">Editor</a>
+        <label>
+          Sheet
+          <select id="sheetSelect"></select>
+        </label>
+        <label>
+          Palette set
+          <select id="paletteSelect"></select>
+        </label>
+        <label>
+          Palette row
+          <select id="rowSelect"></select>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="greyToggle" />
+          Greyscale
+        </label>
+        <span id="status" class="status">Loading…</span>
+      </header>
+      <main id="stage"></main>
+      <aside id="swatches" class="swatches"></aside>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

@@ -84,6 +84,7 @@ export default defineConfig({
       input: {
         main: path.join(root, 'index.html'),
         play: path.join(root, 'play.html'),
+        tiles: path.join(root, 'tiles.html'),
         map: path.join(root, 'map.html'),
         dungeon: path.join(root, 'dungeon.html'),
         editor: path.join(root, 'editor.html'),
