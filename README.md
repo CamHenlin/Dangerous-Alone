@@ -1,6 +1,8 @@
 # Dangerous Alone
 
-Split-screen engine for NES Zelda with other enhancements.
+## Split-screen engine for NES Zelda with other enhancements.
+
+![Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join](example.png)
 
 This is an unofficial **browser engine** that can play *The Legend of Zelda* (NES, 1986) when you
 supply a **legally obtained NES Zelda ROM**. This repository is not a game, not a
@@ -24,6 +26,9 @@ rebinding, and browser saves that survive a refresh.
 
 Solo play is meant to stay recognizable. Nothing here ships Nintendo art or a
 playable game by itself — without your ROM, the window is a dropzone.
+
+Up to four NES-sized cameras share one world. Seats can be in different modes
+at the same time (overworld vs dungeon here); empty seats wait on Start.
 
 **Runtime:** any modern browser (macOS, Linux, Windows).
 
