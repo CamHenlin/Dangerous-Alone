@@ -39,7 +39,7 @@ describe('ROM dropzone', () => {
     });
     await page.waitForSelector('#rom-gate:not([hidden]) h2', { timeout: 120000 });
     const copy = await page.locator('#rom-gate h2').innerText();
-    assert.match(copy, /Drop a Zelda NES ROM/);
+    assert.match(copy, /Drop a NES Zelda ROM/);
     await page.close();
   });
 

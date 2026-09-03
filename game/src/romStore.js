@@ -1,8 +1,8 @@
 /**
- * Persist the player's Zelda ROM in localStorage.
+ * Persist the dropped ROM in localStorage.
  *
  * The extracted pack (JSON + images) is too large for typical quotas; the ROM
- * is 131 KiB and is the source of every Nintendo asset. Re-extract on boot.
+ * is ~131 KiB and is the source of every cartridge asset. Re-extract on boot.
  */
 
 import { base64ToBytes, bytesToBase64 } from '@shared/bytes.js';

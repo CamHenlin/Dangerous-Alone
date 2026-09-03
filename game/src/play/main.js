@@ -628,7 +628,7 @@ function setStatus(text) {
 async function fetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`${url}: ${res.status} — drop a Zelda .nes ROM onto the window`);
+    throw new Error(`${url}: ${res.status} — drop a NES Zelda .nes ROM onto the window`);
   }
   return res.json();
 }
@@ -1697,7 +1697,7 @@ async function main() {
   /**
    * Player one's camera. Held here rather than in `players` because room
    * streaming and on-screen tests read it long before the roster is built;
-   * `createPlayer()` below takes this same object (Phase 23).
+   * `createPlayer()` below takes this same object (Phase 22).
    */
   let cam = createCamera();
 
@@ -1790,7 +1790,7 @@ async function main() {
   /** Per-player pages of a story beat; null when nobody is reading one. */
   let storyPager = null;
   /**
-   * The hero being simulated. Player one until the focus moves (Phase 23):
+   * The hero being simulated. Player one until the focus moves (Phase 22):
    * `let` rather than `const` so a frame can be run as somebody else without
    * rewriting the ~440 references that read it.
    */
@@ -1853,7 +1853,7 @@ async function main() {
    *
    * Nothing reads this directly. Each hero gets a view onto it (`inv` below)
    * that routes their own hearts, knockback and B slot to fields of their own
-   * and everything else here, so four players spend one purse (Phase 23).
+   * and everything else here, so four players spend one purse (Phase 22).
    */
   const sharedInv = createInventory();
   let inv = createInventoryView(sharedInv);
@@ -3437,7 +3437,7 @@ async function main() {
   let sword = createSwordState();
 
   /**
-   * The heroes (Phase 23). One today.
+   * The heroes (Phase 22). One today.
    *
    * `link` and `sword` are `const` and only ever mutated, so the record holds
    * the very objects the closure locals point at and every existing reference
@@ -8140,10 +8140,10 @@ async function main() {
   }
 
   /**
-   * The between-labyrinth briefing: what the shard means, where to go next,
-   * and what treasure was left on the floor behind you. Private to the
-   * finder — an ally in another room of the same labyrinth is not reading
-   * "THE SHARD IS WARM IN YOUR HAND".
+   * The between-dungeon briefing: what the Triforce piece means, where to go
+   * next, and what treasure was left on the floor behind you. Private to the
+   * finder — an ally in another room of the same dungeon is not reading
+   * "THE PIECE OF THE TRIFORCE IS WARM IN YOUR HAND".
    * @param {number} level
    */
   function openLevelBriefing(level) {

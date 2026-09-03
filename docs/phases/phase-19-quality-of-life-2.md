@@ -100,6 +100,6 @@ or `enterLevel` has to settle.
 
 - ~~The full post-dungeon briefing runs ~11 pages (more with warnings). Trim in
   `story/levels.js` if it plays long.~~ Settled the other way in
-  [Phase 22](./phase-22-story-text-expansion.md): the story pages got longer on
+  [Phase 21](./phase-21-story-text-expansion.md): the story pages got longer on
   purpose and the missed-treasure audit was cut to one page per warning
   instead, which is the part that was actually padding.

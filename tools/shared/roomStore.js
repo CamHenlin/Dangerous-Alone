@@ -6,7 +6,7 @@
  * same entry as the Pixi sprite, which meant every collision lookup went
  * through the scene graph. The store owns that data instead, so the simulation
  * can resolve tiles without a renderer and the view can be one of several
- * drawing the same rooms (Phase 23).
+ * drawing the same rooms (Phase 22).
  */
 
 /**

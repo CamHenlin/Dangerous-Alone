@@ -1,6 +1,6 @@
 # Phase notes
 
-Working notes for each phase of the reimplementation. The [root README](../../README.md) keeps the high-level plan; **these files** are where we track status, discoveries, decisions, and open questions as we go.
+Working notes for each phase of the engine. The [visitor README](../../README.md) is the public overview; [`DEV.md`](../../DEV.md) is the engineering handbook. **These files** are where we track status, discoveries, decisions, and open questions as we go.
 
 ## Convention
 
@@ -34,9 +34,8 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | 18 | [Quality of life 1](./phase-18-quality-of-life.md) | Complete |
 | 19 | [Quality of life 2](./phase-19-quality-of-life-2.md) | Complete |
 | 20 | [Continuous-camera cleanup](./phase-20-streaming-cleanup.md) | Complete |
-| 21 | [Graphics overhaul (2× / 256 colour)](./phase-21-graphics-overhaul.md) | Shelved — original art ships |
-| 22 | [Story text expansion](./phase-22-story-text-expansion.md) | Complete |
-| 23 | [Multiplayer (1–4 players, split screen)](./phase-23-multiplayer.md) | TODO |
+| 21 | [Story text expansion](./phase-21-story-text-expansion.md) | Complete |
+| 22 | [Multiplayer (1–4 players, split screen)](./phase-22-multiplayer.md) | PLAYABLE |
 | — | [Thorough review (fidelity audit)](./phase-thorough-review.md) | Complete |
 
 ## Shared docs
@@ -46,4 +45,4 @@ Working notes for each phase of the reimplementation. The [root README](../../RE
 | [../rom-notes.md](../rom-notes.md) | Verified offsets, hashes, revision notes |
 | [../behavior-oracle.md](../behavior-oracle.md) | Cross-phase “must match original” checklist |
 | [../context/](../context/README.md) | Local-only manual + walkthrough (gitignored) for playability checks |
-| [../../story/](../../story/README.md) | Every word the game says — NPCs, item pickups, labyrinth entries, the ending. Edit here, no re-extract (Phases 19, 22) |
+| [../../story/](../../story/README.md) | Every word the game says — NPCs, item pickups, labyrinth entries, the ending. Edit here, no re-extract (Phases 19, 21) |

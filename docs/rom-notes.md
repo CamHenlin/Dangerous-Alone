@@ -1,6 +1,6 @@
 # ROM notes
 
-Verified facts about our local `zelda.nes` dump. Prefer linking here from phase notes instead of duplicating hashes/offsets everywhere.
+Verified facts about the supported local `zelda.nes` dump (gitignored). Prefer linking here from phase notes instead of duplicating hashes/offsets everywhere.
 
 ## Dump identity
 

@@ -86,7 +86,7 @@ test('cave story prefers cave id, then text id, then the ROM line', () => {
   assert.match(white.pages[0], /WHITE STEEL/);
 
   const generic = caveStory({ caveId: 0x99, textId: 2, textLines: ['ROM LINE'] });
-  assert.match(generic.pages[0], /MASTER USING/);
+  assert.match(generic.pages[0], /MASTER THE SWORD/);
 
   const fallback = caveStory({ caveId: 0x99, textId: 999, textLines: ['ROM', 'LINE'] });
   assert.deepEqual(fallback.pages, ['ROM LINE']);
@@ -194,9 +194,9 @@ test('Digdogger tip warns when the recorder is missing', () => {
   assert.ok(inLevel5.pages.some((p) => /MARKED ITS ROOM/.test(p)));
   assert.ok(inLevel5.marks.some((m) => m.dungeonLevel === 5 && m.itemType === 0x05));
 
-  // Same tip in another labyrinth still points at level 5 on the overworld.
+  // Same tip in another dungeon still points at level 5 on the overworld.
   const elsewhere = personStory(1, 0x4e, { inv: { flute: 0 } });
-  assert.ok(elsewhere.pages.some((p) => /FIFTH LABYRINTH/.test(p)));
+  assert.ok(elsewhere.pages.some((p) => /FIFTH DUNGEON/.test(p)));
 
   const withFlute = personStory(5, 0x4e, { inv: { flute: 1 } });
   assert.ok(!withFlute.pages.some((p) => /PROPER ITEM/.test(p)));
@@ -257,7 +257,7 @@ test('missedTreasures only reports items the player walked past', () => {
       { roomId: 0x11, floorItem: { itemType: 0x19 } }, // key — not worth a page
       { roomId: 0x12, floorItem: { itemType: 0x17 } }, // map
       { roomId: 0x13, floorItem: { itemType: 0x03 } }, // nothing
-      { roomId: 0x14, floorItem: { itemType: 0x1b } }, // the shard itself
+      { roomId: 0x14, floorItem: { itemType: 0x1b } }, // the Triforce piece itself
     ],
   };
   const missed = missedTreasures(levelData, new Set([0x12]));
@@ -267,12 +267,12 @@ test('missedTreasures only reports items the player walked past', () => {
   assert.deepEqual(missedTreasures(levelData, new Set([0x10, 0x12])), []);
 });
 
-test('level completion reads shard story, then the next dungeon, then warnings', () => {
+test('level completion reads the piece story, then the next dungeon, then warnings', () => {
   const levelData = { rooms: [{ roomId: 0x44, floorItem: { itemType: 0x1d } }] };
   const res = levelCompletionStory(1, { levelData, takenRooms: new Set() });
   assert.equal(res.nextLevel, 2);
   assert.match(res.pages[0], /1 OF 8/);
-  assert.ok(res.pages.some((p) => /SECOND LABYRINTH/.test(p)));
+  assert.ok(res.pages.some((p) => /SECOND DUNGEON/.test(p)));
   assert.ok(res.pages.some((p) => /BOOMERANG/.test(p)));
   assert.equal(res.pages.at(-1), STORY.missedFooter);
   assert.deepEqual(res.marks, [{ caveId: 0x12, clears: 'whiteSword', label: 'WHITE SWORD' }]);
@@ -350,7 +350,7 @@ test('an item introduces itself once, and unwritten items stay silent', () => {
   // Rupees, keys and bomb refills are not story beats.
   assert.deepEqual(itemStory(0x18).pages, []);
   assert.deepEqual(itemStory(0x19).pages, []);
-  assert.deepEqual(itemStory(0x1b).pages, []); // the shard — the briefing has it
+  assert.deepEqual(itemStory(0x1b).pages, []); // the Triforce piece — the briefing has it
 });
 
 test('every item the story explains is one the game can actually grant', () => {
@@ -369,13 +369,13 @@ test('every item the story explains is one the game can actually grant', () => {
   }
 });
 
-test('every labyrinth introduces itself on first entry', () => {
+test('every dungeon introduces itself on first entry', () => {
   for (let level = 1; level <= 9; level += 1) {
     const entry = levelEntryStory(level);
     assert.ok(entry.pages.length > 0, `level ${level} has no onEnter pages`);
     assert.match(
       entry.pages[0],
-      new RegExp(level === 9 ? 'DEATH MOUNTAIN' : `LABYRINTH ${level}`),
+      new RegExp(level === 9 ? 'DEATH MOUNTAIN' : `DUNGEON ${level}`),
       `level ${level} does not name itself on the first page`,
     );
   }
@@ -384,7 +384,7 @@ test('every labyrinth introduces itself on first entry', () => {
 
 test('the level 9 gatekeeper refuses rather than congratulates', () => {
   // `filterLevel9EntranceGate` deletes person $4B once the Triforce is whole,
-  // so text $44 is only ever read by someone who is still short of 8 shards.
+  // so text $44 is only ever read by someone who is still short of 8 pieces.
   assert.equal(textIdForUnderworldPerson(9, 0x4b), 0x44);
   const gate = personStory(9, 0x4b);
   const said = gate.pages.join(' ');
@@ -392,7 +392,7 @@ test('the level 9 gatekeeper refuses rather than congratulates', () => {
   assert.doesNotMatch(said, /YOU CARRY ALL 8/);
 });
 
-test('no level-specific entry is written for a text that labyrinth never shows', () => {
+test('no level-specific entry is written for a text that dungeon never shows', () => {
   // Levels only ever spawn one person type each, so a `level:textId` key for a
   // selector that level cannot reach is prose the player can never trigger.
   const reachable = new Map();

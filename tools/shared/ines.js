@@ -4,7 +4,7 @@ import { bytesToAscii, copyBytes } from './bytes.js';
 export const INES_HEADER_SIZE = 16;
 export const PRG_BANK_SIZE = 16 * 1024;
 
-/** Expected Zelda (USA) cartridge shape for this project. */
+/** Expected USA MMC1 cartridge shape this engine supports. */
 export const ZELDA_EXPECTATIONS = {
   prgBanks: 8,
   chrBanks: 0,
@@ -88,7 +88,7 @@ export function parseInes(file) {
 }
 
 /**
- * Reject ROMs that are not Zelda-shaped for this project.
+ * Reject ROMs that are not the cartridge shape this engine supports.
  * @param {InesRom} rom
  * @param {Partial<typeof ZELDA_EXPECTATIONS>} [expect]
  */
@@ -107,7 +107,7 @@ export function assertZeldaShape(rom, expect = ZELDA_EXPECTATIONS) {
     problems.push(`battery ${rom.battery} !== ${expect.battery}`);
   }
   if (problems.length) {
-    throw new Error(`ROM rejected (not Zelda USA MMC1 shape): ${problems.join('; ')}`);
+    throw new Error(`ROM rejected (need a Legend of Zelda USA NES dump, MMC1): ${problems.join('; ')}`);
   }
 }
 

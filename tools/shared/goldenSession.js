@@ -1,7 +1,7 @@
 /**
  * A scripted, headless session over the shared simulation, for golden tests.
  *
- * Phase 23 pluralises the hero: `link`, `inv` and `sword` become
+ * Phase 22 pluralises the hero: `link`, `inv` and `sword` become
  * `players[]`, and ~900 references across `tools/shared/` change shape. The
  * unit tests pin each of those functions in isolation, which is exactly the
  * coverage a threading refactor slips through — every call still returns the

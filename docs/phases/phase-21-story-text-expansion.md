@@ -1,4 +1,4 @@
-# Phase 22 — Story Text Expansion
+# Phase 21 — Story Text Expansion
 
 **Status:** Complete
 **Outcome:** Every moment in the game that should have words has them, and the

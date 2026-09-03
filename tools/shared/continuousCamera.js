@@ -337,7 +337,7 @@ const negate = (v) => (v === 0 ? 0 : -v);
 
 /**
  * Where the playfield sits this frame — the whole camera policy, with no
- * renderer attached so each player's view can solve its own (Phase 23).
+ * renderer attached so each player's view can solve its own (Phase 22).
  *
  * Three regimes:
  * - A cave draws at the origin and leaves the world camera untouched, because

@@ -8,7 +8,7 @@
  *
  * `main.js` has always had exactly one set of entity arrays, wiped by
  * `clearEnemies()` on every transition, because there was only ever one place
- * loaded (Phase 23).
+ * loaded (Phase 22).
  *
  * A world lives while at least one player is in it and is discarded when the
  * last one leaves. That rule is what preserves single-player behaviour: at one

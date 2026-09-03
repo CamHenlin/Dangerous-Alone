@@ -24,6 +24,13 @@ that pickup silent rather than restoring anything.
 
 ## Writing rules
 
+- **Vocabulary.** The pack keeps one name per thing, because a nine-year-old
+  should never have to work out that two words mean the same object. They are
+  **dungeons**, not labyrinths; the eight things Link collects are **pieces of
+  the Triforce** (or *Triforce pieces*), never shards, units or relics; and
+  the Triforce itself is called the Triforce rather than "the relic". Say what
+  a thing does before saying anything clever about it, and skip the simile a
+  child would have to stop and decode.
 - **Charset.** The box draws with the NES background charset. Only `A–Z`,
   `0–9`, space, and `, . ! ? ' " & -` render. Lowercase is upcased for you;
   anything else comes out as a blank cell. `npm test` fails on an unrenderable
@@ -83,8 +90,8 @@ A dialogue entry is either a bare array of pages or an object:
   // append missingPages and place missingMarks.
   ifMissing: 'recorder',
   missingPages: ['IT LOOKS LIKE YOU DO NOT HAVE THE PROPER ITEM...'],
-  // Optional: level-specific lines (e.g. already inside the labyrinth).
-  missingPagesByLevel: { 5: ['THE RECORDER IS STILL IN THIS LABYRINTH...'] },
+  // Optional: level-specific lines (e.g. already inside the dungeon).
+  missingPagesByLevel: { 5: ['THE RECORDER IS STILL IN THIS DUNGEON...'] },
   missingMarks: [
     { dungeonLevel: 5, itemType: 0x05, clears: 'recorder', label: 'RECORDER' },
     { level: 5, clears: 'recorder', label: 'RECORDER' },
@@ -100,7 +107,7 @@ overworld tables ever change:
 | `caveId` | Screen holding that cave (`0x12` = white sword cave, `0x1a` = a potion shop, …) |
 | `screen` | Explicit overworld screen id, when no cave sits there |
 | `level` | Overworld screen holding that dungeon's entrance |
-| `dungeonLevel` + `itemType` / `roomId` | Underworld room on that labyrinth's minimap |
+| `dungeonLevel` + `itemType` / `roomId` | Underworld room on that dungeon's minimap |
 | `clears` | Name from `CLEAR_CONDITIONS` in [`mapMarks.js`](../tools/shared/mapMarks.js); the mark vanishes once it is true |
 | `label` | Shown in the status line when the mark is placed |
 
@@ -113,11 +120,11 @@ or plain `textId`. The ids for both come from the same ROM pointer table —
 alongside the original English.
 
 `items.js` is keyed by the ROM's `Item_codes` — the same numbers
-`grantRoomItem` switches on — so one entry covers a labyrinth floor, a cave
+`grantRoomItem` switches on — so one entry covers a dungeon floor, a cave
 gift, a shop shelf and the bracelet under the Armos alike.
 
 The selector tables make an underworld text look shared between four
-labyrinths, but each level only ever spawns one person type, so in practice
+dungeons, but each level only ever spawns one person type, so in practice
 almost every id belongs to exactly one dungeon:
 
 ```
@@ -125,7 +132,7 @@ L1 38 | L2 40 | L3 42 | L4 44 | L5 46 48 50 | L6 56 58
 L7 36 50 62 | L8 64 66 | L9 68 70 72 74      (quest 2 adds 52, 54, 60)
 ```
 
-That is why most person entries sit in `byTextId` and name their labyrinth in
+That is why most person entries sit in `byTextId` and name their dungeon in
 a comment; `byLevelAndTextId` is for ids two dungeons really do share, like the
 bomb trader in 5 and 7. `npm test` fails a `level:textId` key for a selector
 that level cannot reach, so dead prose cannot ship.
@@ -141,10 +148,10 @@ items so a lone ware is not "ALL OF IT".
 | Beat | Fires | Repeats? |
 |------|-------|----------|
 | `caves.byCaveId` / `byTextId` | Entering a cave | Every visit (`repeatPages` once the gift is gone) |
-| `persons.*` | Walking into a labyrinth room with an old man | Once per room visit |
-| `levels[N].onEnter` | First descent into labyrinth N | Never again on that file |
+| `persons.*` | Walking into a dungeon room with an old man | Once per room visit |
+| `levels[N].onEnter` | First descent into dungeon N | Never again on that file |
 | `items[type]` | First time that item is taken, anywhere | Never again on that file |
-| `levels[N].onPiece` + `levels[N+1].brief` + warnings | Taking the shard, after the mode `$12` fanfare fills hearts | Once per shard |
+| `levels[N].onPiece` + `levels[N+1].brief` + warnings | Taking the Triforce piece, after the mode `$12` fanfare fills hearts | Once per piece |
 | `ending.*` | Touching Zelda in level 9 | Once per quest |
 
 The one-shot beats are remembered in the save as `toldStory` keys

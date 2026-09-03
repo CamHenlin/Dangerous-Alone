@@ -3,7 +3,7 @@
  *
  * The game has always had exactly one, spelled as three closure locals in
  * `game/src/play/main.js` — `link`, `sword` and `inv` — and read directly by
- * roughly 1300 call sites. Phase 23 needs four of them, and rewriting 1300
+ * roughly 1300 call sites. Phase 22 needs four of them, and rewriting 1300
  * references in one change is not something a golden hash can protect.
  *
  * So the record comes first and holds the *same objects* the closure locals

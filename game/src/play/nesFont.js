@@ -4,7 +4,7 @@ import { px, tilePx } from '@shared/gfxScale.js';
 import { createTileCanvas, textureFromCanvas } from './scaledCanvas.js';
 
 /**
- * NES Zelda BG charset (common_background).
+ * NES background charset (common_background).
  * The character → tile table lives in `@shared/nesCharset.js` so `story/`
  * text can be validated without a DOM; this module only draws it.
  */

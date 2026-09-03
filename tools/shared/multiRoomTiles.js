@@ -191,7 +191,7 @@ export function roomFullyOffCamera(roomId, worldCamX, worldCamY, pad = 8) {
  *
  * The world is shared, so a room has to stay live while anyone can still see
  * it — culling it because the nearest player looked away would empty a room
- * another player is standing in (Phase 23).
+ * another player is standing in (Phase 22).
  *
  * An empty camera list means nothing is on screen at all, which is `true` by
  * the same logic; callers with no active players should simply not sweep.

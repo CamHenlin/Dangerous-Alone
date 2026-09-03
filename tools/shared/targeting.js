@@ -6,7 +6,7 @@
  * heroes on one map that choice stops being obvious, so it moves here — one
  * place that answers "nearest living player", instead of `link` spelled out
  * at each of the call sites in `enemies.js`, `bossAi.js` and `wandererAi.js`
- * (Phase 23).
+ * (Phase 22).
  *
  * At one player every function here returns that player, so the answer is the
  * same one the game has always given.

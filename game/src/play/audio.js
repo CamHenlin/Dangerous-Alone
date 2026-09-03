@@ -1,5 +1,5 @@
 /**
- * Web Audio player for the extracted Zelda Bank-0 music, cues and DPCM samples.
+ * Web Audio player for extracted Bank-0 music, cues and DPCM samples.
  *
  * Sequencing, envelope and arbitration logic lives in tools/shared so it can be
  * unit tested; this file only owns the WebAudio graph.

@@ -319,7 +319,7 @@ export function serializeGameState(state) {
     owItemsTaken: toSortedArray(state.owItemsTaken ?? []),
     /** Phase 19: OW (`roomId:condition`) and UW (`d:level:roomId:condition`) tip marks. */
     hintMarks: toSortedArray(state.hintMarks ?? []),
-    /** Phase 22: one-shot story beats already spoken (`item:10`, `level:3`). */
+    /** Phase 21: one-shot story beats already spoken (`item:10`, `level:3`). */
     toldStory: toSortedArray(state.toldStory ?? []),
     dungeons: serializeDungeonProgress(state.dungeonProgress),
     questCompleted: normalizeQuestCompleted(state.questCompleted),

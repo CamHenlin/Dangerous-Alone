@@ -182,7 +182,7 @@ async function init() {
     manifest = await fetchJson('/graphics/graphics_manifest.json');
     palettes = await fetchJson('/graphics/palettes.json');
   } catch (err) {
-    setStatus(err.message || 'Missing graphics — drop a Zelda ROM');
+    setStatus(err.message || 'Missing graphics — drop a NES Zelda ROM');
     console.error(err);
     return;
   }

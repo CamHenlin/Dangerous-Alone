@@ -1,5 +1,5 @@
 /**
- * Build the playable asset pack from a Zelda iNES ROM.
+ * Build the playable asset pack from a supported iNES ROM.
  *
  * Pure: no `fs`, no Node Buffer, no zlib. Images stay as RGBA until the
  * browser host turns them into PNG blob responses (or Pixi textures).

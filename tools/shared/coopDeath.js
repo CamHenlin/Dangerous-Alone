@@ -2,7 +2,7 @@
  * Who dies, who keeps playing, and where the dead come back.
  *
  * Solo is the ROM: the continue menu, three hearts, the dungeon door. Co-op
- * is the phase-23 read of that: a potion in the shared bag is drunk for
+ * is the phase-22 read of that: a potion in the shared bag is drunk for
  * whoever just dropped, and if someone is still standing you regroup on
  * them — but only when you already share a place. A dungeon death with
  * the living on the overworld (or in another level) continues at that

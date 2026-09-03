@@ -8,12 +8,28 @@ const repoRoot = path.resolve(root, '..');
 const overridesDir = path.join(repoRoot, 'assets', 'overrides');
 
 /**
+ * GitHub Pages runs Jekyll over the artifact unless this file exists, which
+ * would skip Vite's underscored hashed chunks.
+ * @returns {import('vite').Plugin}
+ */
+function noJekyllPlugin() {
+  return {
+    name: 'github-pages-nojekyll',
+    closeBundle() {
+      const dist = path.join(repoRoot, 'dist');
+      fs.mkdirSync(dist, { recursive: true });
+      fs.writeFileSync(path.join(dist, '.nojekyll'), '');
+    },
+  };
+}
+
+/**
  * Serve assets/overrides/* over extracted assets (editor playtest without re-extract).
  * @returns {import('vite').Plugin}
  */
 function overridesPlugin() {
   return {
-    name: 'zelda-asset-overrides',
+    name: 'asset-overrides',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const url = req.url?.split('?')[0] ?? '';
@@ -44,10 +60,11 @@ function contentType(filePath) {
 
 export default defineConfig({
   root,
-  // Nintendo art is never copied into dist or served from disk. The game
-  // extracts it from a ROM dropped into the window and kept in localStorage.
+  // Relative URLs so the same dist works on GitHub project Pages (`/repo/…`)
+  // and at the site root. Cartridge art is never copied into dist.
+  base: './',
   publicDir: false,
-  plugins: [overridesPlugin()],
+  plugins: [overridesPlugin(), noJekyllPlugin()],
   resolve: {
     alias: {
       '@shared': path.join(repoRoot, 'tools', 'shared'),

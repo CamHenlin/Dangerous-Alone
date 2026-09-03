@@ -13,17 +13,25 @@ let packFiles = null;
 let nativeFetch = null;
 const pngBlobCache = new Map();
 
+const PACK_ROOTS = new Set(['play', 'graphics', 'dungeons', 'overworld', 'tables', 'audio']);
+
 /**
  * @param {string | URL | Request} input
  */
-function packPath(input) {
+export function packPath(input) {
   let raw;
   if (typeof input === 'string') raw = input;
   else if (input instanceof URL) raw = input.href;
   else if (input && typeof input === 'object' && 'url' in input) raw = input.url;
   else raw = String(input);
-  const path = raw.replace(/^https?:\/\/[^/]+/, '').split('?')[0].split('#')[0];
-  return decodeURIComponent(path.replace(/^\//, ''));
+  let path = raw.replace(/^https?:\/\/[^/]+/, '').split('?')[0].split('#')[0];
+  path = decodeURIComponent(path.replace(/^\.\//, '').replace(/^\//, ''));
+  const first = path.split('/')[0];
+  if (first && !PACK_ROOTS.has(first)) {
+    const rest = path.slice(first.length + 1);
+    if (PACK_ROOTS.has(rest.split('/')[0])) path = rest;
+  }
+  return path;
 }
 
 /**

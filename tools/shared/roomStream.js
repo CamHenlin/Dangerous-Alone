@@ -38,7 +38,7 @@ export function streamMissingVisibleRooms(stream, cameras, opts = {}) {
  * Read a camera list out of a call that may still be passing one camera.
  *
  * Room lifecycle is a property of the whole session, not of one player: with
- * split screen every sweep has to ask all the cameras (Phase 23). Callers that
+ * split screen every sweep has to ask all the cameras (Phase 22). Callers that
  * pass a single `worldCamX` / `worldCamY` pair keep working unchanged.
  *
  * @param {number} worldCamX

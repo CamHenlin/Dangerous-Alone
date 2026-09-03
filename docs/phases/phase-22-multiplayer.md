@@ -1,4 +1,4 @@
-# Phase 23 — Multiplayer
+# Phase 22 — Multiplayer
 
 **Status:** PLAYABLE
 **Outcome:** 1–4 players share one Hyrule, each with their own camera, in their
@@ -686,7 +686,7 @@ multi-camera aware rather than being widened to "never cull".
 | 2026-08-13 | Two keyboard bind sets | Otherwise nobody without two gamepads can play — or test — anything in this phase |
 | 2026-08-13 | The life potion is auto-drunk from the shared bag on any player's death | It is the ROM's behaviour, and a shared bag means a shared safety net |
 | 2026-08-13 | `clock` is shared, not per-player | It freezes enemies, and the enemies are global; a per-player clock has nothing to act on |
-| 2026-08-13 | Briefings play to everyone, ordinary dialogue to one | Phase 22 made the briefing the spine of the story; three players missing the plot because someone else grabbed the shard is not a trade worth making |
+| 2026-08-13 | Briefings play to everyone, ordinary dialogue to one | Phase 21 made the briefing the spine of the story; three players missing the plot because someone else grabbed the shard is not a trade worth making |
 | 2026-08-26 | Briefings play only to people in a labyrinth, same as entry speech | "THE SHARD IS WARM IN YOUR HAND" on an ally still fighting Octoroks is first-person for the wrong hero; the plot is for whoever was there |
 | 2026-08-27 | Triforce briefing is private to the finder | An ally in another room of the same labyrinth was still reading the shard text and freezing for a pickup they did not make |
 | 2026-08-19 | Links are numbered, not recoloured | `recolor.js` would make four Links readable at a glance, but it is a departure from the ROM palette; the player-number tags are enough |

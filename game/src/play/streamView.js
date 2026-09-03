@@ -3,7 +3,7 @@
  *
  * The view owns the scene graph only. Collision grids and room packs live in a
  * `roomStore`, so the simulation can read tiles without a renderer and several
- * views can draw the same rooms (Phase 23).
+ * views can draw the same rooms (Phase 22).
  */
 
 import { Container, Graphics, Sprite } from 'pixi.js';

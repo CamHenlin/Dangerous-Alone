@@ -457,7 +457,7 @@ export function createEnemy(spawn) {
     trapOriginY: trap ? (spawn.trapOriginY ?? 0) : undefined,
     captureTimer: 0,
     wallmasterGrab: false,
-    /** Player index the closed hand is dragging (Phase 23). */
+    /** Player index the closed hand is dragging (Phase 22). */
     wallmasterVictim: undefined,
     /** Set when capture slide finishes — that hero warps to the entrance. */
     wallmasterWarpPending: false,

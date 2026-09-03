@@ -321,7 +321,7 @@ test('a visible neighbour cannot hold a room from clearing', () => {
   assert.equal(enemiesInRoom(foes, 0x46).some((e) => e.alive), true);
 });
 
-// --- Phase 23: the room lifecycle answers to every camera, not just one. ---
+// --- Phase 22: the room lifecycle answers to every camera, not just one. ---
 
 /** Room $44 sits at column 4, row 4 of the play map. */
 const ROOM_44_CAM = { worldCamX: 4 * 256, worldCamY: 4 * 176 };

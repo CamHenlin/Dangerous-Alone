@@ -27,7 +27,7 @@ export const DEFAULT_BINDS = Object.freeze({
 });
 
 /**
- * The second player's keyboard, for two at one machine (Phase 23).
+ * The second player's keyboard, for two at one machine (Phase 22).
  *
  * Player one already answers to both the arrows and WASD, so the left half of
  * the keyboard is spoken for; this is the right hand — IJKL to walk, F to

@@ -540,8 +540,8 @@ describe('coop play', { concurrency: false }, () => {
   });
 
   test('a triforce briefing is only in the finder\'s quadrant', async () => {
-    // An ally standing in another room of the same labyrinth used to get
-    // "THE SHARD IS WARM IN YOUR HAND" — and freeze — for a pickup they
+    // An ally standing in another room of the same dungeon used to get
+    // "THE PIECE OF THE TRIFORCE IS WARM IN YOUR HAND" — and freeze — for a pickup they
     // did not make.
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
     await enterLabyrinth(game, [1]);
@@ -554,15 +554,15 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(opened.dialogue, true, 'the briefing should have opened');
     assert.equal(opened.heroes[1].dialogue, true, 'the finder should be reading');
     assert.equal(opened.heroes[0].dialogue, false, 'player one got the finder\'s briefing');
-    assert.ok(!opened.story?.holding, 'the shard briefing is not a party beat');
+    assert.ok(!opened.story?.holding, 'the Triforce briefing is not a party beat');
 
     const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
     assert.equal(views[0].dialogueText, '', 'player one painted player two\'s briefing');
     assert.equal(views[0].dialogueKind, null);
     assert.match(
       views[1].dialogueText,
-      /SHARD|HAND|1 OF 8/,
-      `player two should be reading the shard briefing, got ${JSON.stringify(views[1].dialogueText)}`,
+      /TRIFORCE|HAND|1 OF 8/,
+      `player two should be reading the Triforce briefing, got ${JSON.stringify(views[1].dialogueText)}`,
     );
     assert.equal(views[1].dialogueKind, 'briefing');
 
@@ -614,8 +614,8 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(views[0].dialogueKind, null);
     assert.match(
       views[1].dialogueText,
-      /SHARD|HAND|1 OF 8/,
-      `player two should be reading the shard briefing, got ${JSON.stringify(views[1].dialogueText)}`,
+      /TRIFORCE|HAND|1 OF 8/,
+      `player two should be reading the Triforce briefing, got ${JSON.stringify(views[1].dialogueText)}`,
     );
 
     const free = opened.heroes[0];
@@ -1262,7 +1262,7 @@ describe('coop play', { concurrency: false }, () => {
   });
 
   test('a briefing does not land in the ally\'s overworld view', async () => {
-    // Player two claiming a shard used to open "THE SHARD IS WARM IN YOUR
+    // Player two claiming a piece used to open "THE PIECE OF THE TRIFORCE IS WARM IN YOUR
     // HAND" in every non-cave quadrant, so player one read it — and froze —
     // while still standing on the beach.
     const game = await openGame(browser, { url: server.url, query: 'players=2' });
@@ -1280,7 +1280,7 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(opened.dialogue, true, 'the briefing should have opened');
     assert.equal(opened.heroes[1].dialogue, true, 'the finder should be reading');
     assert.equal(opened.heroes[0].dialogue, false, 'player one got the finder\'s briefing');
-    assert.ok(!opened.story?.holding, 'the shard briefing is not a party beat');
+    assert.ok(!opened.story?.holding, 'the Triforce briefing is not a party beat');
     assert.equal(opened.heroes[1].world, 'dungeon:1');
     assert.equal(opened.heroes[0].world, 'overworld');
 
@@ -1289,8 +1289,8 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(views[0].dialogueKind, null);
     assert.match(
       views[1].dialogueText,
-      /SHARD|HAND|1 OF 8/,
-      `player two should be reading the shard briefing, got ${JSON.stringify(views[1].dialogueText)}`,
+      /TRIFORCE|HAND|1 OF 8/,
+      `player two should be reading the Triforce briefing, got ${JSON.stringify(views[1].dialogueText)}`,
     );
     assert.equal(views[1].dialogueKind, 'briefing');
 
@@ -1326,12 +1326,12 @@ describe('coop play', { concurrency: false }, () => {
     assert.equal(opened.story?.finished?.[1], false);
 
     const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
-    assert.equal(views[0].dialogueText, '', 'player one painted player two\'s labyrinth speech');
+    assert.equal(views[0].dialogueText, '', 'player one painted player two\'s dungeon speech');
     assert.equal(views[0].dialogueKind, null);
     assert.equal(views[0].stubText, '', 'the dungeon stub leaked into the overworld view');
     assert.match(
       views[1].dialogueText,
-      /LABYRINTH|EAGLE|STAIR|SHALLOW/,
+      /DUNGEON|EAGLE|STAIR|SMALL/,
       `player two should be reading the Eagle dossier, got ${JSON.stringify(views[1].dialogueText)}`,
     );
     assert.equal(views[1].dialogueKind, 'levelEntry');

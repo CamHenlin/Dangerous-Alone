@@ -1,5 +1,5 @@
 /**
- * Gate every game page on a Zelda ROM: stored in localStorage, or dropped here.
+ * Gate every page on a supported iNES ROM: stored in localStorage, or dropped here.
  */
 
 import { extractAssetPack } from '../../tools/extract/pack.js';
@@ -34,11 +34,12 @@ function ensureGateEl() {
   el.innerHTML = `
     <div class="rom-drop" role="button" tabindex="0">
       <input class="rom-file" type="file" accept=".nes,application/octet-stream" hidden />
-      <h2>Drop a Zelda NES ROM</h2>
-      <p>USA cartridge dump, iNES format (<code>.nes</code>). Graphics, maps, and audio
-      are extracted in this browser and the ROM is saved in localStorage so you
-      only do this once.</p>
-      <p class="rom-hint">You need a copy of the game you own. Nothing is uploaded.</p>
+      <h2>Drop a NES Zelda ROM</h2>
+      <p>Use a legally obtained <em>The Legend of Zelda</em> USA dump, iNES
+      format (<code>.nes</code>). This engine extracts maps, graphics, and audio
+      in the browser. The ROM stays in localStorage on this device.</p>
+      <p class="rom-hint">Nothing is uploaded. This repository is an engine, not
+      a game, and does not include Nintendo assets.</p>
       <p class="rom-status"></p>
     </div>
   `;
@@ -99,7 +100,7 @@ export async function bootRomAssets(opts = {}) {
       console.error(err);
       clearStoredRom();
       ensureGateEl();
-      setGateStatus(`Stored ROM failed (${msg}). Drop a ROM to continue.`, true);
+      setGateStatus(`Stored ROM failed (${msg}). Drop a NES Zelda ROM to continue.`, true);
       return waitForRomDrop(note, { keepStatus: true });
     }
   }
@@ -181,6 +182,6 @@ function waitForRomDrop(note, opts = {}) {
     window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('drop', onDrop);
 
-    if (!opts.keepStatus) setGateStatus('Waiting for a .nes file…');
+    if (!opts.keepStatus) setGateStatus('Waiting for a NES Zelda .nes file…');
   });
 }

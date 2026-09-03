@@ -1,9 +1,9 @@
 {
-  "name": "nes-zelda",
+  "name": "dangerous-alone",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Legend of Zelda (NES) data extraction and browser reimplementation",
+  "description": "Dangerous Alone: split-screen engine for NES Zelda with other enhancements. Bring a legally obtained ROM; no Nintendo assets included.",
   "scripts": {
     "extract": "node tools/extract/cli.js",
     "test": "node --test tools/**/*.test.js",
