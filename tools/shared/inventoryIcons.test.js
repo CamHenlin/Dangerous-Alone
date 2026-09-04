@@ -17,9 +17,7 @@ import {
 } from './inventoryIcons.js';
 import {
   buildOwnedTriforceRows,
-  ownedTriforceBits,
   submenuDungeonMapLayout,
-  submenuTriforceGridLayout,
 } from './submenuLayout.js';
 
 test('swordSpritePalette matches NES Items[0]-1', () => {
@@ -106,19 +104,6 @@ test('L2 triforce without L1 still fills the L2 patches', () => {
   assert.equal(l2[1].tiles[1], 0xe9, 'L1 tip stays outline');
   assert.equal(l2[1].tiles[2], 0xe8);
   assert.equal(l2[2].tiles[3], 0xf5);
-  assert.deepEqual(ownedTriforceBits(0x02), [
-    false, true, false, false, false, false, false, false,
-  ]);
-});
-
-test('UW triforce grid sits left of map/compass sprites', () => {
-  const uw = submenuDungeonMapLayout();
-  const grid = submenuTriforceGridLayout();
-  const gridRight = grid.x + grid.cols * grid.cell;
-  const gridBottom = grid.y + grid.rows * grid.cell;
-  assert.ok(gridRight <= uw.mapIcon.x, `grid right ${gridRight} vs map x ${uw.mapIcon.x}`);
-  assert.ok(gridBottom <= 176, `grid bottom ${gridBottom}`);
-  assert.equal(grid.cols * grid.rows, 8);
 });
 
 test('UW submenu map/compass match DrawSubmenuItems and fit the 176px mask', () => {

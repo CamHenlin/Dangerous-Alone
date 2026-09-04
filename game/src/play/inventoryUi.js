@@ -15,10 +15,8 @@ import {
 import {
   BOX_CHR,
   buildOwnedTriforceRows,
-  ownedTriforceBits,
   submenuBoxLayout,
   submenuDungeonMapLayout,
-  submenuTriforceGridLayout,
   triforceTileRole,
 } from '@shared/submenuLayout.js';
 import { nesText } from './nesFont.js';
@@ -256,39 +254,6 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
     }
   }
 
-  /**
-   * 2×4 shard slots for the dungeon submenu. Each dungeon lights its own
-   * cell, so skipping Level 1 still shows the Level 2 piece.
-   * @param {number} mask
-   */
-  function paintTriforceGrid(mask) {
-    tfLayer.removeChildren().forEach((c) =>
-      c.destroy({ texture: false, textureSource: false }),
-    );
-    const layout = submenuTriforceGridLayout();
-    const bits = ownedTriforceBits(mask);
-    const w = 10;
-    const h = 10;
-    for (let i = 0; i < bits.length; i += 1) {
-      const col = i % layout.cols;
-      const row = Math.floor(i / layout.cols);
-      const x = layout.x + col * layout.cell;
-      const y = layout.y + row * layout.cell;
-      const g = new Graphics();
-      g.moveTo(x + w / 2, y);
-      g.lineTo(x + w, y + h);
-      g.lineTo(x, y + h);
-      g.closePath();
-      if (bits[i]) {
-        g.fill(COL.tfFill);
-        g.stroke({ width: 1, color: COL.tfOutline });
-      } else {
-        g.stroke({ width: 1, color: COL.tfOutline, alpha: 0.35 });
-      }
-      tfLayer.addChild(g);
-    }
-  }
-
   function applySlide() {
     slide.y = -slideOffset;
   }
@@ -367,6 +332,9 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
     const tfTextY = SLIDE_PX - 8;
     const lowerTop = Math.min(layout.triforceTop, tfTextY - 56);
     if (dungeon?.levelData) {
+      tfLayer.removeChildren().forEach((c) =>
+        c.destroy({ texture: false, textureSource: false }),
+      );
       // LevelInfo carries its own level number (Q2 reuses maps across slots).
       // Map/compass/sheet use DrawSubmenuItems + SubmenuMapRemainder NT coords.
       const shown = dungeon.levelData.levelNumber ?? dungeon.level;
@@ -385,9 +353,6 @@ export function createInventoryUi({ items, commonBg = null, overworldBg = null }
       });
       if (inv.map) placeIcon(0x4c, 1, uwMap.mapIcon.x, uwMap.mapIcon.y);
       if (inv.compass) placeIcon(0x6a, 1, uwMap.compassIcon.x, uwMap.compassIcon.y);
-      // NES swapped this panel for the sheet map, which hid shards collected
-      // out of order. Keep the map and light each owned bit on the left.
-      paintTriforceGrid(inv.triforce ?? 0);
     } else {
       paintTriforce(inv.triforce ?? 0, lowerTop);
       label('TRIFORCE', 0x60, tfTextY, COL.header);
