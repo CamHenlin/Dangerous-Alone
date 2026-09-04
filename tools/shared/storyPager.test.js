@@ -6,16 +6,22 @@ function p(index, id, mode, active = true) {
   return { index, active, world: { id, mode } };
 }
 
-test('labyrinth-entry is only for people standing in a labyrinth', () => {
+test('labyrinth-entry is only for people standing in that labyrinth', () => {
   const party = [
     p(0, 'overworld', 'overworld'),
     p(1, 'dungeon:1', 'dungeon'),
     p(2, 'cave:16', 'cave'),
     p(3, 'cellar:1:127', 'dungeon'),
+    p(4, 'dungeon:5', 'dungeon'),
   ];
   assert.deepEqual(
-    storyReaders(party, 'levelEntry').map((r) => r.index),
+    storyReaders(party, 'levelEntry', { level: 1 }).map((r) => r.index),
     [1, 3],
+  );
+  assert.deepEqual(
+    storyReaders(party, 'levelEntry', { level: 5 }).map((r) => r.index),
+    [4],
+    'an ally already in another dungeon must not read this descent',
   );
 });
 

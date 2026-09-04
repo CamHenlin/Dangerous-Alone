@@ -2,13 +2,13 @@
  * One story box, many readers.
  *
  * Labyrinth-entry describes the place you just walked into, so only
- * people standing in a labyrinth read it — an ally still on the beach
- * must not get "THE AIR CHANGES ON THE FIRST STAIR". Each reader turns
- * their own pages; the world stays frozen until the last one has closed
- * their copy. The post-shard briefing is not a party beat: "THE SHARD
- * IS WARM IN YOUR HAND" belongs to the finder, even if an ally is in
- * another room of the same labyrinth. Ordinary NPC talk does not go
- * through here.
+ * people standing in that labyrinth read it — an ally still on the beach,
+ * or already downstairs in a different dungeon, must not get "THE FIRST
+ * ONE THAT IS DARK IN PLACES". Each reader turns their own pages; the
+ * world stays frozen until the last one has closed their copy. The
+ * post-shard briefing is not a party beat: "THE SHARD IS WARM IN YOUR
+ * HAND" belongs to the finder, even if an ally is in another room of the
+ * same labyrinth. Ordinary NPC talk does not go through here.
  */
 
 function worldId(p) {
@@ -34,19 +34,35 @@ function inLabyrinth(p) {
   );
 }
 
+/** Labyrinth number for a dungeon or cellar seat, or null. */
+function labyrinthLevel(p) {
+  const id = worldId(p);
+  const cellar = /^cellar:(\d+):/.exec(id);
+  if (cellar) return Number(cellar[1]);
+  const dungeon = /^dungeon:(\d+)$/.exec(id);
+  return dungeon ? Number(dungeon[1]) : null;
+}
+
 /**
  * Who should receive a party story beat.
  *
- * `levelEntry` is for everyone standing in a labyrinth. `briefing` is
- * private to the finder and never a party audience.
+ * `levelEntry` is for everyone standing in that labyrinth (the one named
+ * by `opts.level`). `briefing` is private to the finder and never a
+ * party audience.
  *
  * @param {readonly object[]} players seated player records
  * @param {string} [kind] `levelEntry` or `briefing`
+ * @param {{ level?: number | null }} [opts]
  */
-export function storyReaders(players, kind = 'levelEntry') {
+export function storyReaders(players, kind = 'levelEntry', opts = {}) {
   const seated = (players ?? []).filter((p) => p && p.active !== false);
   if (kind === 'briefing') return [];
-  if (kind === 'levelEntry') return seated.filter(inLabyrinth);
+  if (kind === 'levelEntry') {
+    const inAnyLabyrinth = seated.filter(inLabyrinth);
+    const level = Number(opts?.level);
+    if (!Number.isFinite(level)) return inAnyLabyrinth;
+    return inAnyLabyrinth.filter((p) => labyrinthLevel(p) === level);
+  }
   return seated.filter((p) => !inCave(p));
 }
 

@@ -4379,13 +4379,13 @@ async function main() {
   }
 
   /**
-   * Labyrinth-entry holds only people standing in a labyrinth. The
+   * Labyrinth-entry holds only people standing in that labyrinth. The
    * post-shard briefing is private to the finder. Cave speech is neither:
    * NES lets you walk the shop while the text crawls, and a friend walking
    * into a labyrinth must not replace the old man you are reading.
    */
-  function storyAudience(kind) {
-    return storyReaders(activePlayers(players), kind);
+  function storyAudience(kind, meta) {
+    return storyReaders(activePlayers(players), kind, meta);
   }
 
   function playerIsStoryReader(p) {
@@ -4473,7 +4473,7 @@ async function main() {
     if (party.length <= 1) {
       return openTextBox(pages, { kind, meta });
     }
-    let readers = storyAudience(kind);
+    let readers = storyAudience(kind, meta);
     if (!readers.length && focus.current) readers = [focus.current];
     if (!readers.length) return false;
     const opened = storyBox.open(pages, { kind, meta });
@@ -5427,7 +5427,7 @@ async function main() {
         }
         // A private conversation (including the post-shard briefing) is
         // only in the reader's quadrant. Labyrinth-entry is only in
-        // labyrinth views. Each reader sees their own page.
+        // that labyrinth's views. Each reader sees their own page.
         const showStory = playerIsStoryReader(p) && storyBox.active;
         if (showStory) {
           storyBox.seekPage(storyPager.pageOf(p.index));

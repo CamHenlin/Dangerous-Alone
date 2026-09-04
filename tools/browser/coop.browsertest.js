@@ -1447,6 +1447,57 @@ describe('coop play', { concurrency: false }, () => {
     await game.close();
   });
 
+  test('a labyrinth-entry beat does not land in an ally\'s other dungeon', async () => {
+    // Player two walking into L5 used to open the Lizard dossier in every
+    // labyrinth quadrant, so player one read "THE FIRST ONE THAT IS DARK
+    // IN PLACES" while still standing in the Eagle.
+    const game = await openGame(browser, { url: server.url, query: 'players=2' });
+    await game.step(5);
+    await ignoreHits(game);
+    await game.enterLevel(1, 0);
+    await mashStory(game, 0);
+    await pose(game, 0, 0x78, 0xdd, 0x08);
+    const parked = await hero(game, 0);
+    assert.equal(parked.world, 'dungeon:1');
+
+    await game.enterLevel(5, 1);
+    await game.step(4);
+    await game.press([KEYS[1].a], 4);
+    await game.press([KEYS[1].a], 4);
+    await game.step(2);
+    const opened = await game.state();
+    assert.equal(opened.dialogue, true, 'the entry speech should have opened');
+    assert.equal(opened.story?.holding, true);
+    assert.equal(opened.heroes[0].world, 'dungeon:1');
+    assert.equal(opened.heroes[1].world, 'dungeon:5');
+    assert.equal(opened.story?.finished?.[0], true, 'player one is not a story reader');
+    assert.equal(opened.story?.finished?.[1], false);
+
+    const views = await game.page.evaluate(() => window.zeldaDebug.viewGfx());
+    assert.equal(views[0].dialogueText, '', 'player one painted player two\'s dungeon speech');
+    assert.equal(views[0].dialogueKind, null);
+    assert.match(views[0].stubText, /^L1/, `player one's stub leaked L5, got ${JSON.stringify(views[0].stubText)}`);
+    assert.match(
+      views[1].dialogueText,
+      /DUNGEON 5|LIZARD|DARK|CANDLE/,
+      `player two should be reading the Lizard dossier, got ${JSON.stringify(views[1].dialogueText)}`,
+    );
+    assert.equal(views[1].dialogueKind, 'levelEntry');
+    assert.match(views[1].stubText, /^L5/, `dungeon stub missing, got ${JSON.stringify(views[1].stubText)}`);
+
+    await game.press(['ArrowUp'], 20);
+    assert.ok((await hero(game, 0)).y < parked.y, 'player one froze for player two\'s entry speech');
+
+    await mashStory(game, 1);
+    await game.step(5);
+    const done = await game.state();
+    assert.equal(done.dialogue, false);
+    assert.ok(!done.story?.holding, 'the entry speech should have closed');
+    assert.equal(done.heroes[0].world, 'dungeon:1');
+    assert.equal(done.heroes[1].world, 'dungeon:5');
+    await game.close();
+  });
+
   test('four players can occupy four different modes and each walk', async () => {
     const game = await openGame(browser, { url: server.url, query: 'players=4' });
     await game.step(10);
