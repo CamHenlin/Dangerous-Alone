@@ -73,6 +73,11 @@
   cursor: pointer;
 }
 
+a.nav-btn {
+  display: inline-block;
+  text-decoration: none;
+}
+
 .nav-btn:hover {
   border-color: var(--accent, #6bcf7f);
   color: var(--accent, #6bcf7f);

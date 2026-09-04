@@ -2,7 +2,7 @@
 
 ## Split-screen multiplayer engine for NES Zelda with other enhancements.
 
-Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join
+![Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join](example.png)
 
 This is an unofficial **browser engine** that can play *The Legend of Zelda* (NES, 1986) when you
 supply a **legally obtained NES Zelda ROM**. This repository is not a game, not a
