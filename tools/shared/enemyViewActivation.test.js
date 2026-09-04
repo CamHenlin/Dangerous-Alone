@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   activateEnemiesInView,
+  activateEnemiesTouchedBy,
   enemyAwaitingView,
   enemyCombatActive,
   markEnemiesAwaitingView,
@@ -61,4 +62,22 @@ test('off-screen tektites stay still until they enter view', () => {
   assert.equal(tektites[0].viewActivated, false);
   assert.equal(tektites[1].viewActivated, false);
   assert.equal(tektites[2].viewActivated, true);
+});
+
+test('touching an off-camera Stalfos still wakes it', () => {
+  const stalfos = { alive: true, viewActivated: false, x: 0x78, y: 0x8d, id: 1 };
+  const newly = activateEnemiesTouchedBy([stalfos], { x: 0x78, y: 0x8d });
+  assert.equal(newly.length, 1);
+  assert.equal(stalfos.viewActivated, true);
+  assert.equal(stalfos.spawnCloud, 0x10);
+  assert.equal(enemyCombatActive(stalfos), true);
+});
+
+test('touch wake ignores edge-pending and already-active foes', () => {
+  const pending = { alive: true, viewActivated: false, edgePending: true, x: 0x40, y: 0x8d };
+  const active = { alive: true, viewActivated: true, x: 0x50, y: 0x8d };
+  const far = { alive: true, viewActivated: false, x: 0xc0, y: 0x8d };
+  activateEnemiesTouchedBy([pending, active, far], { x: 0x40, y: 0x8d });
+  assert.equal(pending.viewActivated, false);
+  assert.equal(far.viewActivated, false);
 });

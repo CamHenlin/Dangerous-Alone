@@ -2,7 +2,7 @@
 
 ## Split-screen multiplayer engine for NES Zelda with other enhancements.
 
-![Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join](example.png)
+Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join
 
 This is an unofficial **browser engine** that can play *The Legend of Zelda* (NES, 1986) when you
 supply a **legally obtained NES Zelda ROM**. This repository is not a game, not a
@@ -31,6 +31,12 @@ Up to four NES-sized cameras share one world. Seats can be in different modes
 at the same time (overworld vs dungeon here); empty seats wait on Start.
 
 **Runtime:** any modern browser (macOS, Linux, Windows).
+
+## Why this exists
+
+I wanted to play through the original *Legend of Zelda* with my three kids, and they pointed out the obvious problem: on a real NES, only one of us gets the controller and everybody else just watches. They figured it would be a lot more fun if we could all be in Hyrule at the same time. So that became the goal — four seats, four cameras, one shared world, with the rest of the quality-of-life work (continuous camera, longer and more coherent story text, rebindable controls) growing out of the same wish to make the 1986 cartridge something a family can play together on the couch today.
+
+## How it compares
 
 In spirit this is to NES *Zelda* what [Ship of Harkinian](https://www.shipofharkinian.com) is to *Ocarina of Time*: an unofficial engine that plays a cartridge you already own, on hardware Nintendo never shipped it for, with extras the original box could not do. We do not wrap an emulator, and we do not ship Nintendo’s ROM or art. The implementation is different — Ship of Harkinian is a native port on a matching decompilation; this repo extracts tables from your dump and reimplements the systems in the browser — but the overall idea is the same.
 
@@ -68,16 +74,15 @@ Progress autosaves to this browser. Options cover scale, fullscreen, and per-pla
 
 ## Bugs
 
-There are certainly a few bugs and rough edges, but the game is 100% playable as is and don't massively impact the experience.
+There are certainly a few bugs and rough edges, but the game is 100% playable as is and the bugs don't massively impact the experience.
 
 Notable bugs include:
 
 - There are small collision errors at times, usually making link not fully align to paths. This is mostly a visual bug and doesn't impact gameplay.
-- There can sometimes be triggering errors with things in the environment, such as Stalfos. Usually leaving the screen and coming back fixes it.
 - Some enemies don't behave as they are supposed to. For example, Dodongos eat bombs much more easily than they should.
+- Second quest text is a bit incoherent as it re-uses story text from the first quest. Doesn't affect playability
 
 If you notice others, feel free to report them as github issues. Please include screenshots and a detailed description of the bug. 
-
 
 ---
 
@@ -91,4 +96,4 @@ If you notice others, feel free to report them as github issues. Please include 
 
 ---
 
-Building, extracting, tests, architecture, and the phase history live in [`DEV.md`](./DEV.md).
+Building, extracting, tests, architecture, and the phase history live in `[DEV.md](./DEV.md)`.

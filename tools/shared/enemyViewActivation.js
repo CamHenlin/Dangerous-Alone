@@ -3,6 +3,7 @@
  * Hold AI / draw until the first frame they intersect the camera.
  */
 
+import { objectTouchesLink } from './objectCollision.js';
 import { isRupeeStash } from './rupeeStash.js';
 
 /**
@@ -41,6 +42,34 @@ export function activateEnemiesInView(enemies, isVisible) {
   for (const e of enemies) {
     if (!e?.alive || e.viewActivated || e.edgePending) continue;
     if (!isVisible(e)) continue;
+    e.viewActivated = true;
+    if (!skipsSpawnCloud(e) && (e.spawnCloud ?? 0) <= 0) e.spawnCloud = 0x10;
+    newly.push(e);
+  }
+  return newly;
+}
+
+/**
+ * Activate a leftover / streamed foe the frame Link (or any hero) overlaps it.
+ *
+ * Camera reveal is the usual gate, but a statue or Stalfos you are already
+ * standing on can sit `viewActivated=false` — contact and AI both skip it,
+ * so it looks frozen until you leave the screen and it respawns on-camera.
+ * @param {Iterable<object>} enemies
+ * @param {Iterable<{ x?: number, y?: number } | null | undefined> | { x?: number, y?: number } | null | undefined} links
+ * @returns {object[]} newly activated foes
+ */
+export function activateEnemiesTouchedBy(enemies, links) {
+  const marks = Array.isArray(links) ? links : links ? [links] : [];
+  /** @type {object[]} */
+  const newly = [];
+  for (const e of enemies) {
+    if (!e?.alive || e.viewActivated || e.edgePending || e.npc) continue;
+    const hit = marks.some(
+      (h) => h && Number.isFinite(h.x) && Number.isFinite(h.y)
+        && objectTouchesLink(e.x, e.y, h.x, h.y),
+    );
+    if (!hit) continue;
     e.viewActivated = true;
     if (!skipsSpawnCloud(e) && (e.spawnCloud ?? 0) <= 0) e.spawnCloud = 0x10;
     newly.push(e);

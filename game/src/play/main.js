@@ -91,6 +91,7 @@ import {
 } from '@shared/clockFreeze.js';
 import {
   activateEnemiesInView,
+  activateEnemiesTouchedBy,
   enemyAwaitingView,
   enemyCombatActive,
   markEnemiesAwaitingView,
@@ -206,7 +207,7 @@ import {
 } from '@shared/overworld.js';
 import { createOwHeartContainer } from '@shared/owHeartContainer.js';
 import { owBgTileSourceRect } from '@shared/owBgTiles.js';
-import { trySpawnPassiveTileObject } from '@shared/passiveTileObjects.js';
+import { trySpawnPassiveTileObject, passiveSquareFromAnchorSample } from '@shared/passiveTileObjects.js';
 import {
   cancelSword,
   createSwordState,
@@ -2536,6 +2537,8 @@ async function main() {
          * the hook is for rooms that spawn empty (old-man entrance, cleared).
          * `player` plants in that hero's world (so an overworld test still
          * works after player one has gone underground).
+         * `awaitView` leaves it inert until camera or contact reveal — the
+         * leftover Stalfos "touch them and they don't move" case.
          */
         plantFoe: (opts = {}) => {
           const go = () => {
@@ -2547,7 +2550,7 @@ async function main() {
             if (!e) return null;
             const home = (opts.home ?? roomId) & 0xff;
             tagEnemyHomeRoom([e], home);
-            e.viewActivated = true;
+            e.viewActivated = opts.awaitView ? false : true;
             e.alive = true;
             if (e.objType === OBJ.POND_FAIRY) {
               // InitPondFairy stamps ($78,$7D); map that into the home room so
@@ -2559,7 +2562,7 @@ async function main() {
             if (opts.captureTimer != null) e.captureTimer = opts.captureTimer;
             enemies.push(e);
             spawnedRooms.add(home);
-            return { id: e.id, home: e.homeRoomId, x: e.x, y: e.y, objType: e.objType };
+            return { id: e.id, home: e.homeRoomId, x: e.x, y: e.y, objType: e.objType, view: e.viewActivated };
           };
           if (opts.player == null) return go();
           const p = players.find((q) => q.index === opts.player && q.active);
@@ -2699,6 +2702,12 @@ async function main() {
               ),
               spritePalette: gfx?.get(e.id)?.texture?.__zeldaPalette ?? null,
               clockFrozen: Boolean(e.clockFrozen),
+              view: Boolean(e.viewActivated),
+              edge: Boolean(e.edgePending),
+              armosStatue: Boolean(e.armosStatue),
+              armosFade: e.armosFade ?? 0,
+              trapState: e.trapState ?? null,
+              spawnCloud: e.spawnCloud ?? 0,
             }));
         },
         /**
@@ -9428,7 +9437,7 @@ async function main() {
       break;
     }
     if (picked == null) return;
-    const shown = dungeon.levelData?.levelNumber ?? dungeon.level;
+    const shown = displayedDungeonLevel(dungeon.levelData) || dungeon.level;
     const label = grantRoomItem(inv, picked, { level: shown });
     onGrantedItem(picked);
     refreshHud();
@@ -9720,6 +9729,11 @@ async function main() {
         }
       }
     }
+
+    // A leftover statue / Stalfos you are already standing on never entered
+    // the camera gate, so contact and AI both skipped it. Touching it has to
+    // count as reveal — otherwise it sits frozen until you leave and return.
+    if (shared) activateEnemiesTouchedBy(enemies, heroes);
 
     const newShots = [];
     const newBooms = [];
@@ -10235,8 +10249,8 @@ async function main() {
         s.visible = false;
         continue;
       }
-      // Magic boom → SP2 (blue); wood / Goriya → SP0.
-      const pal = boom.magic ? 2 : 0;
+      // Magic boom → SP1 (blue, item $1E); wood / Goriya → SP0.
+      const pal = boom.magic ? 1 : 0;
       s.texture = items.boomerangTexture(frameCounter, pal);
       s.visible = true;
       s.x = boom.x;
@@ -10658,13 +10672,20 @@ async function main() {
           face,
           enemies,
           createEnemy,
-          { touchHold: passiveTouchHold },
+          {
+            touchHold: passiveTouchHold,
+            continuous: true,
+            collidingTile: (x, y, dir) =>
+              getLinkCollidingTileMulti(owRooms.gridMap(), roomId, x, y, dir),
+            squareAt: (sx, sy) => passiveSquareFromAnchorSample(roomId, sx, sy),
+          },
         );
         if (spawned) {
-          tagEnemyHomeRoom([spawned], roomId);
+          const home = occupyingRoom(roomId, spawned.x, spawned.y).roomId;
+          tagEnemyHomeRoom([spawned], home);
           spawned.viewActivated = true;
           spawned.spawnCloud = 0x10;
-          tryAddMonsterToRoom(enemies, spawned, roomId);
+          tryAddMonsterToRoom(enemies, spawned, home);
         }
       }
     }

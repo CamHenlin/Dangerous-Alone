@@ -80,6 +80,15 @@ export function bSlotPos(slot) {
 }
 
 /**
+ * Sprite palette for the boomerang icon / in-flight sprite.
+ * Matches NES DrawItemBySlot for item $1D (wood → SP0) / $1E (magic → SP1 blue).
+ * @param {object} [inv]
+ */
+export function boomerangSpritePalette(inv) {
+  return inv?.magicBoomerang ? 1 : 0;
+}
+
+/**
  * CHR + palette for a selectable B item given current inventory.
  * @param {object} inv
  * @param {string} id B_ITEM.*
@@ -88,8 +97,9 @@ export function bSlotPos(slot) {
 export function bItemIcon(inv, id) {
   switch (id) {
     case B_ITEM.BOOMERANG:
-      if (inv.magicBoomerang) return { tile: 0x36, pal: 2 };
-      if (inv.boomerang) return { tile: 0x36, pal: 0 };
+      if (inv.magicBoomerang || inv.boomerang) {
+        return { tile: 0x36, pal: boomerangSpritePalette(inv) };
+      }
       return null;
     case B_ITEM.BOMB:
       if (inv.bombs > 0 || inv.selectedB === B_ITEM.BOMB) return { tile: 0x34, pal: 1 };

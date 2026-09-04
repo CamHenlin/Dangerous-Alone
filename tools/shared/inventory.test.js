@@ -138,6 +138,14 @@ test('triforce piece sets level bit', () => {
   assert.equal(hasTriforce(inv, 3), true);
 });
 
+test('Level 2 triforce without Level 1 still counts as one shard', () => {
+  const inv = createInventory();
+  assert.equal(grantRoomItem(inv, 0x1b, { level: 2 }), 'Triforce (L2)');
+  assert.equal(hasTriforce(inv, 1), false);
+  assert.equal(hasTriforce(inv, 2), true);
+  assert.equal(triforceCount(inv), 1);
+});
+
 test('grantCaveExtras includes blue candle', () => {
   const inv = createInventory();
   grantCaveExtras(inv);

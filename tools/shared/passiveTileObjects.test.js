@@ -4,6 +4,7 @@ import { DIR, HUD_HEIGHT } from './collision.js';
 import { createEnemy, OBJ, OW_ENEMY_BOUNDS, stepEnemy } from './enemies.js';
 import {
   PASSIVE_FADE_FRAMES,
+  passiveSquareFromAnchorSample,
   squareFromCollisionSample,
   trySpawnPassiveTileObject,
 } from './passiveTileObjects.js';
@@ -120,4 +121,37 @@ test('Flying Ghini stays put while fading in', () => {
   assert.equal(e.x, x0);
   assert.equal(e.y, y0);
   assert.equal(e.armosFade, PASSIVE_FADE_FRAMES - 1);
+});
+
+test('leftover Armos sample snaps in the occupying room, not the anchor', () => {
+  // $0B sits directly north of $1B. A leftover statue at local ($B0,$80)
+  // is y=$80-PLAY_H in the $1B anchor frame.
+  const PLAY_H = 176;
+  const leftoverY = 0x80 - PLAY_H;
+  const square = passiveSquareFromAnchorSample(0x1b, 0xb0, leftoverY);
+  assert.equal(square?.roomId, 0x0b);
+  assert.equal(square?.x, 0xb0);
+  assert.equal(square?.y, leftoverY);
+});
+
+test('an in-room sample still snaps in the anchor', () => {
+  const square = passiveSquareFromAnchorSample(0x1b, 0x90, 0x80);
+  assert.equal(square?.roomId, 0x1b);
+  assert.equal(square?.x, 0x90);
+  assert.equal(square?.y, 0x80);
+});
+
+test('leftover collidingTile + squareAt wakes the occupying statue', () => {
+  const PLAY_H = 176;
+  const leftoverY = 0x80 - PLAY_H;
+  const occGrid = gridWithArmosAt(0x90, 0x80);
+  const link = { x: 0x80, y: leftoverY, dir: DIR.RIGHT, gridOffset: 0 };
+  const e = trySpawnPassiveTileObject(link, null, DIR.RIGHT, [], createEnemy, {
+    collidingTile: () => ({ tile: 0xc0, walkable: false }),
+    squareAt: (sx, sy) => passiveSquareFromAnchorSample(0x1b, sx, sy),
+  });
+  assert.ok(e);
+  assert.equal(e.objType, OBJ.ARMOS);
+  assert.equal(e.y, leftoverY);
+  assert.ok(occGrid);
 });

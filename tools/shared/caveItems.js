@@ -18,12 +18,12 @@ export function caveItemSpritePalette(itemId) {
       return 2;
     case 0x07: // red candle
     case 0x13: // red ring
-    case 0x1e: // magic boom
     case 0x20: // red potion
       return 2;
     case 0x06: // blue candle
     case 0x09: // silver arrow (NES DrawItemBySlot → SP1)
     case 0x12: // blue ring
+    case 0x1e: // magic boom (item $1E → SP1 blue)
     case 0x1f: // blue potion
       return 1;
     default:

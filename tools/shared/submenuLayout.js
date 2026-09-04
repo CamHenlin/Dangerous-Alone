@@ -207,6 +207,34 @@ export const TRIFORCE_PIECE_PATCHES = Object.freeze([
 ]);
 
 /**
+ * Compact 2×4 shard grid for the UW submenu. Sits in the empty column left of
+ * the sheet map / map-compass sprites so collected pieces stay visible even
+ * when the big overworld triangle is swapped out for LEVEL-n.
+ *
+ * Bit0 (L1) is top-left, then right, then down — so L2 without L1 still lights
+ * a slot instead of looking like an empty bag.
+ */
+export function submenuTriforceGridLayout() {
+  const cell = 12;
+  return {
+    x: 8,
+    y: 110,
+    cell,
+    cols: 2,
+    rows: 4,
+  };
+}
+
+/**
+ * @param {number} mask InvTriforce
+ * @returns {boolean[]} length 8, index 0 = Level 1
+ */
+export function ownedTriforceBits(mask) {
+  const n = mask | 0;
+  return Array.from({ length: 8 }, (_, i) => Boolean((n >> i) & 1));
+}
+
+/**
  * @param {number} mask InvTriforce
  * @returns {{ col: number, tiles: number[] }[]}
  */

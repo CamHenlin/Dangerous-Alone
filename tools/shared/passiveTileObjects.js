@@ -7,9 +7,11 @@ import {
   DIR,
   HUD_HEIGHT,
   LINK_HOTSPOT_Y,
+  collisionSamplePoints,
   getLinkCollidingTile,
   objectHotspotOffset,
 } from './collision.js';
+import { occupyingRoom, roomPlayOrigin } from './continuousCamera.js';
 
 /** ObjType for tile wakes (avoid importing enemies.js). */
 const ARMOS = 0x1e;
@@ -62,6 +64,34 @@ export function squareFromCollisionSample(sampleX, sampleY) {
 }
 
 /**
+ * 16×16 Armos/grave square for a collision sample in the streaming anchor's
+ * local space. Leftover / seam samples land in the occupying room, then the
+ * snapped square is expressed back in anchor coords so the spawned foe sits
+ * on the tile you actually touched.
+ * @param {number} anchorRoomId
+ * @param {number} sampleX
+ * @param {number} sampleY
+ * @returns {{ col: number, row: number, x: number, y: number, roomId: number } | null}
+ */
+export function passiveSquareFromAnchorSample(anchorRoomId, sampleX, sampleY) {
+  const occ = occupyingRoom(anchorRoomId, sampleX, sampleY);
+  const col = Math.floor(occ.x / 16);
+  const row = Math.floor((occ.y - HUD_HEIGHT) / 16);
+  if (row < 0 || col < 0) return null;
+  const localX = col * 16;
+  const localY = HUD_HEIGHT + row * 16;
+  const a = roomPlayOrigin(anchorRoomId);
+  const b = roomPlayOrigin(occ.roomId);
+  return {
+    col,
+    row,
+    x: localX + (b.ox - a.ox),
+    y: localY + (b.oy - a.oy),
+    roomId: occ.roomId & 0xff,
+  };
+}
+
+/**
  * True when tile is an Armos or gravestone square CHR.
  * @param {number} tile
  */
@@ -106,7 +136,7 @@ export function passiveObjectAt(enemies, x, y) {
  * @param {number} inputDir
  * @param {import('./enemies.js').Enemy[]} enemies
  * @param {(spawn: object) => import('./enemies.js').Enemy | null} createEnemy
- * @param {{ touchHold?: Set<string> }} [opts]
+ * @param {{ touchHold?: Set<string>, collidingTile?: (x: number, y: number, dir: number) => { tile: number }, squareAt?: (sampleX: number, sampleY: number) => { col: number, row: number, x: number, y: number } | null, continuous?: boolean }} [opts]
  * @returns {import('./enemies.js').Enemy | null}
  */
 export function trySpawnPassiveTileObject(
@@ -117,15 +147,23 @@ export function trySpawnPassiveTileObject(
   createEnemy,
   opts = {},
 ) {
-  if (!tileGrid || !inputDir) return null;
+  if (!inputDir) return null;
   if ((link.gridOffset ?? 0) !== 0) return null;
 
-  const hit = getLinkCollidingTile(tileGrid, link.x, link.y, inputDir);
-  if (!isPassiveTile(hit.tile)) return null;
+  const hit = typeof opts.collidingTile === 'function'
+    ? opts.collidingTile(link.x, link.y, inputDir)
+    : tileGrid
+      ? getLinkCollidingTile(tileGrid, link.x, link.y, inputDir)
+      : null;
+  if (!hit || !isPassiveTile(hit.tile)) return null;
 
-  const sample = linkCollisionSample(link.x, link.y, inputDir);
-  const square = squareFromCollisionSample(sample.x, sample.y);
-  if (square.row < 0 || square.col < 0) return null;
+  const sample = opts.continuous
+    ? collisionSamplePoints(link.x, link.y, inputDir, { isLink: true, continuous: true })[0]
+    : linkCollisionSample(link.x, link.y, inputDir);
+  const square = typeof opts.squareAt === 'function'
+    ? opts.squareAt(sample.x, sample.y)
+    : squareFromCollisionSample(sample.x, sample.y);
+  if (!square || square.row < 0 || square.col < 0) return null;
 
   const key = passiveSquareKey(square.x, square.y);
   const held = opts.touchHold;

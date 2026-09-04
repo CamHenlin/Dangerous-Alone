@@ -378,7 +378,7 @@ export function createItemSprites(sheetTexture, opts = {}) {
 
   /**
    * In-flight boomerang — spins through Anim_ItemFrameTiles $36/$38/$3A/$3C.
-   * Magic boom uses sprite palette 2 (same as submenu icon).
+   * Magic boom uses sprite palette 1 (SP1 blue), same as item $1E / the submenu icon.
    * @param {number} [frameCounter]
    * @param {number} [spritePal]
    */

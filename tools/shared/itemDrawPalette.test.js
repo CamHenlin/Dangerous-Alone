@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DROP_ITEM } from './enemyDrops.js';
 import { itemDrawPalette, itemFlashPalette } from './itemDrawPalette.js';
+import { caveItemSpritePalette } from './caveItems.js';
 
 test('itemFlashPalette toggles SP1/SP2 every 8 frames', () => {
   assert.equal(itemFlashPalette(0x00), 1);
@@ -42,4 +43,11 @@ test('wood/white/magic swords use grade palettes', () => {
 test('wood/silver arrows use grade palettes (slot $02)', () => {
   assert.equal(itemDrawPalette(0x08, 0), 0); // wood → SP0
   assert.equal(itemDrawPalette(0x09, 0), 1); // silver → SP1
+});
+
+test('wood/magic boomerangs use item $1D/$1E palettes', () => {
+  assert.equal(itemDrawPalette(0x1d, 0), 0); // wood → SP0
+  assert.equal(itemDrawPalette(0x1e, 0), 1); // magic → SP1 blue
+  assert.equal(caveItemSpritePalette(0x1d), 0);
+  assert.equal(caveItemSpritePalette(0x1e), 1);
 });
