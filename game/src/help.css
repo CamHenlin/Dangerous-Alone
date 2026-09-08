@@ -1,0 +1,144 @@
+/* Help is a document, not the play grid. Beat `#app` in styles.css. */
+#app.help-app {
+  display: block;
+  min-height: 100vh;
+}
+
+.help-page {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3.5rem;
+  line-height: 1.5;
+}
+
+.help-page h2 {
+  margin: 2rem 0 0.65rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.help-page h2:first-child {
+  margin-top: 0.5rem;
+}
+
+.help-page h3 {
+  margin: 1.25rem 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.help-page p,
+.help-page li {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.help-page p {
+  margin: 0 0 0.75rem;
+}
+
+.help-page ol,
+.help-page ul {
+  margin: 0 0 0.85rem;
+  padding-left: 1.25rem;
+}
+
+.help-page li + li {
+  margin-top: 0.35rem;
+}
+
+.help-page a {
+  color: var(--accent);
+}
+
+.help-lead {
+  font-size: 1rem;
+  color: var(--text);
+}
+
+kbd {
+  display: inline-block;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.8em;
+  line-height: 1.2;
+  padding: 0.08em 0.4em;
+  border: 1px solid #2b3348;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #0f1320;
+  color: #e8d040;
+  white-space: nowrap;
+}
+
+.help-keys {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+.help-keys th,
+.help-keys td {
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  border-bottom: 1px solid #2b3348;
+  vertical-align: top;
+}
+
+.help-keys th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.help-keys td:first-child {
+  color: var(--text);
+  white-space: nowrap;
+  width: 38%;
+}
+
+.help-note {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.help-back {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.help-back:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.nav-btn {
+  appearance: none;
+  border: 1px solid #2b3348;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+a.nav-btn {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.nav-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

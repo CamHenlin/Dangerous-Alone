@@ -10,6 +10,12 @@
   overflow: hidden;
 }
 
+/* Sit above the ROM drop overlay so Help stays reachable before a dump is loaded. */
+#app.play-app .toolbar {
+  position: relative;
+  z-index: 90;
+}
+
 #stage.play-stage {
   display: grid;
   place-items: center;

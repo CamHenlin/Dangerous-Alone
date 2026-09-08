@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dangerous Alone — Help</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+    <link rel="stylesheet" href="./src/help.css" />
+  </head>
+  <body>
+    <div id="app" class="help-app">
+      <header class="toolbar">
+        <h1>Help</h1>
+        <a class="nav-btn" href="play.html">Play</a>
+        <a
+          class="nav-btn"
+          href="https://github.com/CamHenlin/Dangerous-Alone"
+          target="_blank"
+          rel="noopener noreferrer"
+          >GitHub</a
+        >
+      </header>
+      <main class="help-page">
+        <p class="help-lead">
+          Dangerous Alone is a browser engine for a NES Zelda cartridge you
+          already own. Drop a legally obtained USA iNES <code>.nes</code> dump
+          once; maps, graphics, and audio stay on this device. Nothing is
+          uploaded.
+        </p>
+
+        <h2>Getting started</h2>
+        <ol>
+          <li>
+            Open <a href="play.html">Play</a> and drop your ROM on the window
+            (or click to choose a file). Extraction runs in the browser; the
+            file is kept in local storage so you do not drop it every visit.
+          </li>
+          <li>
+            Watch the title attract, then press <kbd>Enter</kbd> / Start to
+            reach file select.
+          </li>
+          <li>
+            Pick a slot with <kbd>↑</kbd> <kbd>↓</kbd>. Press
+            <kbd>Enter</kbd> to continue a save or start a new one. Use
+            <kbd>R</kbd> to register a name on an empty slot.
+          </li>
+          <li>
+            Walk into the cave on the starting screen for the wooden sword,
+            then head east toward the first labyrinth — or follow the map marks
+            this engine adds for hinted secrets and the next dungeon.
+          </li>
+        </ol>
+        <p class="help-note">
+          Clearing site data removes the ROM and save slots together.
+          <code>play.html?resetRom=1</code> forgets the dump without wiping
+          saves.
+        </p>
+
+        <h2>Default controls</h2>
+        <p>
+          These are the factory binds. Open <strong>Options</strong> in Play to
+          remap any seat’s keyboard or gamepad.
+        </p>
+
+        <h3>Player 1</h3>
+        <table class="help-keys">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Keys</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Move</td>
+              <td><kbd>Arrows</kbd> or <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></td>
+            </tr>
+            <tr>
+              <td>Sword (A)</td>
+              <td><kbd>Z</kbd> or <kbd>Space</kbd></td>
+            </tr>
+            <tr>
+              <td>B item</td>
+              <td><kbd>X</kbd> <kbd>C</kbd> or <kbd>B</kbd></td>
+            </tr>
+            <tr>
+              <td>Inventory (Start)</td>
+              <td><kbd>Enter</kbd> <kbd>Esc</kbd> or <kbd>Shift</kbd></td>
+            </tr>
+            <tr>
+              <td>Cycle B item (Select)</td>
+              <td><kbd>Tab</kbd> or <kbd>`</kbd></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Player 2 (same keyboard)</h3>
+        <table class="help-keys">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Keys</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Move</td>
+              <td><kbd>I</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd></td>
+            </tr>
+            <tr>
+              <td>Sword (A)</td>
+              <td><kbd>F</kbd></td>
+            </tr>
+            <tr>
+              <td>B item</td>
+              <td><kbd>G</kbd></td>
+            </tr>
+            <tr>
+              <td>Start (join / inventory)</td>
+              <td><kbd>H</kbd></td>
+            </tr>
+            <tr>
+              <td>Select</td>
+              <td><kbd>Y</kbd></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Player 3 (numpad)</h3>
+        <table class="help-keys">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Keys</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Move</td>
+              <td><kbd>8</kbd> <kbd>4</kbd> <kbd>5</kbd> <kbd>6</kbd> on the numpad</td>
+            </tr>
+            <tr>
+              <td>Sword (A)</td>
+              <td><kbd>Numpad 0</kbd></td>
+            </tr>
+            <tr>
+              <td>B item</td>
+              <td><kbd>Numpad .</kbd></td>
+            </tr>
+            <tr>
+              <td>Start</td>
+              <td><kbd>Numpad +</kbd></td>
+            </tr>
+            <tr>
+              <td>Select</td>
+              <td><kbd>Numpad −</kbd></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Player 4</h3>
+        <p class="help-note">
+          Pads are the expected device. These leftover keys exist so a fourth
+          seat can join from the keyboard:
+          <kbd>P</kbd> <kbd>'</kbd> <kbd>;</kbd> <kbd>\</kbd> move,
+          <kbd>N</kbd> sword, <kbd>-</kbd> B item, <kbd>=</kbd> Start,
+          <kbd>0</kbd> Select.
+        </p>
+
+        <h3>Gamepad</h3>
+        <p>
+          A standard pad maps D-pad and left stick to move, the bottom face
+          button to sword, the right face button to B item, Start to inventory,
+          and Select/Back to cycle items. Alone, every plugged-in pad drives
+          player 1. Once someone else joins, each seat keeps the pad it claimed.
+        </p>
+        <p class="help-note">
+          Cheap D-input pads sometimes hide the D-pad from the browser. Options
+          can grant Chrome permission to read it, and every button can be
+          rebound per player.
+        </p>
+
+        <h2>File select</h2>
+        <table class="help-keys">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>What it does</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><kbd>↑</kbd> <kbd>↓</kbd></td>
+              <td>Move between the three save slots</td>
+            </tr>
+            <tr>
+              <td><kbd>Enter</kbd></td>
+              <td>Continue a filled slot, or start a new game</td>
+            </tr>
+            <tr>
+              <td><kbd>R</kbd></td>
+              <td>Register (or overwrite) a name on this slot</td>
+            </tr>
+            <tr>
+              <td><kbd>N</kbd></td>
+              <td>Rename an existing file</td>
+            </tr>
+            <tr>
+              <td><kbd>E</kbd></td>
+              <td>Erase a slot (confirm with Enter, cancel with Esc)</td>
+            </tr>
+            <tr>
+              <td><kbd>O</kbd></td>
+              <td>Open Options</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="help-note">
+          On the name screen: move with the D-pad, <kbd>A</kbd> types a letter,
+          <kbd>B</kbd> skips a cell, Select changes row, Start registers.
+        </p>
+
+        <h2>While playing</h2>
+        <ul>
+          <li>
+            <strong>Inventory</strong> — Start opens your item screen.
+            Left/right choose a B item; Start again closes.
+          </li>
+          <li>
+            <strong>Cycle items</strong> — Select (Tab) swaps the B slot without
+            opening the menu. In inventory, left/right also walk the B row.
+          </li>
+          <li>
+            <strong>Join</strong> — Up to four seats. Press the next player’s
+            Start (<kbd>H</kbd> for player 2) or Start on a spare controller.
+            Empty quadrants show “PRESS START TO JOIN.” Joiners spawn next to
+            the lowest-numbered player already in the world.
+          </li>
+          <li>
+            <strong>Leave</strong> — Start + Select stands that seat up. The
+            last remaining player cannot leave this way.
+          </li>
+          <li>
+            <strong>Audio</strong> — <kbd>M</kbd> mutes,
+            <kbd>,</kbd> / <kbd>.</kbd> lower and raise volume.
+          </li>
+          <li>
+            <strong>Practice</strong> — <kbd>F5</kbd> snapshots the current
+            world (not a file slot). <kbd>F9</kbd> reloads that snapshot.
+          </li>
+        </ul>
+        <p>
+          Progress autosaves to this browser about every 15 seconds, and again
+          when you hide the tab. Three file slots plus the practice snapshot
+          live in the same origin storage as the ROM.
+        </p>
+
+        <h2>Split-screen co-op</h2>
+        <p>
+          One to four NES-sized cameras share one Hyrule. Seats can be in
+          different modes at once — overworld, dungeon, or cave — each with a
+          full HUD and map. Walking the overworld and visited dungeon rooms
+          does not wipe the screen the way the NES did; unvisited dungeon rooms
+          stay fogged until you enter.
+        </p>
+
+        <h2>Options</h2>
+        <p>
+          The Options button covers integer display scale, crisp vs smooth
+          filtering, fullscreen, and per-player keyboard/gamepad binds. Click a
+          bind row, then press a key or pad control (Esc cancels). Fullscreen
+          needs a click each session because the browser requires it.
+        </p>
+
+        <h2>What this engine adds</h2>
+        <ul>
+          <li>Split-screen co-op with join/leave mid-session</li>
+          <li>Continuous camera and fogged unvisited dungeon rooms</li>
+          <li>Expanded NPC, pickup, and labyrinth text in a paged dialogue box</li>
+          <li>Map marks for the next dungeon and hinted secrets</li>
+          <li>Arcing sword, integer scale, and rebindable controls</li>
+        </ul>
+        <p>
+          Solo play is meant to stay recognizable. This repository is not a
+          Nintendo product and does not include Nintendo assets. You bring a
+          cartridge dump you own.
+        </p>
+
+        <p>
+          <a class="help-back" href="play.html">Back to Play</a>
+        </p>
+      </main>
+    </div>
+  </body>
+</html>

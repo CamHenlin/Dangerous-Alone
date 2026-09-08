@@ -101,6 +101,7 @@ export default defineConfig({
       input: {
         main: path.join(root, 'index.html'),
         play: path.join(root, 'play.html'),
+        help: path.join(root, 'help.html'),
       },
     },
   },
