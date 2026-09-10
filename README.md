@@ -4,7 +4,7 @@
 
 ![Four-player split-screen: one seat on the overworld, one in a dungeon, two waiting to join](example.png)
 
-**[Run the engine here](https://camhenlin.github.io/Dangerous-Alone/)**
+**[Run the engine here](https://camhenlin.github.io/Dangerous-Alone/)** · **[How we built it](https://henlin.net/2026/09/09/Introducing-Dangerous-Alone/)**
 
 This is an unofficial **browser engine** that can play *The Legend of Zelda* (NES, 1986) when you
 supply a **legally obtained NES Zelda ROM**. This repository is not a game, not a
@@ -98,4 +98,4 @@ If you notice others, feel free to report them as github issues. Please include 
 
 ---
 
-Building, extracting, tests, architecture, and the phase history live in `[DEV.md](./DEV.md)`.
+The development story is in [Introducing Dangerous Alone](https://henlin.net/2026/09/09/Introducing-Dangerous-Alone/). Building, extracting, tests, architecture, and the phase history live in [DEV.md](./DEV.md).
